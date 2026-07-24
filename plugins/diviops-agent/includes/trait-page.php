@@ -2783,16 +2783,11 @@ trait DiviOps_Agent_Page {
 				continue;
 			}
 
-			// #13 can newly route a self-closing global-layout wrapper into
-			// the depth-scan below, which does not check is_self_closing
-			// before it starts (#12, pre-existing and out of scope here): a
-			// self-closing wrapper with no closer of its own scans forward
-			// for the next `<!-- /wp:divi/global-layout -->` in the document
-			// and either consumes an unrelated one or finds none, silently
-			// dropping the wrapper from $results instead of matching it as
-			// a self-contained span. Divi does not normally serialize
-			// global-layout as self-closing, so exposure is low; #12 fixes
-			// the root cause for every self-closing "*/section" opener.
+			// A self-closing global-layout wrapper resolving to a section (#13)
+			// is a section in its own right: it has no closer of its own, so it
+			// is a complete one-comment span rather than routed through the
+			// nesting depth-scan below, same as any other self-closing section
+			// opener (#12).
 			$close_tag = self::BLOCK_CLOSE_PREFIX . $block_name . ' -->';
 			$close_len = strlen( $close_tag );
 
@@ -2800,8 +2795,9 @@ trait DiviOps_Agent_Page {
 			if ( null === $bounds ) {
 				break;
 			}
-			$comment_end = $bounds['comment_end'];
-			$comment     = substr( $content, $pos, $comment_end - $pos );
+			$is_self_closing = $bounds['is_self_closing'];
+			$comment_end     = $bounds['comment_end'];
+			$comment         = substr( $content, $pos, $comment_end - $pos );
 
 			// For label mode, check the opening comment first (short-circuit).
 			if ( '' !== $needle && false === strpos( $comment, $needle ) ) {
@@ -2809,42 +2805,49 @@ trait DiviOps_Agent_Page {
 				continue;
 			}
 
-			// Find closing tag by counting nested sections.
-			$depth       = 1;
-			$scan        = $comment_end;
-			$len         = strlen( $content );
-			$section_end = false;
+			// A self-closing opener has no closer of its own; as in find_block(),
+			// it is a complete span on its own and skips the nesting depth-scan
+			// below, which would otherwise consume the enclosing (or next)
+			// same-name section's real closer.
+			$section_end = $comment_end;
+			if ( ! $is_self_closing ) {
+				// Find closing tag by counting nested sections.
+				$depth       = 1;
+				$scan        = $comment_end;
+				$len         = strlen( $content );
+				$section_end = false;
 
-			while ( $depth > 0 && $scan < $len ) {
-				$next_close = strpos( $content, $close_tag, $scan );
-				// As in find_block(), resolve any intervening opener via its own
-				// JSON-aware span before trusting a raw $close_tag match: a
-				// descendant's attribute JSON can legally contain this section's
-				// own closing comment as string content.
-				$next_open = self::next_block_opener( $content, $scan );
-				if ( null !== $next_open && ( false === $next_close || $next_open['pos'] < $next_close ) ) {
-					// Only a same-name nested section raises depth; a longer name
-					// sharing this prefix is a different block, and a self-closing
-					// one has no closer to consume.
-					if ( $next_open['name'] === $block_name && ! self::block_opener_is_self_closing( $content, $next_open['pos'] ) ) {
-						$depth++;
+				while ( $depth > 0 && $scan < $len ) {
+					$next_close = strpos( $content, $close_tag, $scan );
+					// As in find_block(), resolve any intervening opener via its own
+					// JSON-aware span before trusting a raw $close_tag match: a
+					// descendant's attribute JSON can legally contain this section's
+					// own closing comment as string content.
+					$next_open = self::next_block_opener( $content, $scan );
+					if ( null !== $next_open && ( false === $next_close || $next_open['pos'] < $next_close ) ) {
+						// Only a same-name nested section raises depth; a longer name
+						// sharing this prefix is a different block, and a self-closing
+						// one has no closer to consume.
+						if ( $next_open['name'] === $block_name && ! self::block_opener_is_self_closing( $content, $next_open['pos'] ) ) {
+							$depth++;
+						}
+						$open_bounds = self::block_opening_comment_end( $content, $next_open['pos'] );
+						if ( null === $open_bounds ) {
+							break;
+						}
+						$scan = $open_bounds['comment_end'];
+						continue;
 					}
-					$open_bounds = self::block_opening_comment_end( $content, $next_open['pos'] );
-					if ( null === $open_bounds ) {
+
+					if ( false === $next_close ) {
 						break;
 					}
-					$scan = $open_bounds['comment_end'];
-					continue;
+					$depth--;
+					if ( 0 === $depth ) {
+						$section_end = $next_close + $close_len;
+					}
+					$scan = $next_close + $close_len;
 				}
-
-				if ( false === $next_close ) {
-					break;
-				}
-				$depth--;
-				if ( 0 === $depth ) {
-					$section_end = $next_close + $close_len;
-				}
-				$scan = $next_close + $close_len;
 			}
 
 			if ( false !== $section_end ) {

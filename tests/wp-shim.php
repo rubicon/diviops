@@ -163,19 +163,48 @@ if ( ! function_exists( 'wp_json_encode' ) ) {
 	}
 }
 
+if ( ! function_exists( 'serialize_block_attributes' ) ) {
+	/**
+	 * Reimplementation of WordPress core's serialize_block_attributes(): JSON-encode
+	 * the attrs, then apply core's exact substitution table for bytes that would
+	 * otherwise break out of the block comment or the JSON string (a literal
+	 * backslash, `--`, `<`, `>`, `&`, and an escaped double-quote).
+	 */
+	function serialize_block_attributes( $block_attributes ) {
+		$encoded_attributes = wp_json_encode( $block_attributes, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
+
+		return strtr(
+			$encoded_attributes,
+			array(
+				'\\\\' => '\\u005c',
+				'--'   => '\\u002d\\u002d',
+				'<'    => '\\u003c',
+				'>'    => '\\u003e',
+				'&'    => '\\u0026',
+				'\\"'  => '\\u0022',
+			)
+		);
+	}
+}
+
 if ( ! function_exists( 'get_comment_delimited_block_content' ) ) {
 	/**
 	 * Reimplementation of WordPress core's block-comment serializer: wrap a
 	 * block name, its JSON attrs, and its rendered inner content in the
 	 * `<!-- wp:name {...} -->...<!-- /wp:name -->` comment form, or the
 	 * self-closing `<!-- wp:name {...} /-->` form when content is empty.
+	 *
+	 * Attribute escaping matches core's serialize_block_attributes() exactly.
+	 * Unlike core, this does not strip a `core/` block namespace for display,
+	 * since nothing in this codebase serializes a core/-namespaced block
+	 * through this path.
 	 */
 	function get_comment_delimited_block_content( $block_name, $block_attributes, $block_content ) {
 		if ( null === $block_name ) {
 			return $block_content;
 		}
 
-		$serialized_attributes = empty( $block_attributes ) ? '' : wp_json_encode( $block_attributes ) . ' ';
+		$serialized_attributes = empty( $block_attributes ) ? '' : serialize_block_attributes( $block_attributes ) . ' ';
 
 		if ( '' === $block_content ) {
 			return '<!-- wp:' . $block_name . ' ' . $serialized_attributes . '/-->';
@@ -189,11 +218,11 @@ if ( ! function_exists( 'serialize_block' ) ) {
 	/**
 	 * Reimplementation of WordPress core's serialize_block(): rebuild a
 	 * block's comment-delimited markup from its parsed array, recursing into
-	 * innerBlocks via innerContent's null placeholders. collect_readable_
-	 * divi_blocks() and collect_parser_move_blocks() always pass a shallow
-	 * copy with innerContent/innerBlocks already emptied for this call, so
-	 * the recursive branch never runs in practice here, but it mirrors the
-	 * real function for fidelity.
+	 * innerBlocks via innerContent's null placeholders, with the same
+	 * attribute escaping as get_comment_delimited_block_content(). collect_
+	 * readable_divi_blocks() and collect_parser_move_blocks() always pass a
+	 * shallow copy with innerContent/innerBlocks already emptied for this
+	 * call, so the recursive branch never runs in practice here.
 	 */
 	function serialize_block( $block ) {
 		$block_content = '';
