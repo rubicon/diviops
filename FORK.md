@@ -64,8 +64,27 @@ Fork-owned files, added here, absent upstream. These never conflict on merge:
 | `.github/workflows/test.yaml` | Upstream ships no CI |
 | `tests/` | Upstream ships no tests |
 
-Modified upstream files: none yet. Namespace-gate changes land under issue #2 and
-will be recorded here, file by file, as they merge.
+Modified upstream files. Each carries fork changes that must be reconciled by hand on
+an upstream merge:
+
+| Path | What diverges | Issue |
+| ---- | ------------- | ----- |
+| `plugins/diviops-agent/diviops-agent.php` | Adds namespace-agnostic block-comment constants (`BLOCK_OPEN_PREFIX`, `BLOCK_CLOSE_PREFIX`, `BLOCK_NAME_PATTERN`, `DEFAULT_BLOCK_NS`). The `divi/`-specific `SECTION_OPEN`, `SECTION_CLOSE`, and `BLOCK_PREFIX` constants are retained, unused, because they are public class constants external code may reference. | #2 |
+| `plugins/diviops-agent/includes/trait-core.php` | Adds the `block_identifier_from_name()` / `block_name_from_identifier()` pair that defines the targeting-identifier contract, plus `next_block_opener()`. Makes the write-safety marker census, the marker-sequence validator, and block-attr normalization namespace-aware. | #2 |
+| `plugins/diviops-agent/includes/trait-page.php` | Namespace-agnostic raw scanners in `module_update()` and `find_block()`, `*/section` matching in `find_all_sections()`, shared identifier derivation in `parse_block_tree()` and `walk_and_mutate()`, and namespace-agnostic parser-backed collectors for the `module_get` / `module_move` fallbacks. | #2 |
+| `plugins/diviops-agent/includes/trait-module-schema.php` | Adds `is_divi_module_block()` so schema listing and dumping recognize third-party Divi modules, and accepts a namespaced name in `schema_get_module()`. | #2 |
+| `plugins/diviops-agent/includes/trait-theme-builder.php` | Theme Builder insert accepts any namespaced block, `parse_tb_parent_selector()` accepts any namespace, the cross-env preset and attachment scanners no longer skip third-party blocks, and malformed-comment detection covers every namespace. | #2 |
+
+### Deliberately unchanged: `post_uses_divi()` / `content_uses_divi()`
+
+These decide "is this Divi content" on the literal substring `<!-- wp:divi/`, and issue
+#2's inventory lists them. They are intentionally left alone. Loosening them to accept
+any namespace would misclassify ordinary Gutenberg pages as Divi content, because
+unrelated third-party blocks (`gravityforms/*`, `pdfemb/*`, `tec/*`) are registered
+alongside the Divi ones. The check is also not actually failing: across all 108 posts
+on the reference install that carry `difl/*` or `d5bgo/*` blocks, every one also
+contains a `<!-- wp:divi/` marker and every one opens with a `divi/` block, because
+third-party modules nest inside Divi sections rather than replacing them.
 
 ## Upstream tracking
 
