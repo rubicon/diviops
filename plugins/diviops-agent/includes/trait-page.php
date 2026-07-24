@@ -1806,13 +1806,17 @@ trait DiviOps_Agent_Page {
 		foreach ( $blocks as $block ) {
 			$name = isset( $block['blockName'] ) ? (string) $block['blockName'] : '';
 			if ( '' !== $name ) {
-				$type = self::block_identifier_from_name( $name );
+				$attrs = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : [];
+
+				// A global-layout wrapper counts as whatever it resolves to
+				// (attrs.blockName), matching page_get_layout's own parser
+				// expansion (#13, #14).
+				$type = self::counted_block_identifier( $name, $attrs );
 				if ( ! isset( $type_counts[ $type ] ) ) {
 					$type_counts[ $type ] = 0;
 				}
 				$type_counts[ $type ]++;
 
-				$attrs   = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : [];
 				$shallow = $block;
 				$shallow['innerBlocks']  = [];
 				$shallow['innerContent'] = [];
@@ -1845,9 +1849,13 @@ trait DiviOps_Agent_Page {
 			$path = array_merge( $parent_path, [ $index ] );
 			$name = isset( $block['blockName'] ) ? (string) $block['blockName'] : '';
 			if ( '' !== $name ) {
-				$type = self::block_identifier_from_name( $name );
+				$attrs = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : [];
+
+				// A global-layout wrapper counts as whatever it resolves to
+				// (attrs.blockName), matching page_get_layout's own parser
+				// expansion (#13, #14).
+				$type = self::counted_block_identifier( $name, $attrs );
 				$type_counts[ $type ] = ( $type_counts[ $type ] ?? 0 ) + 1;
-				$attrs   = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : [];
 				$shallow = $block;
 				$shallow['innerBlocks']  = [];
 				$shallow['innerContent'] = [];

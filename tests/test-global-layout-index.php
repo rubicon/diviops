@@ -466,6 +466,18 @@ if ( ! is_wp_error( $faq ) ) {
 
 $wrapped_section = diviops_call( 'find_block', array( $combined, '', '', 'section:1' ) );
 assert_true( ! is_wp_error( $wrapped_section ), 'section:1 still resolves to the wrapper alongside third-party content' );
+if ( ! is_wp_error( $wrapped_section ) ) {
+	assert_same( 'section', $wrapped_section['type'], 'section:1 reports the resolved type, not global-layout, alongside third-party content' );
+	$markup = substr( $combined, $wrapped_section['start'], $wrapped_section['end'] - $wrapped_section['start'] );
+	assert_true(
+		0 === strpos( $markup, '<!-- wp:divi/global-layout ' ),
+		"section:1 resolves to the wrapper's own span, not the real section that follows it"
+	);
+	assert_true(
+		substr( $markup, -strlen( '<!-- /wp:divi/global-layout -->' ) ) === '<!-- /wp:divi/global-layout -->',
+		'the wrapper span still ends at its own literal closer, not a divi/section closer'
+	);
+}
 
 $real_section_with_faq = diviops_call( 'find_block', array( $combined, '', '', 'section:2' ) );
 assert_true( ! is_wp_error( $real_section_with_faq ), 'section:2 resolves to the real section containing the third-party module' );

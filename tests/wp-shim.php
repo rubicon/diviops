@@ -163,6 +163,51 @@ if ( ! function_exists( 'wp_json_encode' ) ) {
 	}
 }
 
+if ( ! function_exists( 'get_comment_delimited_block_content' ) ) {
+	/**
+	 * Reimplementation of WordPress core's block-comment serializer: wrap a
+	 * block name, its JSON attrs, and its rendered inner content in the
+	 * `<!-- wp:name {...} -->...<!-- /wp:name -->` comment form, or the
+	 * self-closing `<!-- wp:name {...} /-->` form when content is empty.
+	 */
+	function get_comment_delimited_block_content( $block_name, $block_attributes, $block_content ) {
+		if ( null === $block_name ) {
+			return $block_content;
+		}
+
+		$serialized_attributes = empty( $block_attributes ) ? '' : wp_json_encode( $block_attributes ) . ' ';
+
+		if ( '' === $block_content ) {
+			return '<!-- wp:' . $block_name . ' ' . $serialized_attributes . '/-->';
+		}
+
+		return '<!-- wp:' . $block_name . ' ' . $serialized_attributes . '-->' . $block_content . '<!-- /wp:' . $block_name . ' -->';
+	}
+}
+
+if ( ! function_exists( 'serialize_block' ) ) {
+	/**
+	 * Reimplementation of WordPress core's serialize_block(): rebuild a
+	 * block's comment-delimited markup from its parsed array, recursing into
+	 * innerBlocks via innerContent's null placeholders. collect_readable_
+	 * divi_blocks() and collect_parser_move_blocks() always pass a shallow
+	 * copy with innerContent/innerBlocks already emptied for this call, so
+	 * the recursive branch never runs in practice here, but it mirrors the
+	 * real function for fidelity.
+	 */
+	function serialize_block( $block ) {
+		$block_content = '';
+		$index         = 0;
+		foreach ( $block['innerContent'] ?? array() as $chunk ) {
+			$block_content .= is_string( $chunk ) ? $chunk : serialize_block( $block['innerBlocks'][ $index++ ] );
+		}
+
+		$attrs = is_array( $block['attrs'] ?? null ) ? $block['attrs'] : array();
+
+		return get_comment_delimited_block_content( $block['blockName'] ?? null, $attrs, $block_content );
+	}
+}
+
 if ( ! class_exists( 'WP_REST_Response' ) ) {
 	/**
 	 * Just enough of WP_REST_Response for envelope_success()/envelope_error() to
