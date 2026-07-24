@@ -201,6 +201,13 @@ class DiviOps_Agent {
 	const DEFAULT_BLOCK_NS    = 'divi/';
 
 	/**
+	 * Divi 5's reusable-content reference wrapper. Divi's own parser expands
+	 * it to the block named in its own `blockName` attr on GET, but the raw
+	 * markup always carries this literal name (#13).
+	 */
+	const GLOBAL_LAYOUT_BLOCK_NAME = 'divi/global-layout';
+
+	/**
 	 * Default rate limits (requests per minute).
 	 */
 	const RATE_LIMIT_READ  = 120;

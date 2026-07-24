@@ -67,6 +67,48 @@ trait DiviOps_Agent_Core {
 	}
 
 	/**
+	 * Full block name a divi/global-layout wrapper counts as.
+	 *
+	 * Divi 5's parser expands the wrapper to whatever it references on GET,
+	 * so page_get_layout reports it under the resolved name. Every counting
+	 * site that only looks at the wrapper's own literal name disagrees with
+	 * that by one for every block after it (#13). The wrapper carries its
+	 * resolved name in its own attrs (`blockName`); reading it from there
+	 * keeps every counting site agreeing with the read path without
+	 * expanding or re-serializing anything.
+	 *
+	 * Falls back to the wrapper's own literal name when `blockName` is
+	 * absent or not a string, so an unresolved wrapper still counts
+	 * predictably (`global-layout:N`) instead of erroring.
+	 *
+	 * @param string     $block_name Full block name from the block's own opener.
+	 * @param array|null $attrs      That block's own attrs (decoded), or null.
+	 * @return string
+	 */
+	private static function counted_block_name( string $block_name, ?array $attrs ): string {
+		if ( self::GLOBAL_LAYOUT_BLOCK_NAME === $block_name && ! empty( $attrs['blockName'] ) && is_string( $attrs['blockName'] ) ) {
+			return $attrs['blockName'];
+		}
+		return $block_name;
+	}
+
+	/**
+	 * Targeting identifier a block counts as for auto_index purposes.
+	 *
+	 * Wraps counted_block_name() with the same identifier mapping
+	 * block_identifier_from_name() applies to every other block, so a
+	 * resolved divi/global-layout wrapper counts under the same key a real
+	 * block of that type would (e.g. `section`, not `divi/section`).
+	 *
+	 * @param string     $block_name Full block name from the block's own opener.
+	 * @param array|null $attrs      That block's own attrs (decoded), or null.
+	 * @return string
+	 */
+	private static function counted_block_identifier( string $block_name, ?array $attrs ): string {
+		return self::block_identifier_from_name( self::counted_block_name( $block_name, $attrs ) );
+	}
+
+	/**
 	 * Whether the block opening at $pos closes itself rather than a later closer.
 	 *
 	 * Depth counting pairs an opener with a closer of the same name. A

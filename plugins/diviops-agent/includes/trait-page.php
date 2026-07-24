@@ -1406,21 +1406,44 @@ trait DiviOps_Agent_Page {
 
 		$offset = 0;
 		while ( null !== ( $opener = self::next_block_opener( $content, $offset ) ) ) {
-			$pos       = $opener['pos'];
-			$type_end  = $opener['name_end'];
-			$type      = self::block_identifier_from_name( $opener['name'] );
+			$pos        = $opener['pos'];
+			$type_end   = $opener['name_end'];
+			$block_name = $opener['name'];
 
-			// Track auto_index counters per type (document order) — count ALL blocks
-			// including those without JSON attrs, to match parse_blocks() counting.
+			// Blocks without JSON attrs can't be updated, but still count for auto_index —
+			// count ALL blocks including those without JSON attrs, to match parse_blocks()
+			// counting. Check for JSON via a cheap char peek first, so a non-JSON block
+			// skips forward without the full comment scan below.
+			$name_char = isset( $content[ $type_end ] ) ? $content[ $type_end ] : '';
+			$next_char = isset( $content[ $type_end + 1 ] ) ? $content[ $type_end + 1 ] : '';
+			$has_json  = ( ' ' === $name_char && '{' === $next_char );
+
+			$bounds      = null;
+			$comment     = null;
+			$comment_end = null;
+			if ( $has_json ) {
+				$bounds = self::block_opening_comment_end( $content, $pos );
+				if ( null === $bounds ) {
+					break;
+				}
+				$comment_end = $bounds['comment_end'];
+				$comment     = substr( $content, $pos, $comment_end - $pos );
+			}
+
+			// A global-layout wrapper counts as whatever it resolves to on
+			// read (#13); decode its own attrs only for that one block name,
+			// so every other block skips the JSON decode entirely.
+			$wrapper_attrs = ( $has_json && self::GLOBAL_LAYOUT_BLOCK_NAME === $block_name )
+				? self::extract_attrs_from_block_markup( $comment )
+				: null;
+			$type          = self::counted_block_identifier( $block_name, is_array( $wrapper_attrs ) ? $wrapper_attrs : null );
+
+			// Track auto_index counters per type (document order).
 			if ( ! isset( $type_counters[ $type ] ) ) {
 				$type_counters[ $type ] = 0;
 			}
 			$type_counters[ $type ]++;
 
-			// Blocks without JSON attrs can't be updated, but still count for auto_index.
-			$name_char = isset( $content[ $type_end ] ) ? $content[ $type_end ] : '';
-			$next_char = isset( $content[ $type_end + 1 ] ) ? $content[ $type_end + 1 ] : '';
-			$has_json  = ( ' ' === $name_char && '{' === $next_char );
 			if ( ! $has_json ) {
 				// Skip to end of comment for non-JSON blocks.
 				$skip_end = strpos( $content, '-->', $pos );
@@ -1428,14 +1451,7 @@ trait DiviOps_Agent_Page {
 				continue;
 			}
 
-			$bounds = self::block_opening_comment_end( $content, $pos );
-			if ( null === $bounds ) {
-				break;
-			}
-
 			$is_self_closing = $bounds['is_self_closing'];
-			$comment_end     = $bounds['comment_end'];
-			$comment         = substr( $content, $pos, $comment_end - $pos );
 
 			$match_info = [
 				'pos'             => $pos,
@@ -2186,12 +2202,6 @@ trait DiviOps_Agent_Page {
 		while ( null !== ( $opener = self::next_block_opener( $content, $offset ) ) ) {
 			$pos        = $opener['pos'];
 			$block_name = $opener['name'];
-			$type       = self::block_identifier_from_name( $block_name );
-
-			if ( ! isset( $type_counters[ $type ] ) ) {
-				$type_counters[ $type ] = 0;
-			}
-			$type_counters[ $type ]++;
 
 			// Determine if self-closing or container. Scan past the attribute
 			// JSON with string awareness: a raw strpos for the `-->` terminator
@@ -2205,6 +2215,19 @@ trait DiviOps_Agent_Page {
 			$is_self_closing = $bounds['is_self_closing'];
 			$comment_end     = $bounds['comment_end'];
 			$comment         = substr( $content, $pos, $comment_end - $pos );
+
+			// A global-layout wrapper counts as whatever it resolves to on
+			// read (#13); decode its own attrs only for that one block name,
+			// so every other block skips the JSON decode entirely.
+			$wrapper_attrs = self::GLOBAL_LAYOUT_BLOCK_NAME === $block_name
+				? self::extract_attrs_from_block_markup( $comment )
+				: null;
+			$type          = self::counted_block_identifier( $block_name, is_array( $wrapper_attrs ) ? $wrapper_attrs : null );
+
+			if ( ! isset( $type_counters[ $type ] ) ) {
+				$type_counters[ $type ] = 0;
+			}
+			$type_counters[ $type ]++;
 
 			// Calculate full block end (including inner blocks + closing tag for containers).
 			$block_end = $comment_end;
@@ -2729,7 +2752,25 @@ trait DiviOps_Agent_Page {
 			$block_name = $opener['name'];
 			$name_end   = $opener['name_end'];
 
-			if ( 'section' !== substr( (string) strrchr( $block_name, '/' ), 1 ) ) {
+			// A global-layout wrapper's own literal name never ends in
+			// "/section"; peek at its attrs so a wrapper resolving to a
+			// section is matched like any other section (#13), instead of
+			// silently skipped as a non-section block. The literal
+			// $block_name still drives the close-tag/depth logic below —
+			// only the "is this a section" classification uses the resolved
+			// name, since the wrapper's own closer is still its own name.
+			$wrapper_bounds = null;
+			$counted_name   = $block_name;
+			if ( self::GLOBAL_LAYOUT_BLOCK_NAME === $block_name ) {
+				$wrapper_bounds = self::block_opening_comment_end( $content, $pos );
+				if ( null !== $wrapper_bounds ) {
+					$wrapper_comment = substr( $content, $pos, $wrapper_bounds['comment_end'] - $pos );
+					$wrapper_attrs   = self::extract_attrs_from_block_markup( $wrapper_comment );
+					$counted_name    = self::counted_block_name( $block_name, is_array( $wrapper_attrs ) ? $wrapper_attrs : null );
+				}
+			}
+
+			if ( 'section' !== substr( (string) strrchr( $counted_name, '/' ), 1 ) ) {
 				$offset = $name_end;
 				continue;
 			}
@@ -2737,7 +2778,7 @@ trait DiviOps_Agent_Page {
 			$close_tag = self::BLOCK_CLOSE_PREFIX . $block_name . ' -->';
 			$close_len = strlen( $close_tag );
 
-			$bounds = self::block_opening_comment_end( $content, $pos );
+			$bounds = $wrapper_bounds ?? self::block_opening_comment_end( $content, $pos );
 			if ( null === $bounds ) {
 				break;
 			}
@@ -3028,8 +3069,10 @@ trait DiviOps_Agent_Page {
 				}
 			}
 
-			// Generate auto-index for this block type.
-			$short_name = self::block_identifier_from_name( (string) $block['blockName'] );
+			// Generate auto-index for this block type. A global-layout wrapper
+			// counts as whatever it resolves to (attrs.blockName), matching
+			// what page_get_layout's own parser expansion counts it as (#13).
+			$short_name = self::counted_block_identifier( (string) $block['blockName'], $attrs );
 			if ( ! isset( $counters[ $short_name ] ) ) {
 				$counters[ $short_name ] = 0;
 			}
@@ -3120,9 +3163,12 @@ trait DiviOps_Agent_Page {
 			$name  = isset( $block['blockName'] ) ? (string) $block['blockName'] : '';
 			$attrs = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : [];
 
-			// Auto-index counter: count every block of each type in document order.
+			// Auto-index counter: count every block of each type in document
+			// order. A global-layout wrapper counts as whatever it resolves
+			// to (attrs.blockName), matching page_get_layout's own parser
+			// expansion (#13).
 			if ( '' !== $name ) {
-				$short = self::block_identifier_from_name( $name );
+				$short = self::counted_block_identifier( $name, $attrs );
 				if ( ! isset( $counters[ $short ] ) ) {
 					$counters[ $short ] = 0;
 				}
@@ -3157,7 +3203,7 @@ trait DiviOps_Agent_Page {
 				if ( 2 === count( $parts ) && '' !== $parts[0] && ctype_digit( $parts[1] ) ) {
 					$ai_type = $parts[0];
 					$ai_n    = (int) $parts[1];
-					$short   = '' !== $name ? self::block_identifier_from_name( $name ) : '';
+					$short   = '' !== $name ? self::counted_block_identifier( $name, $attrs ) : '';
 					if ( '' !== $short && $short === $ai_type && ( $counters[ $short ] ?? 0 ) === $ai_n ) {
 						$matched = true;
 					}
