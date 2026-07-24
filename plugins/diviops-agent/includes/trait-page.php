@@ -2775,6 +2775,16 @@ trait DiviOps_Agent_Page {
 				continue;
 			}
 
+			// #13 can newly route a self-closing global-layout wrapper into
+			// the depth-scan below, which does not check is_self_closing
+			// before it starts (#12, pre-existing and out of scope here): a
+			// self-closing wrapper with no closer of its own scans forward
+			// for the next `<!-- /wp:divi/global-layout -->` in the document
+			// and either consumes an unrelated one or finds none, silently
+			// dropping the wrapper from $results instead of matching it as
+			// a self-contained span. Divi does not normally serialize
+			// global-layout as self-closing, so exposure is low; #12 fixes
+			// the root cause for every self-closing "*/section" opener.
 			$close_tag = self::BLOCK_CLOSE_PREFIX . $block_name . ' -->';
 			$close_len = strlen( $close_tag );
 

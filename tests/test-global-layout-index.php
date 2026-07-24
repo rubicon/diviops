@@ -140,6 +140,48 @@ assert_same(
 	'a global-layout wrapper with no blockName attr is not counted as a section by find_all_sections'
 );
 
+// Known limitation, pinned rather than left unspecified: find_all_sections()
+// does not check is_self_closing before its nesting depth-scan (#12,
+// pre-existing and explicitly out of scope for #13). A SELF-CLOSING wrapper
+// now passes the section filter after #13's fix, but the depth-scan still
+// starts looking for a closer that a self-closing block never has, so it
+// finds none here and silently drops the wrapper instead of matching its
+// one-comment span. find_block() is unaffected (it already checks
+// is_self_closing). This is NOT the fix's intended behavior — it documents
+// #12's root cause surfacing through a new path, so #12's own fix covers it.
+$self_closing_wrapper_page = implode(
+	'',
+	array(
+		'<!-- wp:divi/global-layout {"globalModule":"900298","blockName":"divi/section","builderVersion":"5.9.0"} /-->',
+		$section_two,
+	)
+);
+$self_closing_matches = diviops_call( 'find_all_sections', array( $self_closing_wrapper_page, '', '5.9.0' ) );
+assert_same(
+	1,
+	count( $self_closing_matches ),
+	'known limitation (#12): a self-closing wrapper resolving to a section is silently absent from find_all_sections, only the real section matches'
+);
+
+// find_block() already checks is_self_closing, so it is unaffected by #12 —
+// the self-closing wrapper still resolves to its own one-comment span.
+$self_closing_via_find_block = diviops_call( 'find_block', array( $self_closing_wrapper_page, '', '', 'section:1' ) );
+assert_true(
+	! is_wp_error( $self_closing_via_find_block ),
+	'find_block still resolves section:1 for a self-closing wrapper, unlike find_all_sections'
+);
+if ( ! is_wp_error( $self_closing_via_find_block ) ) {
+	$self_closing_markup = substr(
+		$self_closing_wrapper_page,
+		$self_closing_via_find_block['start'],
+		$self_closing_via_find_block['end'] - $self_closing_via_find_block['start']
+	);
+	assert_true(
+		'/-->' === substr( $self_closing_markup, -4 ),
+		"find_block's self-closing wrapper span stops at its own self-closing marker"
+	);
+}
+
 // ── parse_block_tree(): the read path itself, via diviops_call_ref ───────
 
 $tree_blocks = array(

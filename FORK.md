@@ -129,8 +129,19 @@ which is what the original scoping had assumed a fix would require.
 `module_move`'s parser-backed collector (`collect_parser_move_blocks()`) and
 `module_get`'s parser-backed fallback (`collect_readable_divi_blocks()`, reached
 only after the raw scanner already fails on malformed markup) were not brought
-into #13's fix and still count a wrapper literally. Flagged as a follow-up rather
-than folded in silently.
+into #13's fix and still count a wrapper literally. Tracked in #14 rather than
+folded in silently.
+
+`find_all_sections()` does not check `is_self_closing` before starting its
+nesting depth-scan — a pre-existing gap tracked in #12, unrelated to #13's own
+scope. #13 gives that gap a new way to surface: a **self-closing**
+`divi/global-layout` wrapper that resolves to a `*/section` name now passes the
+namespace-agnostic section filter, but since it has no closer of its own the
+depth-scan either consumes an unrelated later closer or finds none, silently
+dropping the wrapper from the results instead of matching its one-comment span.
+`find_block()` is unaffected (it already checks `is_self_closing`). Noted in code
+at the call site and on #12; #12 fixes the root cause for every self-closing
+`*/section` opener, wrapper or not.
 
 ### Still out of scope: the `module_lock` / `module_unlock` / `module_clone` write hazard
 
