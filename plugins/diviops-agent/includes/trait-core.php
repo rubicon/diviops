@@ -74,16 +74,18 @@ trait DiviOps_Agent_Core {
 	 * nesting level consumes the real closer and the enclosing block is never
 	 * resolved.
 	 *
+	 * Delegates to block_opening_comment_end() so this reads the same
+	 * string/escape-aware terminator the depth-scans that call it already use
+	 * for the same opener — a raw strpos for '-->' can match a sequence inside
+	 * the opener's own JSON attribute string before its real terminator.
+	 *
 	 * @param string $content Full block markup.
 	 * @param int    $pos     Offset of the opening comment.
 	 * @return bool
 	 */
 	private static function block_opener_is_self_closing( string $content, int $pos ): bool {
-		$comment_end = strpos( $content, '-->', $pos );
-		if ( false === $comment_end ) {
-			return false;
-		}
-		return '/' === ( $content[ $comment_end - 1 ] ?? '' );
+		$bounds = self::block_opening_comment_end( $content, $pos );
+		return null !== $bounds && $bounds['is_self_closing'];
 	}
 
 	/**
