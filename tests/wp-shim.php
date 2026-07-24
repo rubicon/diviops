@@ -138,6 +138,127 @@ if ( ! class_exists( 'WP_Block_Type_Registry' ) ) {
 	}
 }
 
+if ( ! function_exists( 'absint' ) ) {
+	function absint( $value ) {
+		return abs( (int) $value );
+	}
+}
+
+if ( ! function_exists( 'sanitize_text_field' ) ) {
+	function sanitize_text_field( $value ) {
+		$value = preg_replace( '/[\r\n\t ]+/', ' ', (string) $value );
+		return trim( (string) $value );
+	}
+}
+
+if ( ! function_exists( 'current_user_can' ) ) {
+	function current_user_can( ...$args ) {
+		return true;
+	}
+}
+
+if ( ! function_exists( 'wp_json_encode' ) ) {
+	function wp_json_encode( $data, $options = 0, $depth = 512 ) {
+		return json_encode( $data, $options, $depth );
+	}
+}
+
+if ( ! class_exists( 'WP_REST_Response' ) ) {
+	/**
+	 * Just enough of WP_REST_Response for envelope_success()/envelope_error() to
+	 * build a response and for tests to read it back via get_data().
+	 */
+	class WP_REST_Response {
+
+		private $data;
+		private $status;
+
+		public function __construct( $data = null, int $status = 200 ) {
+			$this->data   = $data;
+			$this->status = $status;
+		}
+
+		public function get_data() {
+			return $this->data;
+		}
+
+		public function set_data( $data ) {
+			$this->data = $data;
+		}
+
+		public function get_status(): int {
+			return $this->status;
+		}
+	}
+}
+
+if ( ! isset( $GLOBALS['diviops_test_posts'] ) ) {
+	$GLOBALS['diviops_test_posts'] = array();
+}
+
+if ( ! function_exists( 'get_post' ) ) {
+	function get_post( $post_id ) {
+		return $GLOBALS['diviops_test_posts'][ $post_id ] ?? null;
+	}
+}
+
+if ( ! function_exists( 'diviops_test_register_post' ) ) {
+	/**
+	 * Register a fake post for get_post() to return, so a REST-handler method
+	 * (one that takes a $request rather than raw content, like module_update())
+	 * can be exercised directly against the real plugin code instead of only
+	 * through its content-scanning internals.
+	 *
+	 * @param int    $post_id Post id.
+	 * @param string $content post_content.
+	 * @return object
+	 */
+	function diviops_test_register_post( int $post_id, string $content ) {
+		$post = (object) array(
+			'ID'           => $post_id,
+			'post_content' => $content,
+		);
+		$GLOBALS['diviops_test_posts'][ $post_id ] = $post;
+		return $post;
+	}
+}
+
+if ( ! class_exists( 'DiviOps_Test_Request' ) ) {
+	/**
+	 * Minimal stand-in for WP_REST_Request. get_param() plus array access for
+	 * `$request['id']` is everything module_update()/resolve_module_target()
+	 * call on the request object.
+	 */
+	class DiviOps_Test_Request implements ArrayAccess {
+
+		private $params;
+
+		public function __construct( array $params = array() ) {
+			$this->params = $params;
+		}
+
+		public function get_param( $key ) {
+			return $this->params[ $key ] ?? null;
+		}
+
+		public function offsetExists( $offset ): bool {
+			return isset( $this->params[ $offset ] );
+		}
+
+		public function offsetGet( $offset ): mixed {
+			return $this->params[ $offset ] ?? null;
+		}
+
+		public function offsetSet( $offset, $value ): void {
+			$this->params[ $offset ] = $value;
+		}
+
+		public function offsetUnset( $offset ): void {
+			unset( $this->params[ $offset ] );
+		}
+	}
+}
+
 if ( ! class_exists( 'DiviOps_Agent' ) ) {
 	require_once dirname( __DIR__ ) . '/plugins/diviops-agent/diviops-agent.php';
 }

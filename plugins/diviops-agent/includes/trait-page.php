@@ -1428,15 +1428,13 @@ trait DiviOps_Agent_Page {
 				continue;
 			}
 
-			$self_close = strpos( $content, '/-->', $pos );
-			$container  = strpos( $content, '-->', $pos );
-
-			if ( false === $container ) {
+			$bounds = self::block_opening_comment_end( $content, $pos );
+			if ( null === $bounds ) {
 				break;
 			}
 
-			$is_self_closing = ( $self_close !== false && $self_close <= $container + 1 );
-			$comment_end     = $is_self_closing ? $self_close + 4 : $container + 3;
+			$is_self_closing = $bounds['is_self_closing'];
+			$comment_end     = $bounds['comment_end'];
 			$comment         = substr( $content, $pos, $comment_end - $pos );
 
 			$match_info = [
@@ -2213,33 +2211,41 @@ trait DiviOps_Agent_Page {
 			if ( ! $is_self_closing ) {
 				$close_tag     = self::BLOCK_CLOSE_PREFIX . $block_name . ' -->';
 				$close_tag_len = strlen( $close_tag );
-				$open_tag      = self::BLOCK_OPEN_PREFIX . $block_name;
-				$open_tag_len  = strlen( $open_tag );
 				$depth         = 1;
 				$scan          = $comment_end;
 				$len           = strlen( $content );
 
 				while ( $depth > 0 && $scan < $len ) {
-					$next_open  = strpos( $content, $open_tag, $scan );
 					$next_close = strpos( $content, $close_tag, $scan );
+					// Any opener between here and the next raw closer match must be
+					// resolved first: a descendant's own attribute JSON can legally
+					// contain this container's closing comment as string content, and
+					// a raw strpos for $close_tag cannot tell that occurrence apart
+					// from the real one. Walking every opener in document order and
+					// jumping past its own JSON-aware span (rather than just past its
+					// name) guarantees the raw match, once nothing precedes it, is the
+					// genuine closer and not text hiding inside an unresolved opener.
+					$next_open = self::next_block_opener( $content, $scan );
+					if ( null !== $next_open && ( false === $next_close || $next_open['pos'] < $next_close ) ) {
+						if ( $next_open['name'] === $block_name && ! self::block_opener_is_self_closing( $content, $next_open['pos'] ) ) {
+							$depth++;
+						}
+						$open_bounds = self::block_opening_comment_end( $content, $next_open['pos'] );
+						if ( null === $open_bounds ) {
+							break;
+						}
+						$scan = $open_bounds['comment_end'];
+						continue;
+					}
+
 					if ( false === $next_close ) {
 						break;
 					}
-					// Validate $next_open is the exact type (not a prefix of a longer
-					// name) and that it actually opens a container.
-					if ( false !== $next_open && $next_open < $next_close ) {
-						$char_after = $content[ $next_open + $open_tag_len ] ?? '';
-						if ( ( ' ' === $char_after || '{' === $char_after ) && ! self::block_opener_is_self_closing( $content, $next_open ) ) {
-							$depth++;
-						}
-						$scan = $next_open + $open_tag_len;
-					} else {
-						$depth--;
-						if ( 0 === $depth ) {
-							$block_end = $next_close + $close_tag_len;
-						}
-						$scan = $next_close + $close_tag_len;
+					$depth--;
+					if ( 0 === $depth ) {
+						$block_end = $next_close + $close_tag_len;
 					}
+					$scan = $next_close + $close_tag_len;
 				}
 
 				// If closing tag was never found, the content is malformed.
@@ -2347,12 +2353,12 @@ trait DiviOps_Agent_Page {
 	}
 
 	private static function extract_attrs_from_block_markup( string $markup ) {
-		$comment_end = strpos( $markup, '-->' );
-		if ( false === $comment_end ) {
+		$bounds = self::block_opening_comment_end( $markup, 0 );
+		if ( null === $bounds ) {
 			return new WP_Error( 'parse_error', 'Malformed block markup: no opening comment terminator found.', [ 'status' => 500 ] );
 		}
 
-		$comment    = substr( $markup, 0, $comment_end + 3 );
+		$comment    = substr( $markup, 0, $bounds['comment_end'] );
 		$json_start = strpos( $comment, '{' );
 		if ( false === $json_start ) {
 			return [];
@@ -2728,52 +2734,58 @@ trait DiviOps_Agent_Page {
 				continue;
 			}
 
-			$open_tag  = self::BLOCK_OPEN_PREFIX . $block_name;
 			$close_tag = self::BLOCK_CLOSE_PREFIX . $block_name . ' -->';
-			$open_len  = strlen( $open_tag );
 			$close_len = strlen( $close_tag );
 
-			$comment_end = strpos( $content, '-->', $pos );
-			if ( false === $comment_end ) {
+			$bounds = self::block_opening_comment_end( $content, $pos );
+			if ( null === $bounds ) {
 				break;
 			}
-			$comment = substr( $content, $pos, $comment_end - $pos + 3 );
+			$comment_end = $bounds['comment_end'];
+			$comment     = substr( $content, $pos, $comment_end - $pos );
 
 			// For label mode, check the opening comment first (short-circuit).
 			if ( '' !== $needle && false === strpos( $comment, $needle ) ) {
-				$offset = $comment_end + 3;
+				$offset = $comment_end;
 				continue;
 			}
 
 			// Find closing tag by counting nested sections.
-			$opening_end = $comment_end + 3;
 			$depth       = 1;
-			$scan        = $opening_end;
+			$scan        = $comment_end;
 			$len         = strlen( $content );
 			$section_end = false;
 
 			while ( $depth > 0 && $scan < $len ) {
-				$next_open  = strpos( $content, $open_tag, $scan );
 				$next_close = strpos( $content, $close_tag, $scan );
-				if ( false === $next_close ) {
-					break;
-				}
-				if ( false !== $next_open && $next_open < $next_close ) {
+				// As in find_block(), resolve any intervening opener via its own
+				// JSON-aware span before trusting a raw $close_tag match: a
+				// descendant's attribute JSON can legally contain this section's
+				// own closing comment as string content.
+				$next_open = self::next_block_opener( $content, $scan );
+				if ( null !== $next_open && ( false === $next_close || $next_open['pos'] < $next_close ) ) {
 					// Only a same-name nested section raises depth; a longer name
 					// sharing this prefix is a different block, and a self-closing
 					// one has no closer to consume.
-					$char_after = $content[ $next_open + $open_len ] ?? '';
-					if ( ( ' ' === $char_after || '{' === $char_after ) && ! self::block_opener_is_self_closing( $content, $next_open ) ) {
+					if ( $next_open['name'] === $block_name && ! self::block_opener_is_self_closing( $content, $next_open['pos'] ) ) {
 						$depth++;
 					}
-					$scan = $next_open + $open_len;
-				} else {
-					$depth--;
-					if ( 0 === $depth ) {
-						$section_end = $next_close + $close_len;
+					$open_bounds = self::block_opening_comment_end( $content, $next_open['pos'] );
+					if ( null === $open_bounds ) {
+						break;
 					}
-					$scan = $next_close + $close_len;
+					$scan = $open_bounds['comment_end'];
+					continue;
 				}
+
+				if ( false === $next_close ) {
+					break;
+				}
+				$depth--;
+				if ( 0 === $depth ) {
+					$section_end = $next_close + $close_len;
+				}
+				$scan = $next_close + $close_len;
 			}
 
 			if ( false !== $section_end ) {
@@ -2789,7 +2801,7 @@ trait DiviOps_Agent_Page {
 				}
 			}
 
-			$offset = $comment_end + 3;
+			$offset = $comment_end;
 		}
 
 		return $results;
