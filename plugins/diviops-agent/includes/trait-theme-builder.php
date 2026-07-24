@@ -529,10 +529,6 @@ trait DiviOps_Agent_ThemeBuilder {
 		}
 
 		foreach ( $matches as $match ) {
-			$block_name = (string) ( $match[2] ?? '' );
-			if ( 0 !== strpos( $block_name, 'divi/' ) ) {
-				continue;
-			}
 			$tail  = (string) ( $match[3] ?? '' );
 			$start = strpos( $tail, '{' );
 			$end   = strrpos( $tail, '}' );
@@ -703,10 +699,6 @@ trait DiviOps_Agent_ThemeBuilder {
 		}
 
 		foreach ( $matches as $match ) {
-			$block_name = (string) ( $match[2] ?? '' );
-			if ( 0 !== strpos( $block_name, 'divi/' ) ) {
-				continue;
-			}
 			$tail  = (string) ( $match[3] ?? '' );
 			$start = strpos( $tail, '{' );
 			$end   = strrpos( $tail, '}' );
@@ -1383,10 +1375,10 @@ trait DiviOps_Agent_ThemeBuilder {
 				}
 				continue;
 			}
-			if ( 0 !== strpos( (string) $block['blockName'], 'divi/' ) ) {
+			if ( ! preg_match( '#^' . self::BLOCK_NAME_PATTERN . '$#', (string) $block['blockName'] ) ) {
 				return new WP_Error(
 					'invalid_input',
-					sprintf( "content contains non-Divi block '%s'.", (string) $block['blockName'] ),
+					sprintf( "content contains '%s', which is not a valid namespaced block name.", (string) $block['blockName'] ),
 					[ 'status' => 400 ]
 				);
 			}
@@ -1427,7 +1419,7 @@ trait DiviOps_Agent_ThemeBuilder {
 		foreach ( $blocks as $block ) {
 			if ( empty( $block['blockName'] ) ) {
 				$inner = implode( '', $block['innerContent'] ?? [] );
-				if ( false !== strpos( $inner, '<!-- wp:divi/' ) ) {
+				if ( preg_match( '#' . preg_quote( self::BLOCK_OPEN_PREFIX, '#' ) . self::BLOCK_NAME_PATTERN . '#', $inner ) ) {
 					return new WP_Error(
 						'invalid_input',
 						$field . ' contains malformed Divi block comments that failed to parse.',
@@ -1519,10 +1511,10 @@ trait DiviOps_Agent_ThemeBuilder {
 	}
 
 	private static function parse_tb_parent_selector( string $selector ) {
-		if ( ! preg_match( '/^(divi\/[a-z0-9_-]+)(?:\[adminLabel=(["\'])(.*?)\2\])?$/i', $selector, $m ) ) {
+		if ( ! preg_match( '/^([a-z0-9_-]+\/[a-z0-9_-]+)(?:\[adminLabel=(["\'])(.*?)\2\])?$/i', $selector, $m ) ) {
 			return new WP_Error(
 				'invalid_input',
-				'parent_selector must look like divi/group or divi/group[adminLabel="Legal Col"].',
+				'parent_selector must be a namespaced block name such as divi/group or divi/group[adminLabel="Legal Col"].',
 				[ 'status' => 400 ]
 			);
 		}
