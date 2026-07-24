@@ -36,6 +36,70 @@ trait DiviOps_Agent_Core {
 	}
 
 	/**
+	 * Targeting identifier for a block name.
+	 *
+	 * `divi/text` addresses as `text`, `difl/faq` addresses as `difl/faq`. This
+	 * is the single definition of that mapping: page_get_layout hands these
+	 * identifiers to callers, and every targeting path resolves them back, so
+	 * the two cannot drift into the read/write asymmetry this replaces.
+	 *
+	 * @param string $block_name Full block name.
+	 * @return string
+	 */
+	private static function block_identifier_from_name( string $block_name ): string {
+		if ( 0 === strpos( $block_name, self::DEFAULT_BLOCK_NS ) ) {
+			return substr( $block_name, strlen( self::DEFAULT_BLOCK_NS ) );
+		}
+		return $block_name;
+	}
+
+	/**
+	 * Inverse of block_identifier_from_name().
+	 *
+	 * @param string $identifier Targeting identifier.
+	 * @return string
+	 */
+	private static function block_name_from_identifier( string $identifier ): string {
+		if ( false === strpos( $identifier, '/' ) ) {
+			return self::DEFAULT_BLOCK_NS . $identifier;
+		}
+		return $identifier;
+	}
+
+	/**
+	 * Locate the next block opening comment at or after $offset.
+	 *
+	 * A block name carries its own `/` separator, so the raw scanners cannot
+	 * treat the first slash after the tag as the end of the name. Anchoring the
+	 * name pattern at the byte after the opener keeps `difl/faq` intact where
+	 * scanning to the first delimiter would truncate it to `difl`.
+	 *
+	 * @param string $content Full block markup.
+	 * @param int    $offset  Byte offset to search from.
+	 * @return array{pos:int,name:string,name_end:int}|null
+	 */
+	private static function next_block_opener( string $content, int $offset ) {
+		$pos = strpos( $content, self::BLOCK_OPEN_PREFIX, $offset );
+
+		while ( false !== $pos ) {
+			$name_start = $pos + strlen( self::BLOCK_OPEN_PREFIX );
+			$matched    = preg_match( '/' . self::BLOCK_NAME_PATTERN . '/A', $content, $match, 0, $name_start );
+
+			if ( 1 === $matched ) {
+				return [
+					'pos'      => $pos,
+					'name'     => $match[0],
+					'name_end' => $name_start + strlen( $match[0] ),
+				];
+			}
+
+			$pos = strpos( $content, self::BLOCK_OPEN_PREFIX, $pos + 1 );
+		}
+
+		return null;
+	}
+
+	/**
 	 * Normalize Divi block comment attributes before full-content writes.
 	 *
 	 * WordPress block attributes may contain HTML strings, but the serialized
@@ -63,7 +127,7 @@ trait DiviOps_Agent_Core {
 				$block     = $matches[2];
 				$tail      = $matches[3];
 
-				if ( $is_closer || 0 !== strpos( $block, 'divi/' ) ) {
+				if ( $is_closer ) {
 					return $matches[0];
 				}
 
@@ -271,9 +335,10 @@ trait DiviOps_Agent_Core {
 	 * @return array{openers:int,self_closers:int,container_openers:int,closers:int}
 	 */
 	private static function divi_content_marker_counts( string $content ): array {
-		$openers      = preg_match_all( '/<!--\s+wp:divi\//', $content );
-		$self_closers = preg_match_all( '/<!--\s+wp:divi\/(?:(?!-->).)*?\/-->/s', $content );
-		$closers      = preg_match_all( '/<!--\s+\/wp:divi\//', $content );
+		$name         = self::BLOCK_NAME_PATTERN;
+		$openers      = preg_match_all( '/<!--\s+wp:' . $name . '/', $content );
+		$self_closers = preg_match_all( '/<!--\s+wp:' . $name . '(?:(?!-->).)*?\/-->/s', $content );
+		$closers      = preg_match_all( '/<!--\s+\/wp:' . $name . '/', $content );
 
 		return [
 			'openers'           => (int) $openers,
@@ -291,7 +356,7 @@ trait DiviOps_Agent_Core {
 	 */
 	private static function validate_divi_marker_sequence( string $content ): array {
 		$matched = preg_match_all(
-			'/<!--\s+(\/)?wp:divi\/([A-Za-z0-9_-]+)(?:(?!-->).)*?(\/)?-->/s',
+			'/<!--\s+(\/)?wp:(' . self::BLOCK_NAME_PATTERN . ')(?:(?!-->).)*?(\/)?-->/s',
 			$content,
 			$matches,
 			PREG_SET_ORDER | PREG_OFFSET_CAPTURE

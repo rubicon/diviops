@@ -186,6 +186,21 @@ class DiviOps_Agent {
 	const BLOCK_PREFIX  = '<!-- wp:divi/';
 
 	/**
+	 * Namespace-agnostic block comment constants.
+	 *
+	 * Divi 5 renders third-party modules as ordinary namespaced blocks
+	 * (`difl/faq`, `d5bgo/bg-overlay`), and page_get_layout already reports them.
+	 * Targeting scans key off these so a module is addressable by whatever
+	 * namespace it actually carries. The `divi/`-specific constants above are
+	 * retained because they are public class constants that external code may
+	 * reference.
+	 */
+	const BLOCK_OPEN_PREFIX   = '<!-- wp:';
+	const BLOCK_CLOSE_PREFIX  = '<!-- /wp:';
+	const BLOCK_NAME_PATTERN  = '[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+';
+	const DEFAULT_BLOCK_NS    = 'divi/';
+
+	/**
 	 * Default rate limits (requests per minute).
 	 */
 	const RATE_LIMIT_READ  = 120;

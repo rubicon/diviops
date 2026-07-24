@@ -1286,7 +1286,7 @@ trait DiviOps_Agent_Page {
 				'occurrence' => $target['occurrence'],
 			],
 			'module'     => [
-				'block_name'    => 'divi/' . $match['type'],
+				'block_name'    => self::block_name_from_identifier( $match['type'] ),
 				'block_type'    => $match['type'],
 				'admin_label'   => self::module_admin_label_from_attrs( $attrs ),
 				'auto_index'    => $match['auto_index'] ?? '',
@@ -1404,24 +1404,11 @@ trait DiviOps_Agent_Page {
 		$found_match   = null; // The single match to apply.
 		$type_counters = []; // For auto_index mode.
 
-		$prefix_len = strlen( self::BLOCK_PREFIX );
-		$offset     = 0;
-		while ( false !== ( $pos = strpos( $content, self::BLOCK_PREFIX, $offset ) ) ) {
-			// Find the block type name — ends at space, / (self-closing), or --> (bare close).
-			$search_from   = $pos + $prefix_len;
-			$space_pos     = strpos( $content, ' ', $search_from );
-			$slash_pos     = strpos( $content, '/', $search_from );
-			$comment_close = strpos( $content, '-->', $search_from );
-
-			$type_end = min(
-				false !== $space_pos     ? $space_pos     : PHP_INT_MAX,
-				false !== $slash_pos     ? $slash_pos     : PHP_INT_MAX,
-				false !== $comment_close ? $comment_close : PHP_INT_MAX
-			);
-			if ( PHP_INT_MAX === $type_end ) {
-				break;
-			}
-			$type = substr( $content, $search_from, $type_end - $search_from );
+		$offset = 0;
+		while ( null !== ( $opener = self::next_block_opener( $content, $offset ) ) ) {
+			$pos       = $opener['pos'];
+			$type_end  = $opener['name_end'];
+			$type      = self::block_identifier_from_name( $opener['name'] );
 
 			// Track auto_index counters per type (document order) — count ALL blocks
 			// including those without JSON attrs, to match parse_blocks() counting.
@@ -1431,8 +1418,9 @@ trait DiviOps_Agent_Page {
 			$type_counters[ $type ]++;
 
 			// Blocks without JSON attrs can't be updated, but still count for auto_index.
+			$name_char = isset( $content[ $type_end ] ) ? $content[ $type_end ] : '';
 			$next_char = isset( $content[ $type_end + 1 ] ) ? $content[ $type_end + 1 ] : '';
-			$has_json  = ( ' ' === $content[ $type_end ] && '{' === $next_char );
+			$has_json  = ( ' ' === $name_char && '{' === $next_char );
 			if ( ! $has_json ) {
 				// Skip to end of comment for non-JSON blocks.
 				$skip_end = strpos( $content, '-->', $pos );
@@ -1576,7 +1564,7 @@ trait DiviOps_Agent_Page {
 
 			return self::envelope_error(
 				'invalid_input',
-				"Attr path '{$content_slot_mismatch['path']}' targets a content slot that does not belong to divi/{$type}.",
+				"Attr path '{$content_slot_mismatch['path']}' targets a content slot that does not belong to " . self::block_name_from_identifier( $type ) . '.',
 				'Use diviops_module_get or diviops_page_get_layout to confirm the matched block type; prefer auto_index for generic text matches.',
 				400,
 				$content_slot_mismatch
@@ -1643,7 +1631,7 @@ trait DiviOps_Agent_Page {
 			$block_attrs = self::restore_empty_objects( $block_attrs, $empty_object_paths );
 		}
 		$new_json    = wp_json_encode( $block_attrs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
-		$prefix      = '<!-- wp:divi/' . $type . ' ';
+		$prefix      = self::BLOCK_OPEN_PREFIX . self::block_name_from_identifier( $type ) . ' ';
 		$suffix      = $is_self_closing ? ' /-->' : ' -->';
 		$new_comment = $prefix . $new_json . $suffix;
 
@@ -1803,8 +1791,8 @@ trait DiviOps_Agent_Page {
 	private static function collect_readable_divi_blocks( array $blocks, array &$flat_modules, array &$type_counts ) {
 		foreach ( $blocks as $block ) {
 			$name = isset( $block['blockName'] ) ? (string) $block['blockName'] : '';
-			if ( 0 === strpos( $name, 'divi/' ) ) {
-				$type = substr( $name, 5 );
+			if ( '' !== $name ) {
+				$type = self::block_identifier_from_name( $name );
 				if ( ! isset( $type_counts[ $type ] ) ) {
 					$type_counts[ $type ] = 0;
 				}
@@ -1842,8 +1830,8 @@ trait DiviOps_Agent_Page {
 		foreach ( $blocks as $index => $block ) {
 			$path = array_merge( $parent_path, [ $index ] );
 			$name = isset( $block['blockName'] ) ? (string) $block['blockName'] : '';
-			if ( 0 === strpos( $name, 'divi/' ) ) {
-				$type = substr( $name, 5 );
+			if ( '' !== $name ) {
+				$type = self::block_identifier_from_name( $name );
 				$type_counts[ $type ] = ( $type_counts[ $type ] ?? 0 ) + 1;
 				$attrs   = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : [];
 				$shallow = $block;
@@ -2141,27 +2129,15 @@ trait DiviOps_Agent_Page {
 			$ai_target = (int) $parts[1];
 		}
 
-		$prefix_len    = strlen( self::BLOCK_PREFIX );
 		$offset        = 0;
 		$type_counters = [];
 		$all_matches   = [];
 		$found_match   = null;
 
-		while ( false !== ( $pos = strpos( $content, self::BLOCK_PREFIX, $offset ) ) ) {
-			$search_from   = $pos + $prefix_len;
-			$space_pos     = strpos( $content, ' ', $search_from );
-			$slash_pos     = strpos( $content, '/', $search_from );
-			$comment_close = strpos( $content, '-->', $search_from );
-
-			$type_end = min(
-				false !== $space_pos     ? $space_pos     : PHP_INT_MAX,
-				false !== $slash_pos     ? $slash_pos     : PHP_INT_MAX,
-				false !== $comment_close ? $comment_close : PHP_INT_MAX
-			);
-			if ( PHP_INT_MAX === $type_end ) {
-				break;
-			}
-			$type = substr( $content, $search_from, $type_end - $search_from );
+		while ( null !== ( $opener = self::next_block_opener( $content, $offset ) ) ) {
+			$pos        = $opener['pos'];
+			$block_name = $opener['name'];
+			$type       = self::block_identifier_from_name( $block_name );
 
 			if ( ! isset( $type_counters[ $type ] ) ) {
 				$type_counters[ $type ] = 0;
@@ -2181,9 +2157,9 @@ trait DiviOps_Agent_Page {
 			// Calculate full block end (including inner blocks + closing tag for containers).
 			$block_end = $comment_end;
 			if ( ! $is_self_closing ) {
-				$close_tag     = '<!-- /wp:divi/' . $type . ' -->';
+				$close_tag     = self::BLOCK_CLOSE_PREFIX . $block_name . ' -->';
 				$close_tag_len = strlen( $close_tag );
-				$open_tag      = '<!-- wp:divi/' . $type;
+				$open_tag      = self::BLOCK_OPEN_PREFIX . $block_name;
 				$open_tag_len  = strlen( $open_tag );
 				$depth         = 1;
 				$scan          = $comment_end;
@@ -2684,17 +2660,23 @@ trait DiviOps_Agent_Page {
 		$results = [];
 		$offset  = 0;
 
-		$open_len  = strlen( self::SECTION_OPEN );
-		$close_len = strlen( self::SECTION_CLOSE );
+		// Match section blocks in any namespace, with or without JSON attrs. The
+		// name pattern ends at the block name, so 'divi/section-special' parses as
+		// its own name rather than matching as a longer 'divi/section'.
+		while ( null !== ( $opener = self::next_block_opener( $content, $offset ) ) ) {
+			$pos        = $opener['pos'];
+			$block_name = $opener['name'];
+			$name_end   = $opener['name_end'];
 
-		// Match sections with or without JSON attrs.
-		while ( false !== ( $pos = strpos( $content, self::SECTION_OPEN, $offset ) ) ) {
-			// Ensure this is 'divi/section', not a longer name like 'divi/section-special'.
-			// Valid chars after the tag name: ' ' (bare) or '{' (has JSON attrs).
-			if ( isset( $content[ $pos + $open_len ] ) && ' ' !== $content[ $pos + $open_len ] && '{' !== $content[ $pos + $open_len ] ) {
-				$offset = $pos + $open_len;
+			if ( 'section' !== substr( (string) strrchr( $block_name, '/' ), 1 ) ) {
+				$offset = $name_end;
 				continue;
 			}
+
+			$open_tag  = self::BLOCK_OPEN_PREFIX . $block_name;
+			$close_tag = self::BLOCK_CLOSE_PREFIX . $block_name . ' -->';
+			$open_len  = strlen( $open_tag );
+			$close_len = strlen( $close_tag );
 
 			$comment_end = strpos( $content, '-->', $pos );
 			if ( false === $comment_end ) {
@@ -2716,13 +2698,18 @@ trait DiviOps_Agent_Page {
 			$section_end = false;
 
 			while ( $depth > 0 && $scan < $len ) {
-				$next_open  = strpos( $content, self::SECTION_OPEN, $scan );
-				$next_close = strpos( $content, self::SECTION_CLOSE, $scan );
+				$next_open  = strpos( $content, $open_tag, $scan );
+				$next_close = strpos( $content, $close_tag, $scan );
 				if ( false === $next_close ) {
 					break;
 				}
 				if ( false !== $next_open && $next_open < $next_close ) {
-					$depth++;
+					// Only a same-name nested section raises depth; a longer name
+					// sharing this prefix is a different block.
+					$char_after = $content[ $next_open + $open_len ] ?? '';
+					if ( ' ' === $char_after || '{' === $char_after ) {
+						$depth++;
+					}
 					$scan = $next_open + $open_len;
 				} else {
 					$depth--;
@@ -2974,7 +2961,7 @@ trait DiviOps_Agent_Page {
 			}
 
 			// Generate auto-index for this block type.
-			$short_name = str_replace( 'divi/', '', $block['blockName'] );
+			$short_name = self::block_identifier_from_name( (string) $block['blockName'] );
 			if ( ! isset( $counters[ $short_name ] ) ) {
 				$counters[ $short_name ] = 0;
 			}
@@ -3010,8 +2997,8 @@ trait DiviOps_Agent_Page {
 	private static function get_active_module_count() {
 		$registry = WP_Block_Type_Registry::get_instance();
 		$count    = 0;
-		foreach ( array_keys( $registry->get_all_registered() ) as $name ) {
-			if ( 0 === strpos( $name, 'divi/' ) ) {
+		foreach ( $registry->get_all_registered() as $name => $block_type ) {
+			if ( self::is_divi_module_block( $name, $block_type ) ) {
 				$count++;
 			}
 		}
@@ -3066,8 +3053,8 @@ trait DiviOps_Agent_Page {
 			$attrs = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : [];
 
 			// Auto-index counter: count every block of each type in document order.
-			if ( 0 === strpos( $name, 'divi/' ) ) {
-				$short = substr( $name, 5 );
+			if ( '' !== $name ) {
+				$short = self::block_identifier_from_name( $name );
 				if ( ! isset( $counters[ $short ] ) ) {
 					$counters[ $short ] = 0;
 				}
@@ -3102,8 +3089,8 @@ trait DiviOps_Agent_Page {
 				if ( 2 === count( $parts ) && '' !== $parts[0] && ctype_digit( $parts[1] ) ) {
 					$ai_type = $parts[0];
 					$ai_n    = (int) $parts[1];
-					$short   = 0 === strpos( $name, 'divi/' ) ? substr( $name, 5 ) : '';
-					if ( $short === $ai_type && ( $counters[ $short ] ?? 0 ) === $ai_n ) {
+					$short   = '' !== $name ? self::block_identifier_from_name( $name ) : '';
+					if ( '' !== $short && $short === $ai_type && ( $counters[ $short ] ?? 0 ) === $ai_n ) {
 						$matched = true;
 					}
 				}

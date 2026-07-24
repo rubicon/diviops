@@ -17,6 +17,30 @@ if ( ! defined( 'ABSPATH' ) ) {
 trait DiviOps_Agent_ModuleSchema {
 
 	/**
+	 * True when a registered block is a Divi module for schema/targeting purposes.
+	 *
+	 * The block-type registry alone cannot answer this: on a live site Divi's own
+	 * core modules (e.g. `divi/text`, `divi/section`) are largely NOT registered
+	 * with WP_Block_Type_Registry, so gating on namespace membership in the
+	 * registry would reject them. A block counts as a Divi module when its
+	 * namespace is `divi`, OR its category is `module`/`child-module` — the
+	 * category third-party Divi 5 modules (`difl/*`, `d5bgo/*`) register under,
+	 * which unrelated blocks (`core/*`, `gravityforms/*`, `pdfemb/*`, `tec/*`)
+	 * do not use.
+	 *
+	 * @param string $name       Full block name.
+	 * @param mixed  $block_type Registered WP_Block_Type instance.
+	 * @return bool
+	 */
+	private static function is_divi_module_block( string $name, $block_type ): bool {
+		if ( 0 === strpos( $name, 'divi/' ) ) {
+			return true;
+		}
+		$category = $block_type->category ?? '';
+		return in_array( $category, [ 'module', 'child-module' ], true );
+	}
+
+	/**
 	 * List all registered Divi modules with basic info.
 	 *
 	 * Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.
@@ -27,7 +51,7 @@ trait DiviOps_Agent_ModuleSchema {
 		$modules  = [];
 
 		foreach ( $all as $name => $block_type ) {
-			if ( 0 !== strpos( $name, 'divi/' ) ) {
+			if ( ! self::is_divi_module_block( $name, $block_type ) ) {
 				continue;
 			}
 
@@ -64,7 +88,7 @@ trait DiviOps_Agent_ModuleSchema {
 		$modules  = [];
 
 		foreach ( $all as $name => $block_type ) {
-			if ( 0 !== strpos( $name, 'divi/' ) ) {
+			if ( ! self::is_divi_module_block( $name, $block_type ) ) {
 				continue;
 			}
 
@@ -206,10 +230,8 @@ trait DiviOps_Agent_ModuleSchema {
 	public static function schema_get_module( $request ) {
 		$name = sanitize_text_field( (string) $request['name'] );
 
-		// Normalize: accept "text" or "divi/text".
-		if ( 0 !== strpos( $name, 'divi/' ) ) {
-			$name = 'divi/' . $name;
-		}
+		// Normalize: accept "text", "divi/text", or "difl/faq".
+		$name = self::block_name_from_identifier( $name );
 
 		$registry   = WP_Block_Type_Registry::get_instance();
 		$block_type = $registry->get_registered( $name );
