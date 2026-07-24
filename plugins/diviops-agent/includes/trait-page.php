@@ -2089,6 +2089,57 @@ trait DiviOps_Agent_Page {
 	}
 
 	/**
+	 * Locate the end of a block opening comment, skipping any `-->` that sits
+	 * inside a JSON attribute string value.
+	 *
+	 * The opening comment is `<!-- wp:NAME {JSON} -->`, or `... /-->` when the
+	 * block is self-closing. A `content` attribute can legally hold example
+	 * markup whose text contains `-->`, so a raw strpos for the terminator
+	 * matches that inner sequence first and reports a comment end in the middle
+	 * of the block's own JSON. Scanning from the opener with string and escape
+	 * awareness finds the real terminator: the first `-->` that is not inside a
+	 * string, since `>` cannot otherwise appear in the comment's JSON payload.
+	 *
+	 * @param string $content Full block markup.
+	 * @param int    $pos     Offset of the opening `<!-- wp:` comment.
+	 * @return array{comment_end:int,is_self_closing:bool}|null Null when no
+	 *         terminator is found (malformed markup).
+	 */
+	private static function block_opening_comment_end( string $content, int $pos ) {
+		$len       = strlen( $content );
+		$in_string = false;
+
+		for ( $i = $pos; $i < $len; $i++ ) {
+			$char = $content[ $i ];
+
+			if ( $in_string ) {
+				if ( '\\' === $char ) {
+					$i++; // Skip the escaped character.
+					continue;
+				}
+				if ( '"' === $char ) {
+					$in_string = false;
+				}
+				continue;
+			}
+
+			if ( '"' === $char ) {
+				$in_string = true;
+				continue;
+			}
+
+			if ( '-' === $char && '-' === ( $content[ $i + 1 ] ?? '' ) && '>' === ( $content[ $i + 2 ] ?? '' ) ) {
+				return array(
+					'comment_end'     => $i + 3,
+					'is_self_closing' => '/' === ( $content[ $i - 1 ] ?? '' ),
+				);
+			}
+		}
+
+		return null;
+	}
+
+	/**
 	 * Find a block by label, match_text, or auto_index and return its full bounds.
 	 *
 	 * Returns the block's start/end positions in the content string, including
@@ -2144,14 +2195,17 @@ trait DiviOps_Agent_Page {
 			}
 			$type_counters[ $type ]++;
 
-			// Determine if self-closing or container.
-			$self_close = strpos( $content, '/-->', $pos );
-			$container  = strpos( $content, '-->', $pos );
-			if ( false === $container ) {
+			// Determine if self-closing or container. Scan past the attribute
+			// JSON with string awareness: a raw strpos for the `-->` terminator
+			// matches the first occurrence anywhere after the opener, including a
+			// `-->` inside a content string carrying example markup, which ends
+			// the span in the middle of the block's own JSON.
+			$bounds = self::block_opening_comment_end( $content, $pos );
+			if ( null === $bounds ) {
 				break;
 			}
-			$is_self_closing = ( false !== $self_close && $self_close <= $container + 1 );
-			$comment_end     = $is_self_closing ? $self_close + 4 : $container + 3;
+			$is_self_closing = $bounds['is_self_closing'];
+			$comment_end     = $bounds['comment_end'];
 			$comment         = substr( $content, $pos, $comment_end - $pos );
 
 			// Calculate full block end (including inner blocks + closing tag for containers).
