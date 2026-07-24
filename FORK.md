@@ -71,7 +71,7 @@ an upstream merge:
 | ---- | ------------- | ----- |
 | `plugins/diviops-agent/diviops-agent.php` | Adds namespace-agnostic block-comment constants (`BLOCK_OPEN_PREFIX`, `BLOCK_CLOSE_PREFIX`, `BLOCK_NAME_PATTERN`, `DEFAULT_BLOCK_NS`). The `divi/`-specific `SECTION_OPEN`, `SECTION_CLOSE`, and `BLOCK_PREFIX` constants are retained, unused, because they are public class constants external code may reference (#2). Adds `GLOBAL_LAYOUT_BLOCK_NAME` for the `divi/global-layout` wrapper name every counting site checks against (#13). | #2, #13 |
 | `plugins/diviops-agent/includes/trait-core.php` | Adds the `block_identifier_from_name()` / `block_name_from_identifier()` pair that defines the targeting-identifier contract, plus `next_block_opener()`. Makes the write-safety marker census, the marker-sequence validator, and block-attr normalization namespace-aware (#2). `block_opener_is_self_closing()` delegates to `block_opening_comment_end()` instead of a raw `strpos` for `-->`, so it no longer misreads a container as self-closing when an attribute value contains a `/-->`-shaped sequence (#6). Adds `counted_block_name()` / `counted_block_identifier()`, which resolve a `divi/global-layout` wrapper's counted type from its own `attrs.blockName` (falling back to the wrapper's literal name when that attr is absent), so every counting site agrees with what `page_get_layout` counts the wrapper as on read (#13). | #2, #6, #13 |
-| `plugins/diviops-agent/includes/trait-page.php` | Namespace-agnostic raw scanners in `module_update()` and `find_block()`, `*/section` matching in `find_all_sections()`, shared identifier derivation in `parse_block_tree()` and `walk_and_mutate()`, and namespace-agnostic parser-backed collectors for the `module_get` / `module_move` fallbacks (#2). Adds `block_opening_comment_end()`, a JSON-string-aware scan that keeps `find_block()` from truncating a module's span when a `-->` appears inside one of its attribute values (#5). Routes the remaining raw `strpos($content, '-->', $pos)` sites through that same helper: `find_block()`'s own container depth-scan, `module_update()`'s attribute-span scan, `extract_attrs_from_block_markup()`, and both the opening-comment scan and depth-scan in `find_all_sections()` — closing the class of bug where a descendant module's attribute JSON contains an ancestor's closing comment, or a block's own attribute JSON contains a `-->` (#6). `find_block()`, `module_update()`'s inline scanner, `find_all_sections()`, `parse_block_tree()`, and `walk_and_mutate()` all route their type/section resolution through `counted_block_name()` / `counted_block_identifier()`, so a `divi/global-layout` wrapper counts as the type it resolves to instead of counting literally as `global-layout:N` (#13). `collect_readable_divi_blocks()` (`module_get`'s parser fallback) and `collect_parser_move_blocks()` (`module_move`'s parser fallback) now route through the same `counted_block_identifier()` resolution, closing the one gap #13 left out of scope (#14). | #2, #5, #6, #13, #14 |
+| `plugins/diviops-agent/includes/trait-page.php` | Namespace-agnostic raw scanners in `module_update()` and `find_block()`, `*/section` matching in `find_all_sections()`, shared identifier derivation in `parse_block_tree()` and `walk_and_mutate()`, and namespace-agnostic parser-backed collectors for the `module_get` / `module_move` fallbacks (#2). Adds `block_opening_comment_end()`, a JSON-string-aware scan that keeps `find_block()` from truncating a module's span when a `-->` appears inside one of its attribute values (#5). Routes the remaining raw `strpos($content, '-->', $pos)` sites through that same helper: `find_block()`'s own container depth-scan, `module_update()`'s attribute-span scan, `extract_attrs_from_block_markup()`, and both the opening-comment scan and depth-scan in `find_all_sections()` — closing the class of bug where a descendant module's attribute JSON contains an ancestor's closing comment, or a block's own attribute JSON contains a `-->` (#6). `find_block()`, `module_update()`'s inline scanner, `find_all_sections()`, `parse_block_tree()`, and `walk_and_mutate()` all route their type/section resolution through `counted_block_name()` / `counted_block_identifier()`, so a `divi/global-layout` wrapper counts as the type it resolves to instead of counting literally as `global-layout:N` (#13). `collect_readable_divi_blocks()` (`module_get`'s parser fallback) and `collect_parser_move_blocks()` (`module_move`'s parser fallback) now route through the same `counted_block_identifier()` resolution, closing the one gap #13 left out of scope (#14). `find_all_sections()` now checks `is_self_closing` (via `block_opening_comment_end()`) before its own nesting depth-scan, mirroring `find_block()`: a self-closing section opener, wrapper or not, is a complete one-comment span rather than routed through the depth-scan, which previously consumed the enclosing (or a later) section's real closer and reported a bogus overlapping match (#12). | #2, #5, #6, #12, #13, #14 |
 | `plugins/diviops-agent/includes/trait-module-schema.php` | Adds `is_divi_module_block()` so schema listing and dumping recognize third-party Divi modules, and accepts a namespaced name in `schema_get_module()`. | #2 |
 | `plugins/diviops-agent/includes/trait-theme-builder.php` | Theme Builder insert accepts any namespaced block, `parse_tb_parent_selector()` accepts any namespace, the cross-env preset and attachment scanners no longer skip third-party blocks, and malformed-comment detection covers every namespace. | #2 |
 
@@ -136,16 +136,26 @@ for the raw-scanner and parsed-tree paths. The real-world exposure was narrow
 either way: both fallbacks are reached only when the raw `find_block()` scanner
 already returns a `parse_error` on malformed markup.
 
-`find_all_sections()` does not check `is_self_closing` before starting its
-nesting depth-scan — a pre-existing gap tracked in #12, unrelated to #13's own
-scope. #13 gives that gap a new way to surface: a **self-closing**
-`divi/global-layout` wrapper that resolves to a `*/section` name now passes the
+### Fixed: `find_all_sections()` missing the self-closing check
+
+`find_all_sections()` did not check `is_self_closing` before starting its
+nesting depth-scan, unlike `find_block()`, which already did. #13's fix gave
+this pre-existing gap a new way to surface: a **self-closing**
+`divi/global-layout` wrapper that resolves to a `*/section` name passes the
 namespace-agnostic section filter, but since it has no closer of its own the
-depth-scan either consumes an unrelated later closer or finds none, silently
-dropping the wrapper from the results instead of matching its one-comment span.
-`find_block()` is unaffected (it already checks `is_self_closing`). Noted in code
-at the call site and on #12; #12 fixes the root cause for every self-closing
-`*/section` opener, wrapper or not.
+unguarded depth-scan either consumed an unrelated later closer or found none.
+More generally, `find_all_sections()`'s outer loop only advances past
+whichever opener it just processed, not past that opener's whole matched
+span, so it revisits every descendant opener again as its own top-level
+candidate. When a revisited self-closing same-name opener reached the
+unguarded depth-scan, it consumed the enclosing (or a later) section's real
+closer and reported a bogus match whose bounds overlapped a real one.
+`find_block()` was unaffected, since it already checked `is_self_closing`.
+
+Fixed in #12 by giving `find_all_sections()` the same `is_self_closing` check
+`find_block()` already had: a self-closing section opener, wrapper or not, is
+now a complete one-comment span, matched directly rather than routed through
+the depth-scan.
 
 ### Still out of scope: the `module_lock` / `module_unlock` / `module_clone` write hazard
 
