@@ -90,6 +90,54 @@ if ( ! function_exists( 'is_wp_error' ) ) {
 	}
 }
 
+if ( ! class_exists( 'WP_Block_Type_Registry' ) ) {
+	/**
+	 * Registry stub mirroring what the reference install actually reports:
+	 * third-party Divi modules register under the `module` / `child-module`
+	 * categories, unrelated plugin blocks do not, and Divi's own modules are
+	 * largely absent from the registry entirely.
+	 */
+	class WP_Block_Type_Registry {
+
+		private static $instance = null;
+
+		private $blocks = array(
+			'difl/faq'          => 'module',
+			'difl/faqitem'      => 'child-module',
+			'difl/counter'      => 'module',
+			'd5bgo/bg-overlay'  => 'module',
+			'gravityforms/form' => '',
+			'tec/event'         => '',
+			'core/paragraph'    => 'text',
+		);
+
+		public static function get_instance() {
+			if ( null === self::$instance ) {
+				self::$instance = new self();
+			}
+			return self::$instance;
+		}
+
+		public function get_registered( $name ) {
+			if ( ! isset( $this->blocks[ $name ] ) ) {
+				return null;
+			}
+			$type           = new stdClass();
+			$type->name     = $name;
+			$type->category = $this->blocks[ $name ];
+			return $type;
+		}
+
+		public function get_all_registered() {
+			$all = array();
+			foreach ( array_keys( $this->blocks ) as $name ) {
+				$all[ $name ] = $this->get_registered( $name );
+			}
+			return $all;
+		}
+	}
+}
+
 if ( ! class_exists( 'DiviOps_Agent' ) ) {
 	require_once dirname( __DIR__ ) . '/plugins/diviops-agent/diviops-agent.php';
 }

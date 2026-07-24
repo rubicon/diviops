@@ -2171,10 +2171,11 @@ trait DiviOps_Agent_Page {
 					if ( false === $next_close ) {
 						break;
 					}
-					// Validate $next_open is the exact type (not a prefix of a longer name).
+					// Validate $next_open is the exact type (not a prefix of a longer
+					// name) and that it actually opens a container.
 					if ( false !== $next_open && $next_open < $next_close ) {
 						$char_after = $content[ $next_open + $open_tag_len ] ?? '';
-						if ( ' ' === $char_after || '{' === $char_after ) {
+						if ( ( ' ' === $char_after || '{' === $char_after ) && ! self::block_opener_is_self_closing( $content, $next_open ) ) {
 							$depth++;
 						}
 						$scan = $next_open + $open_tag_len;
@@ -2705,9 +2706,10 @@ trait DiviOps_Agent_Page {
 				}
 				if ( false !== $next_open && $next_open < $next_close ) {
 					// Only a same-name nested section raises depth; a longer name
-					// sharing this prefix is a different block.
+					// sharing this prefix is a different block, and a self-closing
+					// one has no closer to consume.
 					$char_after = $content[ $next_open + $open_len ] ?? '';
-					if ( ' ' === $char_after || '{' === $char_after ) {
+					if ( ( ' ' === $char_after || '{' === $char_after ) && ! self::block_opener_is_self_closing( $content, $next_open ) ) {
 						$depth++;
 					}
 					$scan = $next_open + $open_len;

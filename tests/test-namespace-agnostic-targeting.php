@@ -271,6 +271,55 @@ assert_true(
 	'malformed third-party block attributes are rejected rather than written through'
 );
 
+// Normalization rewrites what it touches, so it must stop at the Divi module
+// boundary. An unrelated plugin's block on the same page is neither rewritten
+// nor allowed to fail the write: its attribute values follow that plugin's
+// rules, not Divi's escaping rules.
+$foreign = '<!-- wp:tec/event {"trackingId":"u003c-random-id"} /-->';
+$left_alone = diviops_call( 'normalize_divi_full_content_for_write', array( $foreign ) );
+assert_true(
+	! empty( $left_alone['ok'] ),
+	'an unrelated plugin block does not fail the write guard on Divi escaping rules'
+);
+assert_same( $foreign, $left_alone['content'], 'an unrelated plugin block is returned byte-for-byte' );
+
+$foreign_escapes = '<!-- wp:gravityforms/form {"cssClass":"foo\/bar"} /-->';
+$untouched       = diviops_call( 'normalize_divi_full_content_for_write', array( $foreign_escapes ) );
+assert_same( 0, $untouched['changed'], 'an unrelated plugin block is not re-serialized' );
+
+// ── Depth pairing: a same-name self-closing block has no closer ──────
+
+$self_closing_siblings = implode(
+	'',
+	array(
+		'<!-- wp:d5bgo/section {"module":{"meta":{"adminLabel":{"desktop":{"value":"Outer"}}}}} -->',
+		'<!-- wp:d5bgo/section {"id":"inner-a"} /-->',
+		'<!-- wp:d5bgo/section {"id":"inner-b"} /-->',
+		'<!-- /wp:d5bgo/section -->',
+	)
+);
+
+$paired = diviops_call( 'find_all_sections', array( $self_closing_siblings, 'Outer', '' ) );
+assert_same(
+	1,
+	count( $paired ),
+	'a self-closing block of the same name does not consume its container closer'
+);
+if ( 1 === count( $paired ) ) {
+	assert_same( 0, $paired[0]['start'], 'the container section still starts at its own opener' );
+	assert_same(
+		strlen( $self_closing_siblings ),
+		$paired[0]['end'],
+		'the container section still ends at its own closer'
+	);
+}
+
+$paired_block = diviops_call( 'find_block', array( $self_closing_siblings, '', '', 'd5bgo/section:1' ) );
+assert_true(
+	! is_wp_error( $paired_block ),
+	'find_block resolves a container holding same-name self-closing children'
+);
+
 // ── Theme Builder parent selector ────────────────────────────────────
 
 $parent = diviops_call( 'parse_tb_parent_selector', array( 'difl/faq' ) );
@@ -294,6 +343,58 @@ if ( ! is_wp_error( $parent_divi ) ) {
 
 $parent_bad = diviops_call( 'parse_tb_parent_selector', array( 'not-a-selector' ) );
 assert_true( is_wp_error( $parent_bad ), 'a selector without a namespace is still rejected' );
+
+// ── walk_and_mutate: module_clone, module_lock and module_unlock ─────
+
+$walk_blocks = array(
+	array(
+		'blockName'    => 'divi/section',
+		'attrs'        => array( 'builderVersion' => '5.9.0' ),
+		'innerContent' => array( null ),
+		'innerBlocks'  => array(
+			array(
+				'blockName'    => 'divi/text',
+				'attrs'        => array( 'builderVersion' => '5.9.0' ),
+				'innerBlocks'  => array(),
+				'innerContent' => array(),
+			),
+			array(
+				'blockName'    => 'difl/faq',
+				'attrs'        => array( 'builderVersion' => '5.9.0' ),
+				'innerBlocks'  => array(),
+				'innerContent' => array(),
+			),
+		),
+	),
+);
+
+$walk_counters = array();
+$walk_matches  = 0;
+$mutated_name  = '';
+$mutator       = static function ( array &$siblings, $index, array &$block, &$parent_block ) use ( &$mutated_name ) {
+	$mutated_name = $block['blockName'];
+};
+$no_parent     = null;
+$walk_args     = array( &$walk_blocks, 'auto_index', 'difl/faq:1', 1, &$walk_counters, &$walk_matches, $mutator, &$no_parent );
+
+assert_true(
+	(bool) diviops_call_ref( 'walk_and_mutate', $walk_args ),
+	'walk_and_mutate reaches a third-party module by its namespaced identifier'
+);
+assert_same( 'difl/faq', $mutated_name, 'the mutator runs on the third-party block, not a divi sibling' );
+
+// The same walk must still reach divi modules by their bare identifier.
+$walk_counters2 = array();
+$walk_matches2  = 0;
+$mutated_name   = '';
+$no_parent2     = null;
+$walk_args2     = array( &$walk_blocks, 'auto_index', 'text:1', 1, &$walk_counters2, &$walk_matches2, $mutator, &$no_parent2 );
+
+assert_true(
+	(bool) diviops_call_ref( 'walk_and_mutate', $walk_args2 ),
+	'walk_and_mutate still reaches a divi module by its bare identifier'
+);
+assert_same( 'divi/text', $mutated_name, 'bare identifier targeting is unchanged for divi modules' );
 
 // ── Regression gate: no namespace re-prefixing on a targeting identifier ──
 //

@@ -197,7 +197,7 @@ class DiviOps_Agent {
 	 */
 	const BLOCK_OPEN_PREFIX   = '<!-- wp:';
 	const BLOCK_CLOSE_PREFIX  = '<!-- /wp:';
-	const BLOCK_NAME_PATTERN  = '[A-Za-z0-9_-]+\/[A-Za-z0-9_-]+';
+	const BLOCK_NAME_PATTERN  = '[a-z][a-z0-9_-]*\/[a-z][a-z0-9_-]*';
 	const DEFAULT_BLOCK_NS    = 'divi/';
 
 	/**

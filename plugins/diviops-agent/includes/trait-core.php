@@ -67,6 +67,54 @@ trait DiviOps_Agent_Core {
 	}
 
 	/**
+	 * Whether the block opening at $pos closes itself rather than a later closer.
+	 *
+	 * Depth counting pairs an opener with a closer of the same name. A
+	 * self-closing block of that same name has no closer, so counting it as a
+	 * nesting level consumes the real closer and the enclosing block is never
+	 * resolved.
+	 *
+	 * @param string $content Full block markup.
+	 * @param int    $pos     Offset of the opening comment.
+	 * @return bool
+	 */
+	private static function block_opener_is_self_closing( string $content, int $pos ): bool {
+		$comment_end = strpos( $content, '-->', $pos );
+		if ( false === $comment_end ) {
+			return false;
+		}
+		return '/' === ( $content[ $comment_end - 1 ] ?? '' );
+	}
+
+	/**
+	 * True when a block name belongs to a Divi module, by name alone.
+	 *
+	 * Attribute normalization rewrites the blocks it touches, so it must not
+	 * reach blocks from unrelated plugins: canonicalizing a Gravity Forms or
+	 * Events Calendar block would rewrite bytes the caller never asked to
+	 * change, and Divi's malformed-escape heuristic would reject a whole page
+	 * write over an attribute that is valid for that plugin.
+	 *
+	 * The `divi` namespace is trusted without a lookup because Divi's own
+	 * modules are largely absent from the block-type registry.
+	 *
+	 * @param string $block_name Full block name.
+	 * @return bool
+	 */
+	private static function is_divi_module_block_name( string $block_name ): bool {
+		if ( 0 === strpos( $block_name, self::DEFAULT_BLOCK_NS ) ) {
+			return true;
+		}
+		if ( ! class_exists( 'WP_Block_Type_Registry' ) ) {
+			return false;
+		}
+
+		$registered = WP_Block_Type_Registry::get_instance()->get_registered( $block_name );
+
+		return null !== $registered && self::is_divi_module_block( $block_name, $registered );
+	}
+
+	/**
 	 * Locate the next block opening comment at or after $offset.
 	 *
 	 * A block name carries its own `/` separator, so the raw scanners cannot
@@ -127,7 +175,7 @@ trait DiviOps_Agent_Core {
 				$block     = $matches[2];
 				$tail      = $matches[3];
 
-				if ( $is_closer ) {
+				if ( $is_closer || ! self::is_divi_module_block_name( $block ) ) {
 					return $matches[0];
 				}
 
