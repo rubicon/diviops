@@ -1,0 +1,55 @@
+# Fork-owned. Upstream ships no CI; see FORK.md.
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: PHP syntax (${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The plugin header declares "Requires PHP: 7.4", so the floor is linted too.
+        php: ['7.4', '8.3']
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+
+      # A linter that finds no files exits 0 and reads as a pass. Count first and
+      # fail loudly on zero, so a broken glob can never masquerade as a clean run.
+      - name: Lint every PHP file
+        run: |
+          count=$(find plugins -name '*.php' -type f | wc -l | tr -d ' ')
+          echo "linting $count PHP file(s) under plugins/"
+          if [ "$count" -lt 1 ]; then
+            echo "::error::found no PHP files to lint. The glob is wrong; this is a blind gate, not a pass."
+            exit 1
+          fi
+          find plugins -name '*.php' -type f -print0 | xargs -0 -n1 -P4 php -l
+
+  test:
+    name: Test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.3'
+          coverage: none
+
+      # The runner itself exits non-zero when it discovers no test files, so an
+      # empty suite fails here rather than reporting a green PASS of zero assertions.
+      - name: Run test suite
+        run: php tests/run.php
