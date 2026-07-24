@@ -1,0 +1,15 @@
+# Fork-owned. Upstream ships no .gitignore; see FORK.md.
+
+# Per-issue worktrees live inside the repo and must never be committed.
+worktrees/
+
+# OS and editor junk
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Local agent scratch
+.remember/
+.claude/settings.local.json
