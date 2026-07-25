@@ -192,6 +192,100 @@ trait DiviOps_Agent_Core {
 	}
 
 	/**
+	 * Parse block markup for a write round-trip, using Divi's own save-context
+	 * parser when available instead of plain parse_blocks() (#11).
+	 *
+	 * Divi 5 registers its own block parser via the `block_parser_class`
+	 * filter. That parser expands a `divi/global-layout` wrapper into the
+	 * resolved content of the layout it references unless a skip condition
+	 * holds. One of those conditions is `_is_rest_update_request()`, which
+	 * decides "is this a save" by string-matching `$_SERVER['REQUEST_URI']`
+	 * for a REST-shaped path — a heuristic that fails open outside a genuine
+	 * REST dispatch (e.g. `wp eval`), so a write in that context silently
+	 * materializes the wrapper's resolved content into the page.
+	 *
+	 * The other skip condition is independent of request shape:
+	 * `'saving_content' === BlockParserStore::get_layout_type()`, set by
+	 * `BlockParserUtils::parse_blocks_with_layout_context()`. Routing every
+	 * write-path parse through that call instead of bare parse_blocks()
+	 * makes the skip unconditional, regardless of how this code was invoked.
+	 * Confirmed by reading `ET\Builder\FrontEnd\BlockParser\BlockParser::parse()`
+	 * on the reference Divi install: `$should_skip` includes
+	 * `'saving_content' === BlockParserStore::get_layout_type()` alongside
+	 * `_is_rest_update_request()`.
+	 *
+	 * Guarded with class_exists()/method_exists() so a Divi version without
+	 * this method degrades to plain parse_blocks() rather than fataling —
+	 * global_layout_wrapper_drift() is the backstop for that degraded case.
+	 *
+	 * @param string $content Block markup to parse.
+	 * @return array parse_blocks()-shaped array.
+	 */
+	private static function parse_blocks_for_write( string $content ): array {
+		if ( class_exists( 'ET\Builder\FrontEnd\BlockParser\BlockParserUtils' )
+			&& method_exists( 'ET\Builder\FrontEnd\BlockParser\BlockParserUtils', 'parse_blocks_with_layout_context' )
+		) {
+			return \ET\Builder\FrontEnd\BlockParser\BlockParserUtils::parse_blocks_with_layout_context( $content, 'saving_content' );
+		}
+		return parse_blocks( $content );
+	}
+
+	/**
+	 * Count genuine `divi/global-layout` wrapper openers in block markup.
+	 *
+	 * Walks openers with next_block_opener() and, for each one, skips past
+	 * that opener's own attribute JSON via block_opening_comment_end() before
+	 * continuing the scan. That keeps a `<!-- wp:divi/global-layout`-shaped
+	 * sequence sitting inside another block's own attribute string (e.g. an
+	 * admin label someone pasted raw markup into) from being counted as a
+	 * real wrapper — only genuine block-comment boundaries are, the same
+	 * discipline block_opener_is_self_closing() already relies on.
+	 *
+	 * @param string $content Block markup to scan.
+	 * @return int
+	 */
+	private static function count_global_layout_wrapper_openers( string $content ): int {
+		$count  = 0;
+		$offset = 0;
+
+		while ( null !== ( $opener = self::next_block_opener( $content, $offset ) ) ) {
+			$bounds = self::block_opening_comment_end( $content, $opener['pos'] );
+			if ( null === $bounds ) {
+				// Unterminated opener — nothing further to scan safely.
+				break;
+			}
+
+			if ( self::GLOBAL_LAYOUT_BLOCK_NAME === $opener['name'] ) {
+				++$count;
+			}
+
+			$offset = $bounds['comment_end'];
+		}
+
+		return $count;
+	}
+
+	/**
+	 * Detect whether a write round-trip materialized a `divi/global-layout`
+	 * wrapper's resolved content into the page, losing the wrapper itself (#11).
+	 *
+	 * This is the Layer 2 backstop for when Layer 1 (parse_blocks_for_write())
+	 * could not apply — i.e. Divi's save-context parser class is absent — and
+	 * Divi's own parser expanded the wrapper during the write. Compares wrapper
+	 * OPENER COUNTS only, never a full-byte diff, so benign reserialize
+	 * differences (attribute key reordering, a changed globalModule id on a
+	 * wrapper that is still present, etc.) never false-positive: only a DROP
+	 * in count from $original to $serialized is drift.
+	 *
+	 * @param string $original   Content before the write round-trip.
+	 * @param string $serialized Content about to be persisted.
+	 * @return bool True when a wrapper present in $original is missing from $serialized.
+	 */
+	private static function global_layout_wrapper_drift( string $original, string $serialized ): bool {
+		return self::count_global_layout_wrapper_openers( $serialized ) < self::count_global_layout_wrapper_openers( $original );
+	}
+
+	/**
 	 * Normalize Divi block comment attributes before full-content writes.
 	 *
 	 * WordPress block attributes may contain HTML strings, but the serialized
@@ -342,17 +436,36 @@ trait DiviOps_Agent_Core {
 	/**
 	 * Write post_content, immediately read it back, and revert on byte drift.
 	 *
-	 * @param int    $post_id          Target post id.
-	 * @param string $content          Canonical content expected after the write.
-	 * @param string $error_namespace  Namespace for the corruption error code.
-	 * @param string $target_label     Human-readable target for messages/data.
-	 * @param string $previous_content Original content to restore on mismatch.
+	 * @param int    $post_id                    Target post id.
+	 * @param string $content                    Canonical content expected after the write.
+	 * @param string $error_namespace            Namespace for the corruption error code.
+	 * @param string $target_label               Human-readable target for messages/data.
+	 * @param string $previous_content           Original content to restore on mismatch.
+	 * @param bool   $check_global_layout_drift  Whether to refuse this write if it lost a
+	 *                                            divi/global-layout wrapper (#11). Opt-in: this
+	 *                                            function is also the write path for raw-content
+	 *                                            callers (page_update_content, tb_layout_update)
+	 *                                            where the caller's new content is legitimately
+	 *                                            allowed to drop a wrapper on purpose. Only the
+	 *                                            parse_blocks()/serialize_blocks() round-trip
+	 *                                            sites, which never legitimately do that, pass true.
 	 * @return array|WP_Error
 	 */
-	private static function update_post_content_with_integrity_guard( int $post_id, string $content, string $error_namespace, string $target_label, string $previous_content ) {
+	private static function update_post_content_with_integrity_guard( int $post_id, string $content, string $error_namespace, string $target_label, string $previous_content, bool $check_global_layout_drift = false ) {
 		$preflight = self::assert_divi_full_content_safe_for_write( $content, 'content' );
 		if ( is_wp_error( $preflight ) ) {
 			return $preflight;
+		}
+
+		if ( $check_global_layout_drift && self::global_layout_wrapper_drift( $previous_content, $content ) ) {
+			return new WP_Error(
+				$error_namespace . '.global_layout_drift',
+				"Refused {$target_label} write because it would materialize a divi/global-layout wrapper's resolved content into this page, permanently detaching it from the referenced global layout.",
+				[
+					'status' => 409,
+					'hint'   => 'This happens when Divi\'s write-time parser guard for the global-layout wrapper fails open outside a genuine REST request (for example wp eval / wp-cli). Retry this operation through the REST API or the MCP server, where Divi preserves the wrapper, or edit the referenced global layout directly instead of this page.',
+				]
+			);
 		}
 
 		$result = wp_update_post( [

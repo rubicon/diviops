@@ -1196,8 +1196,12 @@ trait DiviOps_Agent_ThemeBuilder {
 		// stored markup, so the pre-serialize restore below can undo core's
 		// assoc-decode {} → [] collapse layout-wide (#903; same guard as the
 		// module ops in #901).
+		// parse_blocks_for_write(), not bare parse_blocks(): this parsed tree
+		// is about to round-trip through serialize_blocks() below, and a bare
+		// parse would let Divi's parser expand a divi/global-layout wrapper
+		// into its resolved content outside a genuine REST write (#11).
 		$stored_content = (string) $post->post_content;
-		$blocks         = self::enrich_blocks_with_empty_object_paths( parse_blocks( $stored_content ), $stored_content );
+		$blocks         = self::enrich_blocks_with_empty_object_paths( self::parse_blocks_for_write( $stored_content ), $stored_content );
 		if ( '' !== $parent_path ) {
 			$target = self::find_tb_block_by_path( $blocks, $parent_path );
 		} else {
@@ -1314,12 +1318,17 @@ trait DiviOps_Agent_ThemeBuilder {
 			}
 		}
 
+		// $new_content came from parse_blocks_for_write() + serialize_blocks()
+		// above, the round-trip #11 is about — guarded, unlike tb_layout_update()'s
+		// raw-content write, which legitimately allows the caller to drop a
+		// wrapper on purpose.
 		$result = self::update_post_content_with_integrity_guard(
 			$post_id,
 			$new_content,
 			'tb',
 			"Theme Builder layout #{$post_id} block insert",
-			(string) $post->post_content
+			(string) $post->post_content,
+			true
 		);
 		if ( is_wp_error( $result ) ) {
 			if ( null !== $snapshot ) {
