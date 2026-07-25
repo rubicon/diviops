@@ -2144,8 +2144,12 @@ trait DiviOps_Agent_Preset {
 			$strip_hits       = 0;
 			$per_page_details = [];
 
-			// Parse WP blocks to rewrite safely.
-			$blocks  = parse_blocks( $content );
+			// Parse WP blocks to rewrite safely. parse_blocks_for_write(), not bare
+			// parse_blocks(): this parsed tree is about to round-trip through
+			// serialize_blocks() below, and a bare parse would let Divi's parser
+			// expand a divi/global-layout wrapper into its resolved content
+			// outside a genuine REST write (#11).
+			$blocks  = self::parse_blocks_for_write( $content );
 			$rewrite = function ( array $blocks ) use ( &$rewrite, $old_uuid, $new_uuid, $preset_attrs, $new_entry, $strip_inline, $effective_scope, &$module_swap_hits, &$group_swap_hits, &$strip_hits, &$per_page_details, &$summary ) {
 				foreach ( $blocks as $i => $block ) {
 					$attrs = is_array( $block['attrs'] ?? null ) ? $block['attrs'] : [];
@@ -2304,7 +2308,26 @@ trait DiviOps_Agent_Preset {
 						];
 						$page_detail['update_error'] = 'Current user cannot edit this post';
 					} else {
-						$new_content   = serialize_blocks( $new_blocks );
+						$new_content = serialize_blocks( $new_blocks );
+
+						// Layer 2 backstop (#11): this bypasses
+						// update_post_content_with_integrity_guard() (a batch
+						// operation across many pages does not fit that
+						// single-post readback/revert contract), so the
+						// drift check is placed here directly, before the
+						// write. Refuse only this page rather than the whole
+						// batch, matching the per-page error handling below.
+						if ( self::global_layout_wrapper_drift( $content, $new_content ) ) {
+							$summary['errors'][] = [
+								'page_id' => $p->ID,
+								'title'   => $p->post_title,
+								'error'   => "Refused: this write would materialize a divi/global-layout wrapper's resolved content into this page (data loss). Retry via the REST API / MCP server, or edit the referenced global layout directly.",
+							];
+							$page_detail['update_error'] = 'global_layout_wrapper_drift_detected';
+							$summary['details'][]        = $page_detail;
+							continue;
+						}
+
 						$update_result = wp_update_post(
 							[
 								'ID'           => $p->ID,

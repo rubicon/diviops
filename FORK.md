@@ -70,10 +70,11 @@ an upstream merge:
 | Path | What diverges | Issue |
 | ---- | ------------- | ----- |
 | `plugins/diviops-agent/diviops-agent.php` | Adds namespace-agnostic block-comment constants (`BLOCK_OPEN_PREFIX`, `BLOCK_CLOSE_PREFIX`, `BLOCK_NAME_PATTERN`, `DEFAULT_BLOCK_NS`). The `divi/`-specific `SECTION_OPEN`, `SECTION_CLOSE`, and `BLOCK_PREFIX` constants are retained, unused, because they are public class constants external code may reference (#2). Adds `GLOBAL_LAYOUT_BLOCK_NAME` for the `divi/global-layout` wrapper name every counting site checks against (#13). | #2, #13 |
-| `plugins/diviops-agent/includes/trait-core.php` | Adds the `block_identifier_from_name()` / `block_name_from_identifier()` pair that defines the targeting-identifier contract, plus `next_block_opener()`. Makes the write-safety marker census, the marker-sequence validator, and block-attr normalization namespace-aware (#2). `block_opener_is_self_closing()` delegates to `block_opening_comment_end()` instead of a raw `strpos` for `-->`, so it no longer misreads a container as self-closing when an attribute value contains a `/-->`-shaped sequence (#6). Adds `counted_block_name()` / `counted_block_identifier()`, which resolve a `divi/global-layout` wrapper's counted type from its own `attrs.blockName` (falling back to the wrapper's literal name when that attr is absent), so every counting site agrees with what `page_get_layout` counts the wrapper as on read (#13). | #2, #6, #13 |
-| `plugins/diviops-agent/includes/trait-page.php` | Namespace-agnostic raw scanners in `module_update()` and `find_block()`, `*/section` matching in `find_all_sections()`, shared identifier derivation in `parse_block_tree()` and `walk_and_mutate()`, and namespace-agnostic parser-backed collectors for the `module_get` / `module_move` fallbacks (#2). Adds `block_opening_comment_end()`, a JSON-string-aware scan that keeps `find_block()` from truncating a module's span when a `-->` appears inside one of its attribute values (#5). Routes the remaining raw `strpos($content, '-->', $pos)` sites through that same helper: `find_block()`'s own container depth-scan, `module_update()`'s attribute-span scan, `extract_attrs_from_block_markup()`, and both the opening-comment scan and depth-scan in `find_all_sections()` — closing the class of bug where a descendant module's attribute JSON contains an ancestor's closing comment, or a block's own attribute JSON contains a `-->` (#6). `find_block()`, `module_update()`'s inline scanner, `find_all_sections()`, `parse_block_tree()`, and `walk_and_mutate()` all route their type/section resolution through `counted_block_name()` / `counted_block_identifier()`, so a `divi/global-layout` wrapper counts as the type it resolves to instead of counting literally as `global-layout:N` (#13). `collect_readable_divi_blocks()` (`module_get`'s parser fallback) and `collect_parser_move_blocks()` (`module_move`'s parser fallback) now route through the same `counted_block_identifier()` resolution, closing the one gap #13 left out of scope (#14). `find_all_sections()` now checks `is_self_closing` (via `block_opening_comment_end()`) before its own nesting depth-scan, mirroring `find_block()`: a self-closing section opener, wrapper or not, is a complete one-comment span rather than routed through the depth-scan, which previously consumed the enclosing (or a later) section's real closer and reported a bogus overlapping match (#12). | #2, #5, #6, #12, #13, #14 |
+| `plugins/diviops-agent/includes/trait-core.php` | Adds the `block_identifier_from_name()` / `block_name_from_identifier()` pair that defines the targeting-identifier contract, plus `next_block_opener()`. Makes the write-safety marker census, the marker-sequence validator, and block-attr normalization namespace-aware (#2). `block_opener_is_self_closing()` delegates to `block_opening_comment_end()` instead of a raw `strpos` for `-->`, so it no longer misreads a container as self-closing when an attribute value contains a `/-->`-shaped sequence (#6). Adds `counted_block_name()` / `counted_block_identifier()`, which resolve a `divi/global-layout` wrapper's counted type from its own `attrs.blockName` (falling back to the wrapper's literal name when that attr is absent), so every counting site agrees with what `page_get_layout` counts the wrapper as on read (#13). Adds the layered write-safety guard for the global-layout materialization hazard: `parse_blocks_for_write()` routes a write-path parse through Divi's own `BlockParserUtils::parse_blocks_with_layout_context( $content, 'saving_content' )` when available, falling back to plain `parse_blocks()` otherwise; `global_layout_wrapper_identities()` is a JSON-aware scan that reads each wrapper's `globalModule` id in document order (falling back to a `no_global_module_id_sentinel()` token for a wrapper with no readable id) and returns `null` — an untrustworthy scan — the moment any opener anywhere in the content can't be resolved to its own comment terminator; `global_layout_wrapper_drift()` compares the two sides' id multisets (identity-aware, not count-only, so a wrapper swapped for a different one is drift even though the overall count is unchanged) and treats a `null` scan on either side as drift, refusing the write rather than risking a malformed opener silently masking a real loss; `update_post_content_with_integrity_guard()` gains an opt-in `$check_global_layout_drift` parameter so only the parse/serialize round-trip call sites enforce it, not the raw-content writers that share the same function (#11). | #2, #6, #11, #13 |
+| `plugins/diviops-agent/includes/trait-page.php` | Namespace-agnostic raw scanners in `module_update()` and `find_block()`, `*/section` matching in `find_all_sections()`, shared identifier derivation in `parse_block_tree()` and `walk_and_mutate()`, and namespace-agnostic parser-backed collectors for the `module_get` / `module_move` fallbacks (#2). Adds `block_opening_comment_end()`, a JSON-string-aware scan that keeps `find_block()` from truncating a module's span when a `-->` appears inside one of its attribute values (#5). Routes the remaining raw `strpos($content, '-->', $pos)` sites through that same helper: `find_block()`'s own container depth-scan, `module_update()`'s attribute-span scan, `extract_attrs_from_block_markup()`, and both the opening-comment scan and depth-scan in `find_all_sections()` — closing the class of bug where a descendant module's attribute JSON contains an ancestor's closing comment, or a block's own attribute JSON contains a `-->` (#6). `find_block()`, `module_update()`'s inline scanner, `find_all_sections()`, `parse_block_tree()`, and `walk_and_mutate()` all route their type/section resolution through `counted_block_name()` / `counted_block_identifier()`, so a `divi/global-layout` wrapper counts as the type it resolves to instead of counting literally as `global-layout:N` (#13). `collect_readable_divi_blocks()` (`module_get`'s parser fallback) and `collect_parser_move_blocks()` (`module_move`'s parser fallback) now route through the same `counted_block_identifier()` resolution, closing the one gap #13 left out of scope (#14). `find_all_sections()` now checks `is_self_closing` (via `block_opening_comment_end()`) before its own nesting depth-scan, mirroring `find_block()`: a self-closing section opener, wrapper or not, is a complete one-comment span rather than routed through the depth-scan, which previously consumed the enclosing (or a later) section's real closer and reported a bogus overlapping match (#12). `load_post_for_module_op()` (shared by `module_lock`/`module_unlock`/`module_clone`) and `move_block_with_parser()` (`module_move`'s parser fallback) now parse through `parse_blocks_for_write()` instead of bare `parse_blocks()`, and both writer call sites (`save_mutated_blocks()`, and `module_move()`'s own `update_post_content_with_integrity_guard()` call) pass `$check_global_layout_drift = true` (#11). | #2, #5, #6, #11, #12, #13, #14 |
 | `plugins/diviops-agent/includes/trait-module-schema.php` | Adds `is_divi_module_block()` so schema listing and dumping recognize third-party Divi modules, and accepts a namespaced name in `schema_get_module()`. | #2 |
-| `plugins/diviops-agent/includes/trait-theme-builder.php` | Theme Builder insert accepts any namespaced block, `parse_tb_parent_selector()` accepts any namespace, the cross-env preset and attachment scanners no longer skip third-party blocks, and malformed-comment detection covers every namespace. | #2 |
+| `plugins/diviops-agent/includes/trait-theme-builder.php` | Theme Builder insert accepts any namespaced block, `parse_tb_parent_selector()` accepts any namespace, the cross-env preset and attachment scanners no longer skip third-party blocks, and malformed-comment detection covers every namespace (#2). `tb_layout_block_insert()` parses the stored layout through `parse_blocks_for_write()` instead of bare `parse_blocks()`, and its `update_post_content_with_integrity_guard()` call passes `$check_global_layout_drift = true`. `parse_divi_blocks_for_insert()` also parses the caller-supplied INSERTION content through `parse_blocks_for_write()` — a second write-path parse in the same operation that the initial version of this fix missed, since a wrapper arriving in the inserted content itself is expanded before it ever reaches the tree, ahead of anything the drift-guard's baseline could compare against. `tb_layout_update()` (a raw-content write, not a parse/serialize round trip) is unchanged (#11). | #2, #11 |
+| `plugins/diviops-agent/includes/trait-preset.php` | `preset_reassign()` parses through `parse_blocks_for_write()` instead of bare `parse_blocks()`. It bypasses `update_post_content_with_integrity_guard()` (a batch operation across many pages does not fit that function's single-post readback/revert contract), so it calls `global_layout_wrapper_drift()` directly before its own `wp_update_post()`, refusing only the affected page — with an error recorded in the batch summary — rather than the whole batch (#11). | #11 |
 
 ### Deliberately unchanged: `post_uses_divi()` / `content_uses_divi()`
 
@@ -157,13 +158,76 @@ Fixed in #12 by giving `find_all_sections()` the same `is_self_closing` check
 now a complete one-comment span, matched directly rather than routed through
 the depth-scan.
 
-### Still out of scope: the `module_lock` / `module_unlock` / `module_clone` write hazard
+### Fixed: the `module_lock` / `module_unlock` / `module_clone` write hazard
 
-These operations parse a page's full content with `parse_blocks()`, mutate the
-parsed tree, and write it back with `serialize_blocks()`. Re-serializing the whole
-tree appears to risk materializing a `global-layout` reference into page-local
-content — a data-integrity hazard independent of the numbering question #13 fixed.
-Tracked in #11.
+Six write paths round-trip a page's content through `parse_blocks()`, mutate the
+parsed tree, and write it back with `serialize_blocks()`: `module_lock`,
+`module_unlock`, and `module_clone` (shared via `load_post_for_module_op()` /
+`save_mutated_blocks()`), `module_move`'s parser fallback
+(`move_block_with_parser()`), `tb_layout_block_insert()`, and `preset_reassign()`.
+On a page carrying a `divi/global-layout` wrapper, re-serializing the whole tree
+risked materializing the wrapper's resolved content into the page: Divi 5's own
+block parser expands that wrapper unless a skip condition holds, and one of those
+conditions is `_is_rest_update_request()`, a `$_SERVER['REQUEST_URI']` string match
+that fails open outside a genuine REST dispatch (`wp eval`, a raw PHP include, a
+non-default REST route prefix, and so on) — a data-integrity hazard independent of
+the numbering question #13 fixed. Verified live against reference page 900390: a
+bare `wp eval` parse collapsed its one wrapper to zero.
+
+Fixed in #11 with two layers. Layer 1 prevents the expansion outright:
+`parse_blocks_for_write()` (trait-core.php) routes every one of the six sites'
+parse through Divi's own
+`ET\Builder\FrontEnd\BlockParser\BlockParserUtils::parse_blocks_with_layout_context( $content, 'saving_content' )`,
+which sets an unconditional skip signal independent of request shape, confirmed
+by reading `BlockParser::parse()` on the reference Divi install. It falls back to plain
+`parse_blocks()` via `class_exists()`/`method_exists()` when that Divi class is
+unavailable. This also covers `tb_layout_block_insert()`'s caller-supplied
+INSERTION content (`parse_divi_blocks_for_insert()`), not only the stored layout
+being inserted into — adversarial review found that a wrapper arriving in the
+inserted content itself would otherwise be expanded before it ever reached the
+tree, a loss the drift-guard cannot catch because its baseline never contained
+that wrapper to begin with.
+
+Layer 2 is the backstop for when Layer 1 could not apply. `global_layout_wrapper_
+identities()` is a JSON-aware scan (same discipline as `block_opener_is_self_
+closing()`) that reads each wrapper's `globalModule` id in document order, falling
+back to a sentinel token for a wrapper with no readable id so it is still tracked
+by count. `global_layout_wrapper_drift()` compares the two sides' id multisets —
+identity-aware, not count-only, because a wrapper swapped for a different one
+(layout A replaced by layout B) is drift even though the overall wrapper count is
+unchanged; Divi's non-recursive expansion can produce exactly that shape for
+nested or chained global layouts, and a count-only comparison would miss it.
+Either side's scan returning `null` — an opener anywhere in the document that
+can't be resolved to its own comment terminator, or a wrapper's own attrs failing
+to decode — is itself treated as drift: a malformed prefix ahead of a genuinely
+removed wrapper would otherwise truncate both scans to the same wrong count and
+mask the loss, so an unreadable scan refuses the write rather than approving it
+by default. `update_post_content_with_integrity_guard()` carries this as an
+opt-in parameter so it does not also gate the raw-content writers
+(`page_update_content`, `tb_layout_update`) that share the same function and are
+legitimately allowed to drop a wrapper on purpose; `preset_reassign()` bypasses
+that shared function for its own batch write and calls the drift check directly.
+
+With Layer 1 active (the common case), no expansion occurs and Layer 2 never
+fires — full capability is preserved everywhere, including `wp eval`. Layer 2 only
+matters when Layer 1 could not apply, refusing that one write rather than
+corrupting it.
+
+`global_layout_wrapper_drift()` is unit-tested
+(`tests/test-global-layout-write-guard.php`): a lost wrapper, a benign reserialize
+with the same id, no wrapper on either side, one of two wrappers lost, an
+id-swap that a count-only comparison would miss, an unterminated opener ahead of
+a removed wrapper (fail-closed catches what a partial count would mask), identical
+malformed markup on both sides (a documented deliberate over-refusal — an
+unreliable scan cannot prove nothing was lost), and a JSON-embedded decoy
+substring that must not be miscounted, plus mutation checks proving each of
+those properties is load-bearing rather than incidental. Layer 1 was verified
+live and read-only against reference page 900390: `parse_blocks_with_layout_
+context()` held the wrapper count at 1 where a bare `parse_blocks()` round trip
+collapsed it to 0. The full write path on all six sites (an actual `module_lock`/
+`clone`/etc. call against a live database) is not exercised by either the unit
+tests or that read-only check and remains gated on the maintainer's own live
+verification before merge.
 
 Third-party targeting does not depend on either of the above: third-party counters
 are per block name and are unaffected by the wrapper.

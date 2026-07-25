@@ -1988,7 +1988,11 @@ trait DiviOps_Agent_Page {
 	 * Safely move a parsed block and keep parent placeholder arrays aligned.
 	 */
 	private static function move_block_with_parser( string $content, array $source_target, array $target_target, string $position ) {
-		$blocks       = self::enrich_blocks_with_empty_object_paths( parse_blocks( $content ), $content );
+		// parse_blocks_for_write(), not bare parse_blocks(): this parsed tree is
+		// about to round-trip through serialize_blocks() below, and a bare parse
+		// would let Divi's parser expand a divi/global-layout wrapper into its
+		// resolved content outside a genuine REST write (#11).
+		$blocks       = self::enrich_blocks_with_empty_object_paths( self::parse_blocks_for_write( $content ), $content );
 		$entries      = [];
 		$type_counts  = [];
 		$mapping_error = self::validate_parser_move_placeholders( $blocks );
@@ -2706,12 +2710,17 @@ trait DiviOps_Agent_Page {
 			}
 		}
 
+		// Guarded regardless of which branch built $content above: the raw-splice
+		// branch only relocates an existing substring so it can never legitimately
+		// drop a wrapper, and the parser-fallback branch (move_block_with_parser())
+		// is exactly the round-trip #11 is about (#11).
 		$result = self::update_post_content_with_integrity_guard(
 			$post_id,
 			$content,
 			'module',
 			"page #{$post_id} module move",
-			(string) $post->post_content
+			(string) $post->post_content,
+			true
 		);
 
 		if ( is_wp_error( $result ) ) {
@@ -3432,10 +3441,15 @@ trait DiviOps_Agent_Page {
 		// Sidecar enrichment records which attr positions held {} in the
 		// stored markup, so save_mutated_blocks() can undo core's
 		// assoc-decode {} → [] collapse on re-serialization (#901).
+		// parse_blocks_for_write(), not bare parse_blocks(): this parsed tree
+		// is about to round-trip through serialize_blocks() in
+		// save_mutated_blocks(), and a bare parse would let Divi's parser
+		// expand a divi/global-layout wrapper into its resolved content
+		// outside a genuine REST write (#11).
 		$content = (string) $post->post_content;
 		return [
 			'post'   => $post,
-			'blocks' => self::enrich_blocks_with_empty_object_paths( parse_blocks( $content ), $content ),
+			'blocks' => self::enrich_blocks_with_empty_object_paths( self::parse_blocks_for_write( $content ), $content ),
 		];
 	}
 
@@ -3450,7 +3464,8 @@ trait DiviOps_Agent_Page {
 			$new_content,
 			'module',
 			"page #{$post->ID} module mutation",
-			(string) $post->post_content
+			(string) $post->post_content,
+			true
 		);
 	}
 
