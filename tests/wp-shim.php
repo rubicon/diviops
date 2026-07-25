@@ -50,8 +50,9 @@ if ( ! function_exists( 'wp_strip_all_tags' ) ) {
 if ( ! class_exists( 'WP_Error' ) ) {
 	class WP_Error {
 
-		private $errors      = array();
-		private $error_data  = array();
+		private $errors          = array();
+		private $error_data      = array();
+		private $additional_data = array();
 
 		public function __construct( $code = '', $message = '', $data = '' ) {
 			if ( '' === $code ) {
@@ -80,6 +81,23 @@ if ( ! class_exists( 'WP_Error' ) ) {
 				$code = $this->get_error_code();
 			}
 			return isset( $this->error_data[ $code ] ) ? $this->error_data[ $code ] : null;
+		}
+
+		/**
+		 * Reimplementation of WP_Error::add_data() (wp-includes/class-wp-error.php):
+		 * overwrites error_data[$code] with the new value, stashing whatever was
+		 * there before into additional_data[$code][] rather than merging it in.
+		 * Callers that want to preserve existing data must merge it in themselves
+		 * before calling this, exactly as WordPress core requires.
+		 */
+		public function add_data( $data, $code = '' ) {
+			if ( '' === $code ) {
+				$code = $this->get_error_code();
+			}
+			if ( isset( $this->error_data[ $code ] ) ) {
+				$this->additional_data[ $code ][] = $this->error_data[ $code ];
+			}
+			$this->error_data[ $code ] = $data;
 		}
 	}
 }
@@ -154,6 +172,53 @@ if ( ! function_exists( 'sanitize_text_field' ) ) {
 if ( ! function_exists( 'current_user_can' ) ) {
 	function current_user_can( ...$args ) {
 		return true;
+	}
+}
+
+if ( ! function_exists( 'apply_filters' ) ) {
+	/**
+	 * No-op filter runner: add_filter() above never registers a callback, so
+	 * there is nothing to run here. Returns $value unchanged, which is the
+	 * correct behavior for a harness with zero registered filters, not a
+	 * shortcut around one.
+	 */
+	function apply_filters( $tag, $value, ...$args ) {
+		return $value;
+	}
+}
+
+if ( ! function_exists( 'sanitize_key' ) ) {
+	/**
+	 * Reimplementation of WordPress core's sanitize_key() (wp-includes/formatting.php):
+	 * lowercase, then strip everything but a-z, 0-9, underscore, and hyphen.
+	 */
+	function sanitize_key( $key ) {
+		$sanitized_key = '';
+
+		if ( is_scalar( $key ) ) {
+			$sanitized_key = strtolower( $key );
+			$sanitized_key = preg_replace( '/[^a-z0-9_\-]/', '', $sanitized_key );
+		}
+
+		return apply_filters( 'sanitize_key', $sanitized_key, $key );
+	}
+}
+
+if ( ! function_exists( 'rest_sanitize_boolean' ) ) {
+	/**
+	 * Reimplementation of WordPress core's rest_sanitize_boolean()
+	 * (wp-includes/rest-api.php): a string 'false' or '0' (case-insensitive)
+	 * sanitizes to false; everything else casts through (bool).
+	 */
+	function rest_sanitize_boolean( $value ) {
+		if ( is_string( $value ) ) {
+			$value = strtolower( $value );
+			if ( in_array( $value, array( 'false', '0' ), true ) ) {
+				$value = false;
+			}
+		}
+
+		return (bool) $value;
 	}
 }
 
@@ -283,14 +348,23 @@ if ( ! function_exists( 'diviops_test_register_post' ) ) {
 	 * can be exercised directly against the real plugin code instead of only
 	 * through its content-scanning internals.
 	 *
-	 * @param int    $post_id Post id.
-	 * @param string $content post_content.
+	 * post_type and post_title default to values module_update() and friends
+	 * never read, but module_get() builds its response from them directly
+	 * (no null-coalescing), so a caller exercising that handler needs a
+	 * complete-enough fixture or PHP emits an "Undefined property" warning.
+	 *
+	 * @param int    $post_id    Post id.
+	 * @param string $content    post_content.
+	 * @param string $post_type  post_type.
+	 * @param string $post_title post_title.
 	 * @return object
 	 */
-	function diviops_test_register_post( int $post_id, string $content ) {
+	function diviops_test_register_post( int $post_id, string $content, string $post_type = 'page', string $post_title = '' ) {
 		$post = (object) array(
 			'ID'           => $post_id,
 			'post_content' => $content,
+			'post_type'    => $post_type,
+			'post_title'   => $post_title,
 		);
 		$GLOBALS['diviops_test_posts'][ $post_id ] = $post;
 		return $post;
