@@ -17,6 +17,15 @@
  * refuse the write instead of silently detaching the page from its referenced
  * global layout.
  *
+ * global_layout_wrapper_drift() is identity-aware (compares each wrapper's
+ * globalModule id, not just an overall opener count) and fails CLOSED: either
+ * side's scan being unreliable (a malformed/unterminated block comment
+ * anywhere in the document) is itself treated as drift, refusing the write
+ * rather than risking a masked loss. Both properties were added after
+ * adversarial review of the first version of this fix found a count-only
+ * comparison misses an id-swap (F3) and a count that silently truncates on
+ * malformed markup can mask a real removal (F4).
+ *
  * These tests cover the pure detection helper only. The full module_lock/clone
  * etc. round-trip cannot be exercised in this harness: it calls parse_blocks(),
  * which is deliberately unshimmed (same wall issue #17 hit), so this suite does
@@ -46,7 +55,8 @@ $plain_section =
 	. '<!-- wp:divi/text {"builderVersion":"5.9.0"} /-->'
 	. '<!-- /wp:divi/section -->';
 
-// (a) — original has a wrapper, serialized lost it → drift true.
+// ── (a) a wrapper is fully expanded away → drift true ────────────────────
+
 $original_a   = $real_wrapper . $plain_section;
 $serialized_a = $expanded_in_place . $plain_section;
 assert_true(
@@ -54,22 +64,26 @@ assert_true(
 	'drift is true when the only wrapper on the page is expanded away'
 );
 
-// (b) — both retain the wrapper, only attr key order changed (benign
-// reserialize) → false.
+// ── (b) benign reserialize with the SAME globalModule id, attrs reordered
+// → drift false. Also stands in for the "same ids preserved through a
+// benign reserialize" case from adversarial review. ─────────────────────
+
 $original_b   = '<!-- wp:divi/global-layout {"globalModule":"900296","blockName":"divi/section"} /-->';
 $serialized_b = '<!-- wp:divi/global-layout {"blockName":"divi/section","globalModule":"900296"} /-->';
 assert_true(
 	! diviops_call( 'global_layout_wrapper_drift', array( $original_b, $serialized_b ) ),
-	'no drift when the wrapper survives a benign reserialize with reordered attrs'
+	'no drift when the wrapper survives a benign reserialize with reordered attrs and the same globalModule id'
 );
 
-// (c) — neither side has a wrapper → false.
+// ── (c) neither side has a wrapper → drift false ─────────────────────────
+
 assert_true(
 	! diviops_call( 'global_layout_wrapper_drift', array( $plain_section, $plain_section ) ),
 	'no drift when neither original nor serialized content has a wrapper'
 );
 
-// (d) — two wrappers present originally, one lost → true.
+// ── (d) two wrappers present originally, one lost → drift true ──────────
+
 $original_d   = $real_wrapper . $real_wrapper_second;
 $serialized_d = $real_wrapper . $expanded_in_place;
 assert_true(
@@ -77,38 +91,80 @@ assert_true(
 	'drift is true when one of two wrappers is lost, even though the other survives'
 );
 
-// (e) — the wrapper survives but now references a different globalModule id
-// (a legitimate content edit, not expansion) → false. Drift is about the
-// wrapper's presence, not which layout it points at.
-$original_e   = '<!-- wp:divi/global-layout {"globalModule":"900296","blockName":"divi/section"} /-->';
-$serialized_e = '<!-- wp:divi/global-layout {"globalModule":"900299","blockName":"divi/section"} /-->';
+// ── (e) IDENTITY-AWARE: a wrapper survives (opener count unchanged) but its
+// globalModule id changed → drift true. Divi's non-recursive expansion can
+// swap layout A for layout B in exactly this shape for nested/chained
+// global layouts — a count-only comparison would miss that reference A is
+// gone. This replaces an earlier version of this suite that asserted the
+// opposite (count-only) outcome for this exact scenario; that assertion was
+// wrong and adversarial review caught it (F3). ──────────────────────────
+
+$original_idswap   = '<!-- wp:divi/global-layout {"globalModule":"100","blockName":"divi/section"} /-->';
+$serialized_idswap = '<!-- wp:divi/global-layout {"globalModule":"200","blockName":"divi/section"} /-->';
 assert_true(
-	! diviops_call( 'global_layout_wrapper_drift', array( $original_e, $serialized_e ) ),
-	'no drift when the wrapper is preserved but its globalModule id changed'
+	diviops_call( 'global_layout_wrapper_drift', array( $original_idswap, $serialized_idswap ) ),
+	'drift is true when a wrapper is replaced by a different one — the opener count is unchanged but globalModule id 100 is gone'
 );
 
-// (f) — a `<!-- wp:divi/global-layout` substring inside another block's own
+// ── (f) FAIL CLOSED: an unterminated opener ahead of a removed wrapper is
+// refused rather than silently masked ────────────────────────────────────
+//
+// The opening comment below never closes: its JSON attrs contain an
+// unterminated string value (no closing quote, no closing brace, no -->
+// anywhere afterward). block_opening_comment_end() must scan to the end of
+// the document without finding a real terminator and report the scan as
+// unreliable. Anything appended after this point is unreachable either way
+// — which is exactly the hazard: a naive implementation that counts only
+// wrappers found BEFORE the point it gives up would report the same count
+// (0) whether or not a real wrapper existed further down, silently masking
+// its removal. The fix must refuse both sides rather than compare partial
+// counts that happen to match.
+$malformed_prefix = '<!-- wp:divi/section {"module":{"meta":{"adminLabel":{"desktop":{"value":"Unterminated';
+
+$original_malformed_with_wrapper    = $malformed_prefix . $real_wrapper;
+$serialized_malformed_wrapper_gone  = $malformed_prefix . $plain_section;
+assert_true(
+	diviops_call( 'global_layout_wrapper_drift', array( $original_malformed_with_wrapper, $serialized_malformed_wrapper_gone ) ),
+	'fail closed: an unterminated opener ahead of a removed wrapper is refused rather than silently masked'
+);
+
+// ── (g) FAIL CLOSED, documented tradeoff: malformed markup but nothing was
+// actually removed (original and serialized are byte-identical) still
+// refuses ──────────────────────────────────────────────────────────────
+//
+// This is a deliberate, accepted over-refusal: an unreliable scan cannot
+// prove that nothing was lost, so it does not get to claim "no drift" by
+// default. The alternative — treating an unreadable scan as safe — is
+// exactly the fail-open failure mode this fix exists to close.
+assert_true(
+	diviops_call( 'global_layout_wrapper_drift', array( $malformed_prefix, $malformed_prefix ) ),
+	'documented tradeoff: fail-closed refuses even when original and serialized are identical, because malformed markup cannot be scanned reliably enough to prove nothing was lost'
+);
+
+// ── (h) a `<!-- wp:divi/global-layout` substring inside another block's own
 // JSON attribute value (not a real block boundary) must not be miscounted.
 // The decoy text sits inside divi/section's own adminLabel string, with its
 // JSON quotes escaped exactly as WordPress attribute serialization requires.
+
 $decoy_section =
 	'<!-- wp:divi/section {"module":{"meta":{"adminLabel":{"desktop":{"value":"Fake: <!-- wp:divi/global-layout {\"globalModule\":\"999999\"} /--> embedded"}}}}} -->'
 	. '<!-- wp:divi/text {"builderVersion":"5.9.0"} /-->'
 	. '<!-- /wp:divi/section -->';
 
-$original_f   = $real_wrapper . $decoy_section;
-$serialized_f = $real_wrapper . $decoy_section;
+$original_h   = $real_wrapper . $decoy_section;
+$serialized_h = $real_wrapper . $decoy_section;
 assert_true(
-	! diviops_call( 'global_layout_wrapper_drift', array( $original_f, $serialized_f ) ),
+	! diviops_call( 'global_layout_wrapper_drift', array( $original_h, $serialized_h ) ),
 	'no drift when content is unchanged, including a decoy string shaped like a wrapper opener'
 );
 
-// The JSON-aware scan must count exactly the one real wrapper, not the decoy
-// text embedded in the section's own attribute JSON.
+// The JSON-aware scan must find exactly the one real wrapper's identity, not
+// the decoy text embedded in the section's own attribute JSON.
+$identities_h = diviops_call( 'global_layout_wrapper_identities', array( $original_h ) );
 assert_same(
-	1,
-	diviops_call( 'count_global_layout_wrapper_openers', array( $original_f ) ),
-	'the JSON-aware scan counts only the real wrapper, not the embedded decoy text'
+	array( '900296' ),
+	$identities_h,
+	'the JSON-aware scan reads only the real wrapper\'s globalModule id, not the embedded decoy text'
 );
 
 // Mutation/behavior-coupling proof: removing the decoy section entirely (its
@@ -120,13 +176,13 @@ assert_same(
 // misreport as a lost wrapper. Asserting both the correct answer AND the
 // naive count it would be compared against pins the JSON-aware scan as
 // load-bearing, not incidental.
-$serialized_f2 = $real_wrapper;
+$serialized_h2 = $real_wrapper;
 assert_true(
-	! diviops_call( 'global_layout_wrapper_drift', array( $original_f, $serialized_f2 ) ),
+	! diviops_call( 'global_layout_wrapper_drift', array( $original_h, $serialized_h2 ) ),
 	'no drift when only the decoy section (and its embedded lookalike text) is removed — the real wrapper survives untouched'
 );
-$naive_before = substr_count( $original_f, '<!-- wp:divi/global-layout' );
-$naive_after  = substr_count( $serialized_f2, '<!-- wp:divi/global-layout' );
+$naive_before = substr_count( $original_h, '<!-- wp:divi/global-layout' );
+$naive_after  = substr_count( $serialized_h2, '<!-- wp:divi/global-layout' );
 assert_true(
 	$naive_before > $naive_after,
 	'sanity check on the fixture: a naive substr_count comparison would have seen a drop here and wrongly flagged drift'

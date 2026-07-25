@@ -1370,7 +1370,15 @@ trait DiviOps_Agent_ThemeBuilder {
 		// INSERTED blocks survive their first write too. Filtering out the
 		// empty freeform chunks below doesn't disturb the opener alignment —
 		// freeform blocks produce no opener token (#903).
-		$blocks = self::enrich_blocks_with_empty_object_paths( parse_blocks( $content ), $content );
+		// parse_blocks_for_write(), not bare parse_blocks(): this is the
+		// caller-supplied INSERTION content, about to be spliced into the
+		// layout tree and serialized back in tb_layout_block_insert(). A bare
+		// parse here would let Divi's parser expand a divi/global-layout
+		// wrapper carried in the inserted content before it ever reaches the
+		// tree — the drift-guard at the write site can't catch that, because
+		// its baseline (the stored layout's own content) never contained
+		// this wrapper to begin with (#11).
+		$blocks = self::enrich_blocks_with_empty_object_paths( self::parse_blocks_for_write( $content ), $content );
 		$out    = [];
 		foreach ( $blocks as $block ) {
 			if ( empty( $block['blockName'] ) ) {

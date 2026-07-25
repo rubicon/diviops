@@ -231,38 +231,81 @@ trait DiviOps_Agent_Core {
 	}
 
 	/**
-	 * Count genuine `divi/global-layout` wrapper openers in block markup.
+	 * Sentinel identity for a `divi/global-layout` wrapper opener that carries
+	 * no readable `globalModule` id. Not a real WordPress post id (those are
+	 * plain digit strings), so it can never collide with one — every such
+	 * wrapper is tracked as an occurrence of this one token, which keeps the
+	 * multiset comparison in global_layout_wrapper_drift() honest about their
+	 * count without pretending to know which layout they referenced.
+	 *
+	 * A plain method rather than a class constant: trait constants require
+	 * PHP 8.3, and this plugin's own header declares `Requires PHP: 7.4`.
+	 *
+	 * @return string
+	 */
+	private static function no_global_module_id_sentinel(): string {
+		return '(no globalModule id)';
+	}
+
+	/**
+	 * Extract the `globalModule` identity of every genuine `divi/global-layout`
+	 * wrapper opener in block markup, in document order, or null if the scan
+	 * could not be trusted.
 	 *
 	 * Walks openers with next_block_opener() and, for each one, skips past
 	 * that opener's own attribute JSON via block_opening_comment_end() before
 	 * continuing the scan. That keeps a `<!-- wp:divi/global-layout`-shaped
 	 * sequence sitting inside another block's own attribute string (e.g. an
-	 * admin label someone pasted raw markup into) from being counted as a
-	 * real wrapper — only genuine block-comment boundaries are, the same
+	 * admin label someone pasted raw markup into) from being read as a real
+	 * wrapper — only genuine block-comment boundaries are, the same
 	 * discipline block_opener_is_self_closing() already relies on.
 	 *
+	 * Returns null — a scan the caller cannot rely on — the moment ANY opener
+	 * anywhere in the document (wrapper or not) can't be resolved to its own
+	 * comment terminator, or a wrapper's own attribute JSON fails to decode.
+	 * Stopping at the first such opener and returning only what had been
+	 * found so far would let a malformed opener ahead of a genuinely removed
+	 * wrapper truncate both the "before" and "after" scans to the same wrong
+	 * result, silently masking the loss (#11 adversarial review, F4). A
+	 * drift check that cannot verify safety must refuse the write, not
+	 * approve it by default — global_layout_wrapper_drift() treats null from
+	 * either side as drift.
+	 *
 	 * @param string $content Block markup to scan.
-	 * @return int
+	 * @return array<int,string>|null
 	 */
-	private static function count_global_layout_wrapper_openers( string $content ): int {
-		$count  = 0;
-		$offset = 0;
+	private static function global_layout_wrapper_identities( string $content ): ?array {
+		$identities = [];
+		$offset     = 0;
 
 		while ( null !== ( $opener = self::next_block_opener( $content, $offset ) ) ) {
 			$bounds = self::block_opening_comment_end( $content, $opener['pos'] );
 			if ( null === $bounds ) {
-				// Unterminated opener — nothing further to scan safely.
-				break;
+				// Unterminated opener — the rest of the document can't be
+				// scanned reliably, so nothing this function returns about
+				// it can be trusted either.
+				return null;
 			}
 
 			if ( self::GLOBAL_LAYOUT_BLOCK_NAME === $opener['name'] ) {
-				++$count;
+				$markup = substr( $content, $opener['pos'], $bounds['comment_end'] - $opener['pos'] );
+				$attrs  = self::extract_attrs_from_block_markup( $markup );
+				if ( is_wp_error( $attrs ) ) {
+					// This wrapper's own attrs didn't decode — same reasoning:
+					// an unreadable identity is not a safe "no drift" default.
+					return null;
+				}
+
+				$id           = isset( $attrs['globalModule'] ) && is_scalar( $attrs['globalModule'] )
+					? (string) $attrs['globalModule']
+					: self::no_global_module_id_sentinel();
+				$identities[] = $id;
 			}
 
 			$offset = $bounds['comment_end'];
 		}
 
-		return $count;
+		return $identities;
 	}
 
 	/**
@@ -271,18 +314,46 @@ trait DiviOps_Agent_Core {
 	 *
 	 * This is the Layer 2 backstop for when Layer 1 (parse_blocks_for_write())
 	 * could not apply — i.e. Divi's save-context parser class is absent — and
-	 * Divi's own parser expanded the wrapper during the write. Compares wrapper
-	 * OPENER COUNTS only, never a full-byte diff, so benign reserialize
-	 * differences (attribute key reordering, a changed globalModule id on a
-	 * wrapper that is still present, etc.) never false-positive: only a DROP
-	 * in count from $original to $serialized is drift.
+	 * Divi's own parser expanded the wrapper during the write.
+	 *
+	 * Identity-aware, not count-only: compares the MULTISET of each wrapper's
+	 * `globalModule` id between $original and $serialized (never a full-byte
+	 * diff, so benign reserialize differences like attribute key reordering
+	 * never false-positive). A wrapper whose id changed (layout A swapped for
+	 * layout B) is drift even though the overall wrapper COUNT is unchanged —
+	 * Divi's non-recursive expansion can produce exactly that shape for
+	 * nested/chained global layouts, and a count-only comparison would miss
+	 * it (#11 adversarial review, F3). Wrappers with no readable id fall back
+	 * to being counted via the no_global_module_id_sentinel() token, so
+	 * they're still covered by the same multiset check.
+	 *
+	 * Fails CLOSED: an unreliable scan of either side (global_layout_wrapper_
+	 * identities() returning null) is treated as drift, refusing the write
+	 * rather than risking a masked loss (#11 adversarial review, F4).
 	 *
 	 * @param string $original   Content before the write round-trip.
 	 * @param string $serialized Content about to be persisted.
-	 * @return bool True when a wrapper present in $original is missing from $serialized.
+	 * @return bool True when a wrapper id present in $original is missing from
+	 *              $serialized, or either side could not be scanned reliably.
 	 */
 	private static function global_layout_wrapper_drift( string $original, string $serialized ): bool {
-		return self::count_global_layout_wrapper_openers( $serialized ) < self::count_global_layout_wrapper_openers( $original );
+		$before = self::global_layout_wrapper_identities( $original );
+		$after  = self::global_layout_wrapper_identities( $serialized );
+
+		if ( null === $before || null === $after ) {
+			return true;
+		}
+
+		$before_counts = array_count_values( $before );
+		$after_counts  = array_count_values( $after );
+
+		foreach ( $before_counts as $id => $count ) {
+			if ( ( $after_counts[ $id ] ?? 0 ) < $count ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
