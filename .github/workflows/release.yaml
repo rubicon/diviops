@@ -1,0 +1,47 @@
+name: release-please
+
+# Maintained-fork release automation (issue #48). release-please reads
+# Conventional Commits on main, opens/maintains a release PR that bumps the
+# version (see release-please-config.json extra-files) and curates CHANGELOG.md,
+# and on merge cuts a bare `vX.Y.Z` tag + GitHub release. Commits are authored by
+# the org-wide `rubicon-release-please` GitHub App (verified/signed), whose
+# credentials are pulled at runtime from 1Password so no app key is stored as a
+# repo secret — only OP_SERVICE_ACCOUNT_TOKEN is.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    # Only run on the repo we maintain; inert on any mirror/fork of the tree.
+    if: github.repository == 'rubicon/diviops'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Load release-please App credentials from 1Password
+        id: op
+        uses: 1password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        with:
+          export-env: false
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          RP_APP_ID: "op://Automation/rubicon_release_please_private_key/app id"
+          RP_PRIVATE_KEY: "op://Automation/rubicon_release_please_private_key/private key"
+
+      - name: Mint a GitHub App token (verified release commits)
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ steps.op.outputs.RP_APP_ID }}
+          private-key: ${{ steps.op.outputs.RP_PRIVATE_KEY }}
+
+      - name: Run release-please
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
