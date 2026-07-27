@@ -133,7 +133,7 @@ class DiviOps_Agent {
 		'validate_render_by_page_id',
 		// variable
 		'variable_create', 'variable_create_fluid_system', 'variable_delete',
-		'variable_list', 'variable_scan_orphans', 'variable_used_on_page',
+		'variable_list', 'variable_scan_orphans', 'variable_update', 'variable_used_on_page',
 		// Sub-feature: structured `gradient` input on variable_create serializes
 		// the canonical $variable(gradient) token (#921). Gated separately so a
 		// new server fails loud against a plugin too old to serialize it.
@@ -1620,6 +1620,20 @@ class DiviOps_Agent {
 				'targets'           => [ 'required' => false, 'type' => 'object' ],
 				'output_unit'       => [ 'required' => false, 'type' => 'string' ],
 				'root_font_size_px' => [ 'required' => false, 'type' => 'number' ],
+			],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/variable/update', [
+			'methods'             => 'POST',
+			'callback'            => [ __CLASS__, 'variable_update' ],
+			'permission_callback' => [ __CLASS__, 'check_admin_permission' ],
+			'args'                => [
+				'id'       => [ 'required' => true, 'type' => 'string' ],
+				'label'    => [ 'required' => false, 'type' => 'string' ],
+				'value'    => [ 'required' => false, 'type' => 'string' ],
+				'gradient' => [ 'required' => false, 'type' => 'object' ],
+				'status'   => [ 'required' => false, 'type' => 'string' ],
+				'dry_run'  => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
 			],
 		] );
 

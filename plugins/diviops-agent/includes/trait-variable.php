@@ -1842,6 +1842,234 @@ trait DiviOps_Agent_Variable {
 	}
 
 	/**
+	 * Merge validated override fields onto an existing variable record.
+	 * `$overrides` never contains `id` or `type` — callers only ever put
+	 * label/value/color/status in it — so those two fields, and anything
+	 * else this trait doesn't itself know about (e.g. `order`), pass
+	 * through untouched. `lastUpdated` is bumped unconditionally: even a
+	 * metadata-only update (label/status, no value change) is still a
+	 * write.
+	 *
+	 * This is the id-preservation guarantee `variable_update` depends on:
+	 * a page's `$variable({...})$` token embeds the id, not the value, so
+	 * a write that never touches the id keeps every existing reference
+	 * resolving to the (now-changed) value.
+	 */
+	private static function build_updated_variable_record( array $existing, array $overrides ) {
+		$overrides['lastUpdated'] = gmdate( 'Y-m-d\TH:i:s.000\Z' );
+		return array_merge( $existing, $overrides );
+	}
+
+	/**
+	 * Update an existing variable's label/value/status in place, by id.
+	 * Auto-detects storage bucket from the id prefix, same as
+	 * variable_delete. Strict update — the id must already exist; an
+	 * unknown id returns `not_found` rather than silently creating one
+	 * (variable_create's upsert-by-id behavior does not apply here).
+	 *
+	 * Partial update: only supplied fields are written; anything omitted,
+	 * including `order`, is preserved via build_updated_variable_record()'s
+	 * merge. The id itself and (for non-color buckets) the variable's
+	 * `type` are never part of the override set, so they can't change.
+	 *
+	 * `value` validation mirrors variable_create's per-type rules: hex
+	 * color for `colors`, the structured-gradient contract (#921) for
+	 * `gradients` via the same build_gradient_variable_value() helper
+	 * create uses, URL sanitization for images/links, plain text
+	 * otherwise. Does NOT regenerate a fluid clamp() from min/max/targets —
+	 * pass the replacement value directly (a hand-built clamp() string is
+	 * a valid value), or use variable_create_fluid_system with
+	 * overwrite=true for bulk fluid regeneration. Moving a variable across
+	 * buckets and renaming its id are both out of scope, same as the fork
+	 * issue's "recreate, don't rename" boundary.
+	 */
+	public static function variable_update( $request ) {
+		$id_raw = (string) ( $request->get_param( 'id' ) ?? '' );
+		if ( '' === $id_raw ) {
+			return self::envelope_error(
+				'invalid_input',
+				'id is required for variable_update.',
+				null,
+				400,
+				[ 'field' => 'id', 'missing' => 'id' ]
+			);
+		}
+		$id = sanitize_text_field( $id_raw );
+
+		// Customizer-bound defaults (gcid-primary-color etc.) are managed
+		// through WP Customizer theme options, not this registry — same
+		// guard variable_delete uses, for the same reason (see there).
+		if ( class_exists( '\ET\Builder\Packages\GlobalData\GlobalData' ) ) {
+			$customizer = \ET\Builder\Packages\GlobalData\GlobalData::$customizer_colors ?? [];
+			if ( isset( $customizer[ $id ] ) ) {
+				return self::envelope_error(
+					'variable.customizer_default_immutable',
+					"Variable '$id' is a Divi customizer-bound default and cannot be updated via this endpoint — it's managed through WP Customizer theme options.",
+					'Edit the corresponding theme option via WP Customizer instead.',
+					403,
+					[ 'id' => $id, 'managed_by' => 'wp_customizer' ]
+				);
+			}
+		}
+
+		// Resolve storage bucket via prefix, same lookup variable_delete uses.
+		$is_color = 0 === strpos( $id, 'gcid-' );
+
+		if ( $is_color ) {
+			$raw         = et_get_option( 'et_global_data' );
+			$global_data = ! empty( $raw ) ? maybe_unserialize( $raw ) : [];
+			if ( ! is_array( $global_data ) ) {
+				$global_data = [];
+			}
+			$colors = is_array( $global_data['global_colors'] ?? null ) ? $global_data['global_colors'] : [];
+			if ( ! isset( $colors[ $id ] ) ) {
+				return self::envelope_error(
+					'not_found',
+					"Variable '$id' not found.",
+					'Use diviops_variable_list to enumerate existing IDs, or diviops_variable_create to add it.',
+					404
+				);
+			}
+			$existing   = (array) $colors[ $id ];
+			$found_type = 'colors';
+		} else {
+			$vars = get_option( 'et_divi_global_variables', [] );
+			if ( ! is_array( $vars ) ) {
+				$vars = [];
+			}
+			$found_type = null;
+			foreach ( [ 'numbers', 'strings', 'images', 'links', 'fonts', 'gradients' ] as $type ) {
+				if ( is_array( $vars[ $type ] ?? null ) && isset( $vars[ $type ][ $id ] ) ) {
+					$found_type = $type;
+					break;
+				}
+			}
+			if ( null === $found_type ) {
+				return self::envelope_error(
+					'not_found',
+					"Variable '$id' not found.",
+					'Use diviops_variable_list to enumerate existing IDs, or diviops_variable_create to add it.',
+					404
+				);
+			}
+			$existing = (array) $vars[ $found_type ][ $id ];
+		}
+
+		$overrides = [];
+
+		// label — optional; omitted preserves existing.
+		$label_param = $request->get_param( 'label' );
+		if ( null !== $label_param ) {
+			$overrides['label'] = sanitize_text_field( (string) $label_param );
+		}
+
+		// status — optional; validated against the vocabulary variable_list's
+		// is_active() already treats as known ('active', and the three demoted
+		// statuses it sorts to the tail).
+		$status_param = $request->get_param( 'status' );
+		if ( null !== $status_param ) {
+			$valid_statuses = [ 'active', 'inactive', 'archived', 'temporary' ];
+			if ( ! in_array( $status_param, $valid_statuses, true ) ) {
+				return self::envelope_error(
+					'invalid_input',
+					'status must be one of: ' . implode( ', ', $valid_statuses ) . '.',
+					null,
+					400,
+					[ 'field' => 'status', 'allowed' => $valid_statuses, 'received' => $status_param ]
+				);
+			}
+			$overrides['status'] = $status_param;
+		}
+
+		// value — optional; omitted preserves existing. Validation mirrors
+		// variable_create's per-type rules.
+		$value_param    = $request->get_param( 'value' );
+		$gradient_param = $request->get_param( 'gradient' );
+
+		if ( $is_color ) {
+			if ( null !== $value_param ) {
+				$color = sanitize_hex_color( (string) $value_param );
+				if ( ! $color ) {
+					return self::envelope_error(
+						'invalid_input',
+						"Invalid hex color value: '$value_param'.",
+						null,
+						400,
+						[ 'field' => 'value', 'expected' => 'hex color (e.g. #3a7a6a)', 'received' => $value_param ]
+					);
+				}
+				$overrides['color'] = $color;
+			}
+		} elseif ( 'gradients' === $found_type ) {
+			if ( null !== $value_param || is_array( $gradient_param ) ) {
+				$built = self::build_gradient_variable_value( $value_param, $gradient_param );
+				if ( $built instanceof WP_REST_Response ) {
+					return $built; // envelope_error raised by build_gradient_variable_value.
+				}
+				$overrides['value'] = $built;
+			}
+		} elseif ( null !== $value_param ) {
+			if ( ! is_scalar( $value_param ) ) {
+				return self::envelope_error(
+					'invalid_input',
+					'value must be a scalar string.',
+					null,
+					400,
+					[
+						'field'    => 'value',
+						'expected' => 'scalar string',
+						'received' => is_array( $value_param ) ? 'array' : gettype( $value_param ),
+					]
+				);
+			}
+			$value_str          = (string) $value_param;
+			$overrides['value'] = in_array( $found_type, [ 'images', 'links' ], true )
+				? esc_url_raw( $value_str )
+				: sanitize_text_field( $value_str );
+		}
+
+		$updated = self::build_updated_variable_record( $existing, $overrides );
+
+		if ( (bool) $request->get_param( 'dry_run' ) ) {
+			$bucket = $is_color ? 'colors' : $found_type;
+			return self::dry_run_response(
+				"Would update {$bucket} variable '{$id}'.",
+				[ [
+					'kind'   => 'variable.update',
+					'target' => "variable/{$bucket}/{$id}",
+					'before' => $existing,
+					'after'  => $updated,
+				] ]
+			);
+		}
+
+		if ( $is_color ) {
+			$colors[ $id ]                = $updated;
+			$global_data['global_colors'] = $colors;
+			et_update_option( 'et_global_data', $global_data );
+
+			return self::envelope_success( [
+				'success' => true,
+				'id'      => $id,
+				'type'    => 'colors',
+				'label'   => $updated['label'] ?? '',
+				'value'   => $updated['color'] ?? '',
+			] );
+		}
+
+		$vars[ $found_type ][ $id ] = $updated;
+		update_option( 'et_divi_global_variables', $vars );
+
+		return self::envelope_success( [
+			'success' => true,
+			'id'      => $id,
+			'type'    => $found_type,
+			'label'   => $updated['label'] ?? '',
+			'value'   => $updated['value'] ?? '',
+		] );
+	}
+
+	/**
 	 * Delete a variable by ID. Auto-detects storage location from ID prefix.
 	 *
 	 * Reference-safety: by default, refuses to delete when live references
