@@ -84,6 +84,15 @@ trait DiviOps_Agent_Media {
 				'data'    => array( 'filename' => $filename ),
 			);
 		}
+		if ( 'image/svg+xml' === ( $check['type'] ?? '' ) && ! self::media_svg_sideload_sanitizer_active() ) {
+			return array(
+				'code'    => 'svg_sanitizer_required',
+				'http'    => 415,
+				'message' => 'SVG uploads require an active SVG sanitizer that sanitizes sideloaded files.',
+				'hint'    => 'Install/enable Safe SVG (a recent version that hooks wp_handle_sideload_prefilter).',
+				'data'    => array( 'filename' => $filename ),
+			);
+		}
 		$allowed = array_values( get_allowed_mime_types() );
 		if ( ! in_array( $check['type'], $allowed, true ) ) {
 			return array(
@@ -95,5 +104,16 @@ trait DiviOps_Agent_Media {
 			);
 		}
 		return null;
+	}
+
+	/**
+	 * SVG is a stored-XSS vector, so it is allowed only when a sanitizer is
+	 * verified active on the exact filter our upload path fires. Our upload
+	 * path calls media_handle_sideload(), which fires wp_handle_sideload_prefilter;
+	 * a sanitizer (e.g. Safe SVG) must be registered on that hook. Fail closed:
+	 * no registered callback means no verified sanitizer, so SVG is rejected.
+	 */
+	private static function media_svg_sideload_sanitizer_active(): bool {
+		return false !== has_filter( 'wp_handle_sideload_prefilter' );
 	}
 }

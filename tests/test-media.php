@@ -95,3 +95,25 @@ assert_true(
 	null !== diviops_call_static( 'media_filetype_error', array( 'doc.exe', '/tmp/x' ) ),
 	'disallowed mime rejected'
 );
+
+// ── media_filetype_error(): SVG fail-closed on the sideload sanitizer (#28, #73) ─
+// SVG is a stored-XSS vector, so it is allowed only when a sanitizer is verified
+// active on the exact filter our upload path fires (wp_handle_sideload_prefilter).
+// Allow svg mime for these cases so the ONLY gate under test is the sanitizer.
+
+$GLOBALS['diviops_test_allowed_mimes']       = array( 'png' => 'image/png', 'svg' => 'image/svg+xml' );
+$GLOBALS['diviops_test_filetype']['logo.svg'] = array( 'ext' => 'svg', 'type' => 'image/svg+xml', 'proper_filename' => false );
+
+$GLOBALS['diviops_test_filters'] = array(); // no sanitizer
+assert_true(
+	null !== diviops_call_static( 'media_filetype_error', array( 'logo.svg', '/tmp/x' ) ),
+	'svg rejected when no sideload sanitizer'
+);
+
+$GLOBALS['diviops_test_filters'] = array( 'wp_handle_sideload_prefilter' => 10 ); // sanitizer wired
+assert_true(
+	null === diviops_call_static( 'media_filetype_error', array( 'logo.svg', '/tmp/x' ) ),
+	'svg accepted when sanitizer active'
+);
+unset( $GLOBALS['diviops_test_filters'], $GLOBALS['diviops_test_allowed_mimes'] );
+$GLOBALS['diviops_test_allowed_mimes'] = array( 'png' => 'image/png' );

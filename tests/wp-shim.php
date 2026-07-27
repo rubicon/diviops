@@ -35,6 +35,19 @@ if ( ! function_exists( 'add_filter' ) ) {
 	}
 }
 
+if ( ! function_exists( 'has_filter' ) ) {
+	/**
+	 * Model WP core's has_filter(): whether a callback is registered on $hook.
+	 * add_filter() above is a no-op that never records anything, so this is
+	 * driven directly by the test seam $GLOBALS['diviops_test_filters'], a map
+	 * of hook name => priority (or any truthy value), mirroring core's return
+	 * of the matched priority (or false when nothing is registered).
+	 */
+	function has_filter( $hook, $callback = false ) {
+		return $GLOBALS['diviops_test_filters'][ $hook ] ?? false;
+	}
+}
+
 if ( ! function_exists( 'wp_strip_all_tags' ) ) {
 	function wp_strip_all_tags( $string, $remove_breaks = false ) {
 		$string = (string) $string;
