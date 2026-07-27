@@ -1155,6 +1155,108 @@ if ( ! function_exists( 'get_post_mime_type' ) ) {
 	}
 }
 
+if ( ! function_exists( 'get_post_field' ) ) {
+	/**
+	 * Model WP core's get_post_field(): read a single field off the post object
+	 * the shared registry holds for $post_id, '' when the post or field is
+	 * unset. Same primitive-stub category as get_post() — media_get() uses this
+	 * for post_excerpt (WordPress's storage for an attachment's caption).
+	 */
+	function get_post_field( $field, $post = null, $context = 'display' ) {
+		$p = get_post( $post );
+		if ( ! $p || ! isset( $p->$field ) ) {
+			return '';
+		}
+		return $p->$field;
+	}
+}
+
+if ( ! isset( $GLOBALS['diviops_test_attachment_metadata'] ) ) {
+	$GLOBALS['diviops_test_attachment_metadata'] = array();
+}
+
+if ( ! function_exists( 'wp_get_attachment_metadata' ) ) {
+	/**
+	 * Model WP core's wp_get_attachment_metadata(): return the array a test
+	 * scripted for this attachment id (mirroring the 'sizes' sub-array a real
+	 * image attachment carries), empty array when nothing was scripted.
+	 */
+	function wp_get_attachment_metadata( $attachment_id, $unfiltered = false ) {
+		return $GLOBALS['diviops_test_attachment_metadata'][ $attachment_id ] ?? array();
+	}
+}
+
+if ( ! function_exists( 'wp_basename' ) ) {
+	function wp_basename( $path, $suffix = '' ) {
+		return basename( (string) $path, $suffix );
+	}
+}
+
+if ( ! class_exists( 'WP_Query' ) ) {
+	/**
+	 * Minimal WP_Query stub modeling only what media_list() (trait-media.php)
+	 * needs: post_type / post_status filtering, an 's' substring search against
+	 * post_title, a 'post_mime_type' prefix filter (WP core lets a bare group
+	 * like 'image' match any 'image/*' — this stub's prefix match subsumes
+	 * that), and posts_per_page/paged pagination — run against the same
+	 * $GLOBALS['diviops_test_posts'] registry get_post()/
+	 * diviops_test_register_post() use, so a fixture registered there is what
+	 * this class scans. NOT a general WP_Query reimplementation: no
+	 * tax_query/meta_query/orderby, because no handler under test needs them.
+	 */
+	class WP_Query {
+		public $posts         = array();
+		public $found_posts   = 0;
+		public $max_num_pages = 0;
+
+		public function __construct( array $args = array() ) {
+			$post_type   = $args['post_type'] ?? 'post';
+			$post_status = $args['post_status'] ?? 'publish';
+			$search      = isset( $args['s'] ) ? strtolower( (string) $args['s'] ) : '';
+			$mime_prefix = isset( $args['post_mime_type'] ) ? (string) $args['post_mime_type'] : '';
+			$fields      = $args['fields'] ?? '';
+			$per_page    = isset( $args['posts_per_page'] ) ? (int) $args['posts_per_page'] : 10;
+			$paged       = isset( $args['paged'] ) ? max( 1, (int) $args['paged'] ) : 1;
+
+			$matches = array();
+			foreach ( (array) ( $GLOBALS['diviops_test_posts'] ?? array() ) as $post ) {
+				if ( $post_type !== $post->post_type ) {
+					continue;
+				}
+				$status = isset( $post->post_status ) ? $post->post_status : 'publish';
+				if ( $post_status !== $status ) {
+					continue;
+				}
+				if ( '' !== $search && false === strpos( strtolower( (string) $post->post_title ), $search ) ) {
+					continue;
+				}
+				if ( '' !== $mime_prefix ) {
+					$post_mime = isset( $post->post_mime_type ) ? (string) $post->post_mime_type : '';
+					if ( 0 !== strpos( $post_mime, $mime_prefix ) ) {
+						continue;
+					}
+				}
+				$matches[] = $post;
+			}
+
+			$this->found_posts   = count( $matches );
+			$this->max_num_pages = $per_page > 0 ? (int) ceil( $this->found_posts / $per_page ) : 0;
+
+			$offset     = ( $paged - 1 ) * $per_page;
+			$page_posts = array_slice( $matches, $offset, $per_page );
+
+			$this->posts = ( 'ids' === $fields )
+				? array_map(
+					function ( $p ) {
+						return (int) $p->ID;
+					},
+					$page_posts
+				)
+				: $page_posts;
+		}
+	}
+}
+
 if ( ! class_exists( 'DiviOps_Agent' ) ) {
 	require_once dirname( __DIR__ ) . '/plugins/diviops-agent/diviops-agent.php';
 }

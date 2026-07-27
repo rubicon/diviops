@@ -345,6 +345,95 @@ trait DiviOps_Agent_Media {
 	}
 
 	/**
+	 * Get a single attachment's details.
+	 *
+	 * @param mixed $request REST request-like object ($request['id']).
+	 * @return WP_REST_Response
+	 */
+	public static function media_get( $request ) {
+		$id   = absint( $request['id'] );
+		$post = get_post( $id );
+
+		if ( ! $post || 'attachment' !== $post->post_type ) {
+			return self::envelope_error(
+				'not_found',
+				"Attachment #{$id} not found.",
+				'Use diviops_media_list to find a valid attachment id.',
+				404,
+				array( 'attachment_id' => $id )
+			);
+		}
+
+		$metadata = wp_get_attachment_metadata( $id );
+		$sizes    = ( is_array( $metadata ) && ! empty( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) )
+			? $metadata['sizes']
+			: array();
+
+		return self::envelope_success(
+			array(
+				'attachment_id' => $id,
+				'url'           => (string) wp_get_attachment_url( $id ),
+				'mime'          => (string) get_post_mime_type( $id ),
+				'title'         => (string) $post->post_title,
+				'alt'           => (string) get_post_meta( $id, '_wp_attachment_image_alt', true ),
+				'caption'       => (string) get_post_field( 'post_excerpt', $id ),
+				'sizes'         => $sizes,
+			)
+		);
+	}
+
+	/**
+	 * List/paginate media library attachments, optionally filtered by mime
+	 * prefix and/or a title search term.
+	 *
+	 * @param mixed $request REST request-like object (get_param()).
+	 * @return WP_REST_Response
+	 */
+	public static function media_list( $request ) {
+		$page     = self::get_request_page( $request );
+		$per_page = max( 1, min( absint( $request->get_param( 'per_page' ) ?? 20 ), 100 ) );
+		$mime     = sanitize_text_field( (string) ( $request->get_param( 'mime' ) ?? '' ) );
+		$search   = sanitize_text_field( (string) ( $request->get_param( 'search' ) ?? '' ) );
+
+		$args = array(
+			'post_type'      => 'attachment',
+			'post_status'    => 'inherit',
+			'posts_per_page' => $per_page,
+			'paged'          => $page,
+			'fields'         => 'ids',
+		);
+		if ( '' !== $mime ) {
+			$args['post_mime_type'] = $mime;
+		}
+		if ( '' !== $search ) {
+			$args['s'] = $search;
+		}
+
+		$query = new WP_Query( $args );
+		$items = array();
+		foreach ( $query->posts as $attachment_id ) {
+			$attachment_id = (int) $attachment_id;
+			$url           = (string) wp_get_attachment_url( $attachment_id );
+			$items[]       = array(
+				'attachment_id' => $attachment_id,
+				'url'           => $url,
+				'mime'          => (string) get_post_mime_type( $attachment_id ),
+				'title'         => (string) get_post_field( 'post_title', $attachment_id ),
+				'filename'      => wp_basename( $url ),
+			);
+		}
+
+		return self::envelope_success(
+			array(
+				'items'    => $items,
+				'page'     => $page,
+				'per_page' => $per_page,
+				'total'    => (int) $query->found_posts,
+			)
+		);
+	}
+
+	/**
 	 * Resolve a redirect's Location header against the URL it was returned
 	 * from. An already-absolute target (has both scheme and host) passes
 	 * through unchanged; a root-relative target (`/path`) inherits the base

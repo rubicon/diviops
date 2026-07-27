@@ -369,3 +369,155 @@ unset(
 	$GLOBALS['diviops_test_sideload_mime']
 );
 $GLOBALS['diviops_test_allowed_mimes'] = array( 'png' => 'image/png' );
+
+// ── media_get() / media_list(): read + pagination (#28 Task 5) ────────────
+// Test-global hygiene: this suite sets diviops_test_posts, diviops_test_
+// attachments, diviops_test_post_meta, diviops_test_attachment_metadata;
+// every one is reset/unset at the end so nothing leaks into files that share
+// this PHP process.
+
+$GLOBALS['diviops_test_posts']                = array();
+$GLOBALS['diviops_test_attachments']          = array();
+$GLOBALS['diviops_test_post_meta']            = array();
+$GLOBALS['diviops_test_attachment_metadata']  = array();
+
+/**
+ * Register a fixture attachment in BOTH stores the handlers read from: the
+ * shared post registry (post_type/post_status/post_mime_type/post_title —
+ * what WP_Query scans) and the attachments registry (url/mime — what
+ * wp_get_attachment_url()/get_post_mime_type() read). Real WordPress keeps
+ * all of this on one post row; this harness splits it across two stubs (see
+ * wp-shim.php), so a fixture has to satisfy both.
+ */
+function diviops_media_register_attachment( int $id, string $title, string $mime, string $filename, int $parent = 0 ) {
+	$post                 = diviops_test_register_post( $id, '', 'attachment', $title );
+	$post->post_status    = 'inherit';
+	$post->post_mime_type = $mime;
+
+	$GLOBALS['diviops_test_attachments'][ $id ] = array(
+		'id'       => $id,
+		'filename' => $filename,
+		'parent'   => $parent,
+		'url'      => "https://site/wp-content/uploads/{$filename}",
+		'mime'     => $mime,
+	);
+
+	return $post;
+}
+
+// ── media_get(): found ─────────────────────────────────────────────────
+diviops_media_register_attachment( 501, 'Photo One', 'image/jpeg', 'photo-one.jpg' );
+$GLOBALS['diviops_test_posts'][501]->post_excerpt = 'A lovely photo';
+update_post_meta( 501, '_wp_attachment_image_alt', 'A descriptive alt' );
+$GLOBALS['diviops_test_attachment_metadata'][501] = array(
+	'width'  => 1200,
+	'height' => 800,
+	'sizes'  => array(
+		'thumbnail' => array( 'file' => 'photo-one-150x150.jpg', 'width' => 150, 'height' => 150 ),
+	),
+);
+
+$r = diviops_call( 'media_get', array( diviops_media_req( array( 'id' => 501 ) ) ) );
+$d = $r->get_data();
+assert_true( true === $d['ok'], 'media_get found: ok' );
+assert_true( 501 === $d['data']['attachment_id'], 'media_get found: attachment_id' );
+assert_true( 'https://site/wp-content/uploads/photo-one.jpg' === $d['data']['url'], 'media_get found: url' );
+assert_true( 'image/jpeg' === $d['data']['mime'], 'media_get found: mime' );
+assert_true( 'Photo One' === $d['data']['title'], 'media_get found: title' );
+assert_true( 'A descriptive alt' === $d['data']['alt'], 'media_get found: alt' );
+assert_true( 'A lovely photo' === $d['data']['caption'], 'media_get found: caption' );
+assert_true(
+	isset( $d['data']['sizes']['thumbnail']['file'] ) && 'photo-one-150x150.jpg' === $d['data']['sizes']['thumbnail']['file'],
+	'media_get found: sizes'
+);
+
+// ── media_get(): not_found (missing id) ────────────────────────────────
+$r = diviops_call( 'media_get', array( diviops_media_req( array( 'id' => 999999 ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'], 'media_get missing id: not ok' );
+assert_true( 'not_found' === $d['error']['code'], 'media_get missing id: not_found code' );
+assert_true( 404 === $r->get_status(), 'media_get missing id: 404' );
+assert_true( 999999 === $d['error']['data']['attachment_id'], 'media_get missing id: error data attachment_id' );
+
+// ── media_get(): not_found (id exists but is not an attachment) ───────
+diviops_test_register_post( 502, '', 'page', 'A Regular Page' );
+$r = diviops_call( 'media_get', array( diviops_media_req( array( 'id' => 502 ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'], 'media_get non-attachment: not ok' );
+assert_true( 'not_found' === $d['error']['code'], 'media_get non-attachment: not_found code' );
+
+// ── media_list(): pagination ────────────────────────────────────────────
+// Reset: the media_get fixtures above (501 attachment, 502 non-attachment)
+// must not leak into these counts.
+$GLOBALS['diviops_test_posts']       = array();
+$GLOBALS['diviops_test_attachments'] = array();
+
+for ( $i = 1; $i <= 25; $i++ ) {
+	diviops_media_register_attachment( 600 + $i, "Item {$i}", 'image/png', "item-{$i}.png" );
+}
+
+$r = diviops_call( 'media_list', array( diviops_media_req( array( 'page' => 1, 'per_page' => 10 ) ) ) );
+$d = $r->get_data();
+assert_true( true === $d['ok'], 'media_list page 1: ok' );
+assert_true( 25 === $d['data']['total'], 'media_list page 1: total' );
+assert_true( 1 === $d['data']['page'], 'media_list page 1: page' );
+assert_true( 10 === $d['data']['per_page'], 'media_list page 1: per_page' );
+assert_true( 10 === count( $d['data']['items'] ), 'media_list page 1: item count' );
+
+$r = diviops_call( 'media_list', array( diviops_media_req( array( 'page' => 3, 'per_page' => 10 ) ) ) );
+$d = $r->get_data();
+assert_true( 5 === count( $d['data']['items'] ), 'media_list page 3: remainder item count' );
+assert_true( 3 === $d['data']['page'], 'media_list page 3: page' );
+
+// default per_page
+$r = diviops_call( 'media_list', array( diviops_media_req( array() ) ) );
+$d = $r->get_data();
+assert_true( 20 === $d['data']['per_page'], 'media_list default per_page is 20' );
+assert_true( 20 === count( $d['data']['items'] ), 'media_list default per_page: item count' );
+
+// per_page clamp
+$r = diviops_call( 'media_list', array( diviops_media_req( array( 'per_page' => 0 ) ) ) );
+assert_true( 1 === $r->get_data()['data']['per_page'], 'media_list per_page clamps up to 1' );
+$r = diviops_call( 'media_list', array( diviops_media_req( array( 'per_page' => 500 ) ) ) );
+assert_true( 100 === $r->get_data()['data']['per_page'], 'media_list per_page clamps down to 100' );
+
+// item shape
+$r     = diviops_call( 'media_list', array( diviops_media_req( array( 'page' => 1, 'per_page' => 1 ) ) ) );
+$item  = $r->get_data()['data']['items'][0];
+assert_true(
+	isset( $item['attachment_id'], $item['url'], $item['mime'], $item['title'], $item['filename'] ),
+	'media_list item shape has attachment_id/url/mime/title/filename'
+);
+
+// ── media_list(): mime prefix filter ────────────────────────────────────
+diviops_media_register_attachment( 701, 'A PDF report', 'application/pdf', 'report.pdf' );
+diviops_media_register_attachment( 702, 'A PNG banner', 'image/png', 'banner.png' );
+
+$r = diviops_call( 'media_list', array( diviops_media_req( array( 'mime' => 'application/pdf' ) ) ) );
+$d = $r->get_data();
+$ids = array_column( $d['data']['items'], 'attachment_id' );
+assert_true( in_array( 701, $ids, true ) && ! in_array( 702, $ids, true ), 'media_list mime filter: exact application/pdf' );
+
+$r = diviops_call( 'media_list', array( diviops_media_req( array( 'mime' => 'image/', 'per_page' => 100 ) ) ) );
+$d = $r->get_data();
+$ids = array_column( $d['data']['items'], 'attachment_id' );
+assert_true( in_array( 702, $ids, true ) && ! in_array( 701, $ids, true ), 'media_list mime filter: image/ prefix excludes pdf' );
+
+// ── media_list(): search ────────────────────────────────────────────────
+diviops_media_register_attachment( 703, 'Unique Search Target', 'image/png', 'target.png' );
+$r = diviops_call( 'media_list', array( diviops_media_req( array( 'search' => 'Unique Search' ) ) ) );
+$d = $r->get_data();
+assert_true( 1 === $d['data']['total'], 'media_list search: matches exactly one' );
+assert_true( 703 === $d['data']['items'][0]['attachment_id'], 'media_list search: matched id' );
+
+$r = diviops_call( 'media_list', array( diviops_media_req( array( 'search' => 'no-such-title-anywhere' ) ) ) );
+assert_true( 0 === $r->get_data()['data']['total'], 'media_list search: no match yields zero total' );
+
+// Test-global hygiene: unset everything this suite set so later test files
+// start from a clean slate.
+unset(
+	$GLOBALS['diviops_test_posts'],
+	$GLOBALS['diviops_test_attachments'],
+	$GLOBALS['diviops_test_post_meta'],
+	$GLOBALS['diviops_test_attachment_metadata']
+);
