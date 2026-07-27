@@ -10,6 +10,18 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.8.0](https://github.com/rubicon/diviops/compare/v1.7.0...v1.8.0) (2026-07-27)
+
+
+### Features
+
+* **G10:** native WordPress revisions — list, get, diff, restore ([#70](https://github.com/rubicon/diviops/issues/70)) ([47abe40](https://github.com/rubicon/diviops/commit/47abe40e2b2a64586b1cbcc2154e1ea75f81c7d0)), closes [#34](https://github.com/rubicon/diviops/issues/34)
+
+
+### Bug Fixes
+
+* stop page_update_content re-stamping Divi page meta on every write ([#67](https://github.com/rubicon/diviops/issues/67)) ([9a6fb18](https://github.com/rubicon/diviops/commit/9a6fb18fa4ac6c06395b18caaad400e1b1d8aa63)), closes [#45](https://github.com/rubicon/diviops/issues/45)
+
 ## [1.7.0](https://github.com/rubicon/diviops/compare/v1.6.0...v1.7.0) (2026-07-27)
 
 
