@@ -6,7 +6,6 @@
     ".": {
       "release-type": "simple",
       "package-name": "diviops-agent",
-      "release-as": "1.6.0",
       "extra-files": [
         {
           "type": "generic",
