@@ -3,7 +3,7 @@
 **An AI harness for WordPress site authoring — Divi-native today, WordPress-wide by design.**
 
 [![npm](https://img.shields.io/npm/v/@diviops/mcp-server.svg?label=%40diviops%2Fmcp-server)](https://www.npmjs.com/package/@diviops/mcp-server)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT & GPL-2.0](https://img.shields.io/badge/License-MIT%20%26%20GPL--2.0-yellow.svg)](LICENSE)
 [![Divi 5](https://img.shields.io/badge/Divi-5.1.0%2B-7E3DD3.svg)](https://www.elegantthemes.com/gallery/divi/)
 
 DiviOps gives Claude Code, Codex, Claude Desktop, and other MCP clients a typed control layer over WordPress site state. It pairs an MCP server, the DiviOps Agent WordPress plugin, and skill knowledge so AI agents can author Divi pages, inspect schemas, manage design tokens, work with SCF/CPT data models, run safe WP-CLI operations, and extend into target plugin coverage slices.
@@ -19,6 +19,8 @@ Claude Code ◄──► MCP Server (stdio) ◄──► WordPress REST API ◄�
 ```
 
 > **Beta software.** DiviOps is under active development. Use on production sites at your own discretion. Always back up your WordPress site before running write operations.
+
+> **Maintained fork.** This is `rubicon/diviops`, a fork of [`oaris-dev/diviops`](https://github.com/oaris-dev/diviops) that we maintain and extend: namespace-agnostic targeting so third-party Divi 5 modules (`difl/*`, `decm/*`, `d5bgo/*`) are addressable by every operation, a complete CRUD surface (library, menu, page, variable, block insertion), a layered global-layout write guard, and release automation. It stays a drop-in replacement for the stock plugin — the plugin slug, main class, REST namespace, and handshake filter are unchanged, so DiviOps Agent Pro and `@diviops/mcp-server` keep working against it. The original project and its design are the work of oaris.de; this fork honors that authorship and its licensing.
 
 ## What's in this distribution
 
@@ -166,6 +168,8 @@ Every write tool accepts `dry_run: boolean` (default `false`). When `true`, the 
 
 DiviOps is a harness. The Free distribution carries the core Divi authoring surface; the Pro distribution adds deeper skill knowledge, the Pro plugin, license/update gating, and paid coverage slices for target plugins.
 
+> **On this fork:** we maintain full **Pro compatibility** — `diviops-agent-pro` (oaris.de's separate commercial add-on, not part of this fork) attaches to our plugin unchanged, through `class_exists('DiviOps_Agent')` and the `diviops_agent_handshake_extensions` filter. Independently, this fork is building its **own** advanced skill knowledge for the free tier — authored clean-room from the Divi modules themselves and public documentation, never derived from Pro — so more of the advanced authoring capability lands in Free over time. The table below describes the upstream Free/Pro split as it stands today.
+
 ### What ships in Free (v1.x today)
 
 The Free distribution (`oaris-dev/diviops`) carries the core DiviOps execution surface:
@@ -252,4 +256,9 @@ Full troubleshooting matrix and environment-specific setup (DDEV, wp-env, WordPr
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+This repository is **dual-licensed**, matching the fork base:
+
+- **MIT** — the MCP server (`@diviops/mcp-server`), the skills, templates, documentation, and tests.
+- **GPL-2.0-or-later** — the WordPress plugins (`diviops-agent`, `diviops-design-library`), as WordPress requires.
+
+See [LICENSE](LICENSE) for the full text and per-component scope. This fork honors the original licensing and attributes the project to [oaris-dev/diviops](https://github.com/oaris-dev/diviops).
