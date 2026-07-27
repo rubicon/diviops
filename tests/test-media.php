@@ -72,3 +72,26 @@ assert_true(
 	! diviops_call_static( 'media_url_is_safe', array( 'ftp://host/a.png', &$reason, $safe_resolver ) ),
 	'ftp scheme rejected'
 );
+
+// ── media_filetype_error(): real-byte type check against allowed mimes ────
+// $GLOBALS['diviops_test_filetype'] drives the wp_check_filetype_and_ext()
+// shim; 'mismatch' models core's byte/extension-mismatch result.
+
+$GLOBALS['diviops_test_filetype'] = array(
+	'ok.png'   => array( 'ext' => 'png', 'type' => 'image/png', 'proper_filename' => false ),
+	'fake.png' => 'mismatch',
+	'doc.exe'  => array( 'ext' => 'exe', 'type' => 'application/x-msdownload', 'proper_filename' => false ),
+);
+
+assert_true(
+	null === diviops_call_static( 'media_filetype_error', array( 'ok.png', '/tmp/x' ) ),
+	'valid png accepted'
+);
+assert_true(
+	null !== diviops_call_static( 'media_filetype_error', array( 'fake.png', '/tmp/x' ) ),
+	'byte/ext mismatch rejected'
+);
+assert_true(
+	null !== diviops_call_static( 'media_filetype_error', array( 'doc.exe', '/tmp/x' ) ),
+	'disallowed mime rejected'
+);

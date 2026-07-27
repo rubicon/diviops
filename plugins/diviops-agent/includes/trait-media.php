@@ -66,4 +66,34 @@ trait DiviOps_Agent_Media {
 		if ( is_array( $aaaa ) ) { foreach ( $aaaa as $r ) { if ( ! empty( $r['ipv6'] ) ) { $ips[] = $r['ipv6']; } } }
 		return $ips;
 	}
+
+	/**
+	 * Reject uploads whose real bytes don't match a supported, site-allowed
+	 * mime type. Defends against type-spoofing (a .png that isn't a PNG) and
+	 * disallowed types. Returns null when the file is allowed, else envelope-
+	 * error args.
+	 */
+	private static function media_filetype_error( string $filename, string $tmp_path ): ?array {
+		$check = wp_check_filetype_and_ext( $tmp_path, $filename );
+		if ( empty( $check['ext'] ) || empty( $check['type'] ) ) {
+			return array(
+				'code'    => 'unsupported_media_type',
+				'http'    => 415,
+				'message' => "The file bytes do not match a supported type for '{$filename}'.",
+				'hint'    => 'Upload a real image; the extension must match the actual file contents.',
+				'data'    => array( 'filename' => $filename ),
+			);
+		}
+		$allowed = array_values( get_allowed_mime_types() );
+		if ( ! in_array( $check['type'], $allowed, true ) ) {
+			return array(
+				'code'    => 'unsupported_media_type',
+				'http'    => 415,
+				'message' => "Mime type '{$check['type']}' is not allowed on this site.",
+				'hint'    => 'Allowed types come from WordPress get_allowed_mime_types().',
+				'data'    => array( 'filename' => $filename, 'detected_type' => $check['type'] ),
+			);
+		}
+		return null;
+	}
 }

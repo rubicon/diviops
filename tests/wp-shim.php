@@ -924,6 +924,51 @@ if ( ! function_exists( 'diviops_test_register_nav_menu_item' ) ) {
 	}
 }
 
+if ( ! function_exists( 'get_allowed_mime_types' ) ) {
+	/**
+	 * Model WP core's get_allowed_mime_types(): the site's ext-pattern => mime
+	 * map. Tests drive this via $GLOBALS['diviops_test_allowed_mimes']; absent
+	 * that, falls back to a representative default set of image types.
+	 */
+	function get_allowed_mime_types( $user = null ) {
+		return $GLOBALS['diviops_test_allowed_mimes'] ?? array(
+			'jpg|jpeg|jpe' => 'image/jpeg',
+			'png'          => 'image/png',
+			'gif'          => 'image/gif',
+			'webp'         => 'image/webp',
+		);
+	}
+}
+
+if ( ! function_exists( 'wp_check_filetype_and_ext' ) ) {
+	/**
+	 * Model WP core's wp_check_filetype_and_ext(): real-byte type detection
+	 * against a declared filename. Test seam: $GLOBALS['diviops_test_filetype']
+	 * maps filename => [ext,type,proper_filename], or the string 'mismatch' to
+	 * model core's byte/extension-mismatch result (all three fields false).
+	 * An unmapped filename also returns the all-false shape, matching core's
+	 * behavior for a file it cannot identify.
+	 */
+	function wp_check_filetype_and_ext( $file, $filename, $mimes = null ) {
+		$map = $GLOBALS['diviops_test_filetype'] ?? array();
+		if ( isset( $map[ $filename ] ) && 'mismatch' === $map[ $filename ] ) {
+			return array(
+				'ext'             => false,
+				'type'            => false,
+				'proper_filename' => false,
+			);
+		}
+		if ( isset( $map[ $filename ] ) ) {
+			return $map[ $filename ];
+		}
+		return array(
+			'ext'             => false,
+			'type'            => false,
+			'proper_filename' => false,
+		);
+	}
+}
+
 if ( ! class_exists( 'DiviOps_Agent' ) ) {
 	require_once dirname( __DIR__ ) . '/plugins/diviops-agent/diviops-agent.php';
 }
