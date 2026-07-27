@@ -1,0 +1,61 @@
+# yaml-language-server: $schema=https://coderabbit.ai/schemas/coderabbit-config.json
+#
+# CodeRabbit configuration for rubicon/diviops. CodeRabbit is a COMPLEMENTARY,
+# advisory reviewer here — the deterministic CI checks and our own adversarial
+# reviews are the merge gates. So it is kept low-noise and non-blocking, and it
+# must never rewrite PR titles (our titles are Conventional Commits that
+# release-please parses to compute the version and changelog).
+
+language: en-US
+
+reviews:
+  profile: chill                    # balanced, not nitpicky (we already review deeply)
+  request_changes_workflow: false   # advisory only; never blocks a merge
+  high_level_summary: true
+  poem: false
+  review_status: true
+  # auto_title_placeholder is intentionally omitted: CodeRabbit only auto-titles
+  # when a placeholder token appears in the PR body, which we never use — so our
+  # Conventional-Commit PR titles are left untouched.
+
+  auto_review:
+    enabled: true
+    drafts: false
+
+  # Low-value, generated, or vendored files: skip to cut noise.
+  path_filters:
+    - "!CHANGELOG.md"                                   # release-please-generated
+    - "!plugins/diviops-agent/changelog.txt"            # upstream-generated
+    - "!plugins/diviops-agent/readme.txt"               # upstream-generated
+    - "!**/*.min.js"
+    - "!**/dist/**"
+    - "!**/dist-test/**"
+
+  path_instructions:
+    - path: "plugins/diviops-agent/**"
+      instructions: >-
+        WordPress plugin (PHP 7.4+ floor). REST handlers return the standardized
+        envelope { ok, data?, error: { code, message, hint? } } — flag any handler
+        that returns a bare value or a non-conforming shape. NEVER rename the four
+        frozen identifiers (slug diviops-agent, class DiviOps_Agent, REST namespace
+        diviops/v1, filter diviops_agent_handshake_extensions): renaming silently
+        breaks Pro and the MCP tools. Any parse/serialize round-trip write must go
+        through parse_blocks_for_write() and pass $check_global_layout_drift = true
+        to update_post_content_with_integrity_guard(), or a divi/global-layout
+        wrapper can be materialized into a page. Watch for user-supplied input
+        reaching the filesystem without a path-traversal guard.
+    - path: "tests/**"
+      instructions: >-
+        Plain-PHP harness (no PHPUnit/Composer). Every test must assert it actually
+        inspected something — flag gates that could pass while inspecting nothing.
+        Reject mocked-behavior / e2e-mock tests: assert on real plugin behavior, not
+        on a stub's internals. Shims may model WP-core primitives, not Divi's
+        proprietary storage.
+    - path: "diviops-server/src/**"
+      instructions: >-
+        TypeScript MCP server. It is currently inspected-only (does not build from
+        source, see issue #41), so focus on correctness by reading: a tool's input
+        schema must match the REST route's params, and the route path must be exact.
+
+chat:
+  auto_reply: true
