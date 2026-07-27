@@ -136,4 +136,150 @@ trait DiviOps_Agent_Media {
 		}
 		return false;
 	}
+
+	/**
+	 * Upload an image into the media library from either a public URL (server
+	 * fetches it, SSRF-guarded via media_url_is_safe()) or base64-encoded bytes.
+	 * Exactly one of `url`/`data_base64` must be supplied. Supports dry-run.
+	 *
+	 * @param mixed $request REST request-like object (get_param()).
+	 * @return WP_REST_Response
+	 */
+	public static function media_upload( $request ) {
+		if ( ! current_user_can( 'upload_files' ) ) {
+			return self::envelope_error( 'forbidden', 'You are not allowed to upload files.', 'Authenticate as a user with upload_files.', 403 );
+		}
+		$url       = trim( (string) ( $request->get_param( 'url' ) ?? '' ) );
+		$b64       = (string) ( $request->get_param( 'data_base64' ) ?? '' );
+		$dry_run   = (bool) $request->get_param( 'dry_run' );
+		$attach_to = absint( $request->get_param( 'attach_to' ) );
+
+		if ( ( '' === $url ) === ( '' === $b64 ) ) {
+			return self::envelope_error( 'invalid_input', 'Provide exactly one of url or data_base64.', 'url fetches remotely; data_base64 uploads local bytes.', 400 );
+		}
+
+		// Load WP's sideload/media helpers only when not already present. The test
+		// harness stubs media_handle_sideload/download_url/etc., so guarding avoids
+		// require_once'ing WP-admin files that don't exist in the harness.
+		if ( ! function_exists( 'media_handle_sideload' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/file.php';
+			require_once ABSPATH . 'wp-admin/includes/media.php';
+			require_once ABSPATH . 'wp-admin/includes/image.php';
+		}
+
+		if ( '' !== $url ) {
+			// Extensibility seam: hosts may override host resolution (also how tests inject a fake resolver).
+			$resolver = apply_filters( 'diviops_media_host_resolver', null );
+			$resolver = is_callable( $resolver ) ? $resolver : null;
+			$reason   = null;
+			if ( ! self::media_url_is_safe( $url, $reason, $resolver ) ) {
+				return self::envelope_error( 'forbidden_target', $reason, 'Only public http/https image URLs are allowed.', 403, array( 'url' => $url ) );
+			}
+			$filename   = self::media_basename_from_url( $url );
+			$tmp_getter = function () use ( $url ) {
+				return download_url( $url, 20 );
+			};
+			$source     = array(
+				'kind' => 'url',
+				'ref'  => $url,
+			);
+		} else {
+			$filename = sanitize_file_name( (string) ( $request->get_param( 'filename' ) ?? '' ) );
+			if ( '' === $filename ) {
+				return self::envelope_error( 'invalid_input', 'filename is required with data_base64.', null, 400 );
+			}
+			if ( strlen( $b64 ) > (int) ( wp_max_upload_size() * 1.4 ) ) {
+				return self::envelope_error( 'payload_too_large', 'Encoded payload exceeds the upload size limit.', null, 413 );
+			}
+			$bytes = base64_decode( $b64, true );
+			if ( false === $bytes ) {
+				return self::envelope_error( 'invalid_input', 'data_base64 is not valid base64.', null, 400 );
+			}
+			$tmp_getter = function () use ( $bytes ) {
+				$t = wp_tempnam();
+				file_put_contents( $t, $bytes );
+				return $t;
+			};
+			$source     = array(
+				'kind' => 'base64',
+				'ref'  => $filename,
+			);
+		}
+
+		if ( $dry_run ) {
+			return self::dry_run_response(
+				"Would upload '{$filename}' to the media library" . ( $attach_to ? " attached to post #{$attach_to}." : '.' ),
+				array(
+					array(
+						'kind'   => 'upload',
+						'target' => $filename,
+						'before' => null,
+						'after'  => 'attachment',
+					),
+				),
+				array(),
+				array(
+					'filename' => $filename,
+					'source'   => $source['kind'],
+				)
+			);
+		}
+
+		$tmp = call_user_func( $tmp_getter );
+		if ( is_wp_error( $tmp ) ) {
+			return self::envelope_error( 'fetch_failed', $tmp->get_error_message(), 'The source could not be retrieved.', 502, array( 'source' => $source ) );
+		}
+
+		$type_err = self::media_filetype_error( $filename, $tmp );
+		if ( null !== $type_err ) {
+			@unlink( $tmp );
+			return self::envelope_error( $type_err['code'], $type_err['message'], $type_err['hint'], $type_err['http'], $type_err['data'] );
+		}
+
+		$file_array = array(
+			'name'     => $filename,
+			'tmp_name' => $tmp,
+		);
+		$desc       = (string) ( $request->get_param( 'title' ) ?? '' );
+		$id         = media_handle_sideload( $file_array, $attach_to, $desc ?: null );
+		if ( is_wp_error( $id ) ) {
+			@unlink( $tmp );
+			return self::envelope_error( 'upload_failed', $id->get_error_message(), null, 500 );
+		}
+
+		$id = (int) $id;
+		if ( 'url' === $source['kind'] ) {
+			update_post_meta( $id, '_diviops_source_url', esc_url_raw( $url ) );
+		}
+		$alt = (string) ( $request->get_param( 'alt' ) ?? '' );
+		if ( '' !== $alt ) {
+			update_post_meta( $id, '_wp_attachment_image_alt', sanitize_text_field( $alt ) );
+		}
+		$caption = (string) ( $request->get_param( 'caption' ) ?? '' );
+		if ( '' !== $caption ) {
+			wp_update_post(
+				array(
+					'ID'           => $id,
+					'post_excerpt' => sanitize_text_field( $caption ),
+				)
+			);
+		}
+
+		return self::envelope_success(
+			array(
+				'attachment_id' => $id,
+				'url'           => wp_get_attachment_url( $id ),
+				'mime'          => get_post_mime_type( $id ),
+				'filename'      => $filename,
+				'source'        => $source['kind'],
+			)
+		);
+	}
+
+	/** Derive a sanitized filename from a URL's path, falling back to 'download'. */
+	private static function media_basename_from_url( string $url ): string {
+		$path = (string) wp_parse_url( $url, PHP_URL_PATH );
+		$name = sanitize_file_name( basename( $path ) );
+		return '' !== $name ? $name : 'download';
+	}
 }

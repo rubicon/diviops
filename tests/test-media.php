@@ -139,3 +139,144 @@ assert_true(
 
 unset( $GLOBALS['wp_filter'], $GLOBALS['diviops_test_allowed_mimes'] );
 $GLOBALS['diviops_test_allowed_mimes'] = array( 'png' => 'image/png' );
+
+// ── media_upload(): url + base64 sources, xor validation, SSRF, dry-run (#28) ──
+// Test-global hygiene: this suite sets diviops_test_allowed_mimes, diviops_test_
+// filetype, diviops_test_posts/post_meta, diviops_test_attachments, and the
+// diviops_media_host_resolver filter; every one is reset/unset at the end so
+// nothing leaks into test files that share this PHP process.
+
+function diviops_media_req( array $p ) {
+	return new DiviOps_Test_Request( $p );
+}
+
+function diviops_media_set_resolver( callable $fn ) {
+	remove_all_filters( 'diviops_media_host_resolver' );
+	add_filter(
+		'diviops_media_host_resolver',
+		function () use ( $fn ) {
+			return $fn;
+		}
+	);
+}
+
+$GLOBALS['diviops_test_allowed_mimes'] = array( 'png' => 'image/png' );
+$GLOBALS['diviops_test_filetype']      = array(
+	'pic.png' => array(
+		'ext'             => 'png',
+		'type'            => 'image/png',
+		'proper_filename' => false,
+	),
+);
+$GLOBALS['diviops_test_posts']         = array();
+$GLOBALS['diviops_test_post_meta']     = array();
+$GLOBALS['diviops_test_attachments']   = array();
+
+// url happy path — inject a safe resolver via the extensibility filter seam.
+diviops_media_set_resolver(
+	function ( $h ) {
+		return array( '8.8.8.8' );
+	}
+);
+$r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png' ) ) ) );
+$d = $r->get_data();
+assert_true( true === $d['ok'] && ! empty( $d['data']['attachment_id'] ), 'url upload ok' );
+assert_true( 'url' === ( $d['data']['source'] ?? null ), 'url upload reports source=url' );
+
+// neither url nor base64
+$r = diviops_call( 'media_upload', array( diviops_media_req( array() ) ) );
+assert_true( false === $r->get_data()['ok'], 'missing source rejected' );
+assert_true( 'invalid_input' === $r->get_data()['error']['code'], 'missing source: invalid_input code' );
+
+// both
+$r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'https://x/y.png', 'data_base64' => 'AA', 'filename' => 'y.png' ) ) ) );
+assert_true( false === $r->get_data()['ok'], 'both sources rejected' );
+assert_true( 'invalid_input' === $r->get_data()['error']['code'], 'both sources: invalid_input code' );
+
+// SSRF
+diviops_media_set_resolver(
+	function ( $h ) {
+		return array( '169.254.169.254' );
+	}
+);
+$r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'https://evil/pic.png' ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'] && 'forbidden_target' === $d['error']['code'], 'ssrf blocked' );
+
+// dry_run (safe again)
+diviops_media_set_resolver(
+	function ( $h ) {
+		return array( '8.8.8.8' );
+	}
+);
+$attachments_before_dry_run = count( $GLOBALS['diviops_test_attachments'] );
+$r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png', 'dry_run' => true ) ) ) );
+$d = $r->get_data();
+assert_true( true === $d['ok'] && isset( $d['data']['plan'] ), 'dry-run returns plan, no write' );
+assert_true( $attachments_before_dry_run === count( $GLOBALS['diviops_test_attachments'] ), 'dry-run performs no write' );
+
+// base64 happy path
+$GLOBALS['diviops_test_filetype']['photo.png'] = array(
+	'ext'             => 'png',
+	'type'            => 'image/png',
+	'proper_filename' => false,
+);
+$r = diviops_call(
+	'media_upload',
+	array( diviops_media_req( array( 'data_base64' => base64_encode( 'fake-png-bytes' ), 'filename' => 'photo.png' ) ) )
+);
+$d = $r->get_data();
+assert_true( true === $d['ok'] && ! empty( $d['data']['attachment_id'] ), 'base64 upload ok' );
+assert_true( 'base64' === ( $d['data']['source'] ?? null ), 'base64 upload reports source=base64' );
+
+// base64 missing filename
+$r = diviops_call( 'media_upload', array( diviops_media_req( array( 'data_base64' => 'AA' ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'] && 'invalid_input' === $d['error']['code'], 'base64 without filename rejected' );
+
+// base64 invalid encoding
+$r = diviops_call( 'media_upload', array( diviops_media_req( array( 'data_base64' => '***not base64***', 'filename' => 'x.png' ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'] && 'invalid_input' === $d['error']['code'], 'invalid base64 rejected' );
+
+// base64 payload too large
+$GLOBALS['diviops_test_max_upload'] = 10;
+$r = diviops_call( 'media_upload', array( diviops_media_req( array( 'data_base64' => base64_encode( str_repeat( 'x', 100 ) ), 'filename' => 'big.png' ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'] && 'payload_too_large' === $d['error']['code'], 'oversized base64 payload rejected' );
+unset( $GLOBALS['diviops_test_max_upload'] );
+
+// type/SVG rejection propagates through media_upload (disallowed mime)
+$GLOBALS['diviops_test_filetype']['bad.exe'] = array(
+	'ext'             => 'exe',
+	'type'            => 'application/x-msdownload',
+	'proper_filename' => false,
+);
+$r = diviops_call(
+	'media_upload',
+	array( diviops_media_req( array( 'data_base64' => base64_encode( 'MZ...' ), 'filename' => 'bad.exe' ) ) )
+);
+$d = $r->get_data();
+assert_true( false === $d['ok'] && 'unsupported_media_type' === $d['error']['code'], 'disallowed type rejected through media_upload' );
+
+// fetch failure surfaces as fetch_failed
+$GLOBALS['diviops_test_download_fail'] = true;
+$r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png' ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'] && 'fetch_failed' === $d['error']['code'], 'download failure surfaces as fetch_failed' );
+unset( $GLOBALS['diviops_test_download_fail'] );
+
+// Test-global hygiene: unset everything this suite set so later test files
+// (which share this PHP process) start from a clean slate.
+remove_all_filters( 'diviops_media_host_resolver' );
+unset(
+	$GLOBALS['diviops_test_allowed_mimes'],
+	$GLOBALS['diviops_test_filetype'],
+	$GLOBALS['diviops_test_posts'],
+	$GLOBALS['diviops_test_post_meta'],
+	$GLOBALS['diviops_test_attachments'],
+	$GLOBALS['diviops_test_next_attach_id'],
+	$GLOBALS['diviops_test_download_bytes'],
+	$GLOBALS['diviops_test_sideload_mime']
+);
+$GLOBALS['diviops_test_allowed_mimes'] = array( 'png' => 'image/png' );

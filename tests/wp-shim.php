@@ -29,8 +29,40 @@ if ( ! function_exists( 'add_action' ) ) {
 	}
 }
 
+if ( ! isset( $GLOBALS['diviops_test_hooks'] ) ) {
+	$GLOBALS['diviops_test_hooks'] = array();
+}
+
 if ( ! function_exists( 'add_filter' ) ) {
+	/**
+	 * Real filter registration, keyed by hook then priority, mirroring core's
+	 * add_filter()/apply_filters() contract closely enough for the extensibility
+	 * seams this harness exercises (e.g. diviops_media_host_resolver): tests
+	 * register a callback here and apply_filters() below actually invokes it,
+	 * rather than the harness silently no-op'ing every filter hook.
+	 */
 	function add_filter( $hook, $callback, $priority = 10, $accepted_args = 1 ) {
+		$GLOBALS['diviops_test_hooks'][ $hook ][ $priority ][] = array(
+			'function'      => $callback,
+			'accepted_args' => $accepted_args,
+		);
+		return true;
+	}
+}
+
+if ( ! function_exists( 'remove_all_filters' ) ) {
+	/**
+	 * Remove every callback registered on a hook (or just one priority when
+	 * given). Mirrors core's remove_all_filters() contract; the test harness
+	 * uses this to reset an extensibility seam (e.g. diviops_media_host_resolver)
+	 * between cases instead of accumulating stale callbacks across assertions.
+	 */
+	function remove_all_filters( $hook, $priority = false ) {
+		if ( false === $priority ) {
+			unset( $GLOBALS['diviops_test_hooks'][ $hook ] );
+		} else {
+			unset( $GLOBALS['diviops_test_hooks'][ $hook ][ $priority ] );
+		}
 		return true;
 	}
 }
@@ -195,12 +227,26 @@ if ( ! function_exists( 'current_user_can' ) ) {
 
 if ( ! function_exists( 'apply_filters' ) ) {
 	/**
-	 * No-op filter runner: add_filter() above never registers a callback, so
-	 * there is nothing to run here. Returns $value unchanged, which is the
-	 * correct behavior for a harness with zero registered filters, not a
-	 * shortcut around one.
+	 * Real filter runner over the registry add_filter() above builds: runs every
+	 * callback registered on $tag in priority order, each receiving $value plus
+	 * as many of $args as its accepted_args declared, threading the return value
+	 * through. A hook with no registered callbacks returns $value unchanged —
+	 * the correct behavior for both an untouched hook and one reset via
+	 * remove_all_filters().
 	 */
 	function apply_filters( $tag, $value, ...$args ) {
+		if ( empty( $GLOBALS['diviops_test_hooks'][ $tag ] ) ) {
+			return $value;
+		}
+		$by_priority = $GLOBALS['diviops_test_hooks'][ $tag ];
+		ksort( $by_priority );
+		foreach ( $by_priority as $callbacks ) {
+			foreach ( $callbacks as $registered ) {
+				$accepted   = max( 1, (int) $registered['accepted_args'] );
+				$call_args  = array_slice( array_merge( array( $value ), $args ), 0, $accepted );
+				$value      = call_user_func_array( $registered['function'], $call_args );
+			}
+		}
 		return $value;
 	}
 }
@@ -966,6 +1012,99 @@ if ( ! function_exists( 'wp_check_filetype_and_ext' ) ) {
 			'type'            => false,
 			'proper_filename' => false,
 		);
+	}
+}
+
+// ── media_upload() harness: sideload/download primitives + attachment registry ──
+
+if ( ! function_exists( 'wp_max_upload_size' ) ) {
+	function wp_max_upload_size() {
+		return $GLOBALS['diviops_test_max_upload'] ?? 8388608;
+	}
+}
+
+if ( ! function_exists( 'download_url' ) ) {
+	/**
+	 * Model WP core's download_url(): fetch a URL to a temp file, returning its
+	 * path. Test seam: $GLOBALS['diviops_test_download_fail'] models a fetch
+	 * failure (a WP_Error, matching core's contract); $GLOBALS
+	 * ['diviops_test_download_bytes'] supplies the "fetched" bytes.
+	 */
+	function download_url( $url, $timeout = 300 ) {
+		if ( ! empty( $GLOBALS['diviops_test_download_fail'] ) ) {
+			return new WP_Error( 'http_404', 'not found' );
+		}
+		$tmp = tempnam( sys_get_temp_dir(), 'divi' );
+		file_put_contents( $tmp, $GLOBALS['diviops_test_download_bytes'] ?? 'bytes' );
+		return $tmp;
+	}
+}
+
+if ( ! isset( $GLOBALS['diviops_test_attachments'] ) ) {
+	$GLOBALS['diviops_test_attachments'] = array();
+}
+
+if ( ! function_exists( 'media_handle_sideload' ) ) {
+	/**
+	 * Model WP core's media_handle_sideload(): register an attachment record
+	 * from a local file and return its id. Test seam: $GLOBALS
+	 * ['diviops_test_sideload_mime'] controls the recorded mime (defaults to
+	 * image/png); the attachment registry backs wp_get_attachment_url() and
+	 * get_post_mime_type() below. Deletes the sideloaded temp file, matching
+	 * core's behavior of consuming the source file.
+	 */
+	function media_handle_sideload( $file, $post_id = 0, $desc = null, $post_data = array() ) {
+		$id = $GLOBALS['diviops_test_next_attach_id'] = ( $GLOBALS['diviops_test_next_attach_id'] ?? 100 ) + 1;
+		$GLOBALS['diviops_test_attachments'][ $id ] = array(
+			'id'       => $id,
+			'filename' => $file['name'],
+			'parent'   => $post_id,
+			'url'      => "https://site/wp-content/uploads/{$file['name']}",
+			'mime'     => $GLOBALS['diviops_test_sideload_mime'] ?? 'image/png',
+		);
+		if ( file_exists( $file['tmp_name'] ) ) {
+			@unlink( $file['tmp_name'] );
+		}
+		return $id;
+	}
+}
+
+if ( ! function_exists( 'wp_tempnam' ) ) {
+	function wp_tempnam( $filename = '', $dir = '' ) {
+		return tempnam( '' !== $dir ? $dir : sys_get_temp_dir(), 'divi' );
+	}
+}
+
+if ( ! function_exists( 'sanitize_file_name' ) ) {
+	/**
+	 * Reimplementation of the parts of WP core's sanitize_file_name() this
+	 * harness needs: strip special characters, collapse whitespace to dashes.
+	 */
+	function sanitize_file_name( $filename ) {
+		$special_chars = array( '?', '[', ']', '/', '\\', '=', '<', '>', ':', ';', ',', "'", '"', '&', '$', '#', '*', '(', ')', '|', '~', '`', '!', '{', '}', '%', '+', chr( 0 ) );
+		$filename      = str_replace( $special_chars, '', (string) $filename );
+		$filename      = preg_replace( '/[\r\n\t ]+/', ' ', $filename );
+		$filename      = trim( str_replace( ' ', '-', $filename ), '.-_' );
+		return $filename;
+	}
+}
+
+if ( ! function_exists( 'esc_url_raw' ) ) {
+	function esc_url_raw( $url, $protocols = null ) {
+		return (string) $url;
+	}
+}
+
+if ( ! function_exists( 'wp_get_attachment_url' ) ) {
+	function wp_get_attachment_url( $attachment_id ) {
+		return $GLOBALS['diviops_test_attachments'][ $attachment_id ]['url'] ?? false;
+	}
+}
+
+if ( ! function_exists( 'get_post_mime_type' ) ) {
+	function get_post_mime_type( $post = null ) {
+		$id = is_object( $post ) ? ( $post->ID ?? 0 ) : (int) $post;
+		return $GLOBALS['diviops_test_attachments'][ $id ]['mime'] ?? false;
 	}
 }
 
