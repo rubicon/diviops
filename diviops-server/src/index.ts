@@ -3005,6 +3005,50 @@ registerPluginTool(
   },
 );
 
+registerPluginTool(
+  "diviops_library_delete",
+  {
+    description:
+      "Delete a Divi Library item (et_pb_layout). Defaults to trash (reversible via WP Admin → Trash); a trashed item does not block re-saving the same title, because library title-uniqueness ignores trashed items. Pass force=true to permanently delete (wp_delete_post — irreversible). Idempotent: deleting an already-trashed item without force returns ok:true with `data.already_trashed = true` (repeat-safe for AI-agent retries). Pass dry_run=true to preview `data.plan = { summary, changes[] }` without mutating. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; an unknown id — or a post that is not an et_pb_layout library item — returns 'not_found' (HTTP 404), delete-permission failures return 'forbidden' (HTTP 403).",
+    inputSchema: {
+      library_id: z
+        .number()
+        .int()
+        .describe("Divi Library item (et_pb_layout) ID"),
+      force: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "When true, permanently delete (skips trash). Default false moves to trash.",
+        ),
+      dry_run: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "When true, return the change plan without mutating state.",
+        ),
+    },
+    annotations: { idempotentHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ library_id, force, dry_run }) => {
+    const result = await wp.requestEnveloped(`/library/delete/${library_id}`, {
+      method: "POST",
+      body: {
+        force: force ?? false,
+        dry_run: dry_run ?? false,
+      },
+    });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_library_delete") },
+      ],
+    };
+  },
+);
+
 // ── Theme Builder Tools ─────────────────────────────────────────────
 
 registerPluginTool(
