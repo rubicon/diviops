@@ -259,9 +259,13 @@ trait DiviOps_Agent_Page {
 			return self::envelope_from_content_write_error( $result );
 		}
 
-		// Mirror Divi's own page creation flow once Divi block content exists.
-		if ( self::content_uses_divi( $content ) ) {
-			self::initialize_divi_page_meta( $post_id );
+		// Mirror Divi's own page-creation flow the FIRST time Divi content
+		// appears. Re-running this on every write re-stamps meta — clobbering a
+		// custom _et_pb_page_layout and mis-keying _et_pb_built_for_post_type to
+		// 'page' on a non-page post (#45) — so only initialize when the post is
+		// not already a Divi page, and stamp its real post type.
+		if ( self::should_init_divi_page_meta_on_write( $post_id, $content ) ) {
+			self::initialize_divi_page_meta( $post_id, (string) $post->post_type );
 		}
 
 		self::invalidate_divi_cache( $post_id );
@@ -3302,6 +3306,25 @@ trait DiviOps_Agent_Page {
 	 *
 	 * This mirrors Divi's own onboarding and page creation helpers.
 	 */
+	/**
+	 * Whether a content write should (re)initialize the Divi page meta.
+	 *
+	 * True only when the content is Divi block content AND the post is not
+	 * already set up as a Divi page. This is the #45 root-cause guard: without
+	 * the second condition `initialize_divi_page_meta()` re-ran on every content
+	 * write, re-stamping `_et_pb_page_layout` (clobbering a custom layout) and
+	 * `_et_pb_built_for_post_type` (mis-keying a non-`page` post back to `page`).
+	 * Divi sets that meta once, when a post first becomes a Divi page.
+	 *
+	 * @param int    $post_id Post id.
+	 * @param string $content Content about to be written.
+	 * @return bool
+	 */
+	private static function should_init_divi_page_meta_on_write( $post_id, $content ): bool {
+		return self::content_uses_divi( $content )
+			&& 'on' !== get_post_meta( $post_id, '_et_pb_use_builder', true );
+	}
+
 	private static function initialize_divi_page_meta( $post_id, $post_type = 'page' ) {
 		update_post_meta( $post_id, '_et_pb_use_builder', 'on' );
 		update_post_meta( $post_id, '_et_pb_use_divi_5', 'on' );
