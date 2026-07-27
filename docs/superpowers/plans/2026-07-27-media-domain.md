@@ -394,9 +394,14 @@ public static function media_upload( $request ) {
         return self::envelope_error( 'invalid_input', 'Provide exactly one of url or data_base64.', 'url fetches remotely; data_base64 uploads local bytes.', 400 );
     }
 
-    require_once ABSPATH . 'wp-admin/includes/file.php';
-    require_once ABSPATH . 'wp-admin/includes/media.php';
-    require_once ABSPATH . 'wp-admin/includes/image.php';
+    // Load WP's sideload/media helpers only when not already present. The test
+    // harness stubs media_handle_sideload/download_url/etc., so guarding avoids
+    // require_once'ing WP-admin files that don't exist in the harness.
+    if ( ! function_exists( 'media_handle_sideload' ) ) {
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        require_once ABSPATH . 'wp-admin/includes/media.php';
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+    }
 
     if ( '' !== $url ) {
         // Extensibility seam: hosts may override host resolution (also how tests inject a fake resolver).
