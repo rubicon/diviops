@@ -34,6 +34,7 @@ require_once __DIR__ . '/includes/trait-menu.php';
 require_once __DIR__ . '/includes/trait-page.php';
 require_once __DIR__ . '/includes/trait-preset.php';
 require_once __DIR__ . '/includes/trait-render.php';
+require_once __DIR__ . '/includes/trait-revision.php';
 require_once __DIR__ . '/includes/trait-rollback.php';
 require_once __DIR__ . '/includes/trait-seo.php';
 require_once __DIR__ . '/includes/trait-theme-builder.php';
@@ -58,6 +59,7 @@ class DiviOps_Agent {
 	use DiviOps_Agent_Page;
 	use DiviOps_Agent_Preset;
 	use DiviOps_Agent_Render;
+	use DiviOps_Agent_Revision;
 	use DiviOps_Agent_Rollback;
 	use DiviOps_Agent_SEO;
 	use DiviOps_Agent_ThemeBuilder;
@@ -116,6 +118,8 @@ class DiviOps_Agent {
 		'preset_reassign', 'preset_scan_orphans', 'preset_set_default', 'preset_update',
 		// render
 		'render_preview',
+		// revision (native WordPress post revisions)
+		'revision_list', 'revision_get', 'revision_restore', 'revision_diff',
 		// rollback snapshots
 		'rollback_snapshot_delete', 'rollback_snapshot_get', 'rollback_snapshot_list', 'rollback_snapshot_restore',
 		// semantic SEO metadata
@@ -751,6 +755,47 @@ class DiviOps_Agent {
 			'args'                => [
 				'snapshot_id' => [ 'required' => true, 'type' => 'string' ],
 				'dry_run'     => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
+			],
+		] );
+
+		// Native WordPress post revisions (#34). Distinct from the option-backed
+		// rollback snapshots above: these expose WordPress's own per-save revision
+		// history (posts of type `revision` whose post_parent is the edited post).
+		register_rest_route( self::REST_NAMESPACE, '/revision/list/(?P<id>\d+)', [
+			'methods'             => 'GET',
+			'callback'            => [ __CLASS__, 'revision_list' ],
+			'permission_callback' => [ __CLASS__, 'check_read_permission' ],
+			'args'                => [
+				'id' => [ 'required' => true ],
+			],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/revision/get/(?P<revision_id>\d+)', [
+			'methods'             => 'GET',
+			'callback'            => [ __CLASS__, 'revision_get' ],
+			'permission_callback' => [ __CLASS__, 'check_read_permission' ],
+			'args'                => [
+				'revision_id' => [ 'required' => true ],
+			],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/revision/restore/(?P<revision_id>\d+)', [
+			'methods'             => 'POST',
+			'callback'            => [ __CLASS__, 'revision_restore' ],
+			'permission_callback' => [ __CLASS__, 'check_write_permission' ],
+			'args'                => [
+				'revision_id' => [ 'required' => true ],
+				'dry_run'     => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
+			],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/revision/diff', [
+			'methods'             => 'GET',
+			'callback'            => [ __CLASS__, 'revision_diff' ],
+			'permission_callback' => [ __CLASS__, 'check_read_permission' ],
+			'args'                => [
+				'from' => [ 'required' => true, 'type' => 'integer' ],
+				'to'   => [ 'required' => false, 'type' => 'integer' ],
 			],
 		] );
 

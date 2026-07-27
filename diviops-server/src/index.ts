@@ -2674,6 +2674,97 @@ registerPluginTool(
 );
 
 registerPluginTool(
+  "diviops_revision_list",
+  {
+    description:
+      "List a post's native WordPress revisions (posts of type revision whose post_parent is the edited post), newest first. Distinct from the option-backed rollback snapshot store: these are whatever WordPress recorded on each save, not the plugin's guarded pre-write backups. Read surface; row-permission gated on the parent post. Returns metadata only — { id, date, author, byte_length } per revision — fetch full content with diviops_revision_get. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.",
+    inputSchema: {
+      id: z.number().int().positive().describe("Post ID whose revisions to list."),
+    },
+    annotations: { idempotentHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ id }) => {
+    const result = await wp.requestEnveloped(`/revision/list/${id}`);
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_revision_list") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
+  "diviops_revision_get",
+  {
+    description:
+      "Read one native WordPress revision, including its raw stored content. Read surface; row-permission gated on the parent post. Returns { id, parent, date, author, content_raw, byte_length }. Use the revision ids returned by diviops_revision_list. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.",
+    inputSchema: {
+      revision_id: z.number().int().positive().describe("Revision ID returned by diviops_revision_list."),
+    },
+    annotations: { idempotentHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ revision_id }) => {
+    const result = await wp.requestEnveloped(`/revision/get/${revision_id}`);
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_revision_get") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
+  "diviops_revision_diff",
+  {
+    description:
+      "Compare two native WordPress revisions, or one revision against the parent post's current content. `from` is required; omit `to` to diff against the parent's live content (reported with id 0). Read surface; row-permission gated on the shared parent, and both ids must belong to the same post. Returns a simple checksum/byte comparison { from, to, identical, byte_delta } — fetch full content via diviops_revision_get to diff textually. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.",
+    inputSchema: {
+      from: z.number().int().positive().describe("Revision ID to diff from."),
+      to: z.number().int().positive().optional().describe("Revision ID to diff to; omit to compare against the parent post's current content."),
+    },
+    annotations: { idempotentHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ from, to }) => {
+    const params: Record<string, string> = { from: String(from) };
+    if (to) params.to = String(to);
+    const qs = new URLSearchParams(params).toString();
+    const result = await wp.requestEnveloped(`/revision/diff?${qs}`);
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_revision_diff") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
+  "diviops_revision_restore",
+  {
+    description:
+      "Restore a post to one of its native WordPress revisions (wp_restore_post_revision), busting the Divi cache afterward. Requires edit permission on the parent post. dry_run previews the plan without writing. This is WordPress's own revision restore, separate from diviops_rollback_snapshot_restore, which restores the plugin's guarded checksum-bound snapshots. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.",
+    inputSchema: {
+      revision_id: z.number().int().positive().describe("Revision ID to restore its parent post to."),
+      dry_run: z.boolean().optional().default(false).describe("Preview the restore plan without mutating."),
+    },
+    _meta: { idempotent: "false" },
+  },
+  async ({ revision_id, dry_run }) => {
+    const result = await wp.requestEnveloped(
+      `/revision/restore/${revision_id}`,
+      { method: "POST", body: { dry_run } },
+    );
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_revision_restore") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
   "diviops_preset_cleanup",
   {
     description:
