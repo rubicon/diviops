@@ -11,20 +11,29 @@ maintainer's general policies; read those first.
 Read `FORK.md` before changing anything. It explains why this fork exists, what
 diverges from upstream, and what is deliberately out of scope.
 
-## This is an upstream-tracked fork
+## This is a maintained fork (we own it)
 
-`origin` is `rubicon/diviops`, `upstream` is `oaris-dev/diviops`. The repository
-policy's upstream-tracked-fork overlay applies in full.
+`origin` is `rubicon/diviops`, `upstream` is `oaris-dev/diviops`. Owner decision
+(2026-07-27): this is a **maintained fork we own** — we set the version, roadmap,
+README, skills, and release process. Upstream syncs from a private dev repo, takes no
+outside PRs, and is treated as an occasional sync source, not something we actively
+track. We are not bound to minimize divergence from upstream. See `FORK.md`'s
+"Maintained-fork posture".
 
-Upstream-owned files defer to upstream's conventions to minimize merge divergence:
-`README.md`, `CONTRIBUTING.md`, `SECURITY.md`, `SUPPORT.md`, `SETUP.md`,
-`.github/ISSUE_TEMPLATE/`, and everything under `plugins/`, `diviops-server/`, and
-`skills/`. Do not restyle them to house standard. Fork-owned files (`FORK.md`, this
-file, `AGENTS.md`, `.gitignore`, `.github/workflows/`, `tests/`) follow the house
-standard in full.
+Two things stay non-negotiable regardless: the four frozen identifiers (below; Pro +
+MCP compatibility) and honoring the fork base's license + attribution to `oaris-dev`.
+Files that originated upstream (`plugins/`, `diviops-server/`, `skills/`, `README.md`,
+etc.) may be edited or taken over as needed; record intentional changes to them in
+`FORK.md`'s divergence table (kept as history + a cherry-pick reconciliation aid, not a
+divergence-minimization constraint).
 
-Record every intentional modification to an upstream-owned file in `FORK.md`'s
-divergence table, in the same PR that makes it.
+Versioning: standard rubicon release-please automation + `CHANGELOG.md` + signed
+`vX.Y.Z` releases (this is a GitHub/rubicon repo; upstream ships no release automation
+to collide with). Each feature is a Conventional Commit; release-please computes the
+bump and curates the changelog on a release PR. Do NOT hand-bump the version or
+hand-write `CHANGELOG.md` — release-please owns both. The version lives in two spots in
+`diviops-agent.php` (header `Version:` + `const VERSION`), both carrying release-please
+markers; `tests/test-version-sync.php` guards that they stay in sync.
 
 ## Never rename these four
 
