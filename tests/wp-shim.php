@@ -419,6 +419,124 @@ if ( ! function_exists( 'diviops_test_register_post' ) ) {
 	}
 }
 
+// ── Native WordPress post revisions ───────────────────────────────────────
+//
+// WordPress stores a revision as a post of type `revision` whose post_parent is
+// the edited post; wp_get_post_revisions() enumerates a post's revisions (newest
+// first, keyed by revision id) and wp_restore_post_revision() copies a revision's
+// content back onto its parent, returning the parent id. These shims model that
+// WP-core contract against the shared post registry (get_post already finds a
+// revision registered here, since it lives in the same store) — the same category
+// of primitive stub as get_post()/wp_insert_post() above, NOT a fake of Divi's
+// proprietary storage.
+
+if ( ! function_exists( 'diviops_test_register_revision' ) ) {
+	/**
+	 * Register a fake revision (a post of type `revision` linked to a parent).
+	 * Stored in the shared post registry so get_post() resolves it, exactly as a
+	 * real revision is an ordinary row in wp_posts.
+	 *
+	 * @param array $fields ID, post_parent, post_content, post_author, post_date,
+	 *                      post_modified (defaults to post_date), post_title.
+	 * @return object
+	 */
+	function diviops_test_register_revision( array $fields ) {
+		$id       = (int) ( $fields['ID'] ?? 0 );
+		$date     = (string) ( $fields['post_date'] ?? '' );
+		$revision = (object) array(
+			'ID'            => $id,
+			'post_type'     => 'revision',
+			'post_parent'   => (int) ( $fields['post_parent'] ?? 0 ),
+			'post_content'  => (string) ( $fields['post_content'] ?? '' ),
+			'post_author'   => (int) ( $fields['post_author'] ?? 0 ),
+			'post_date'     => $date,
+			'post_modified' => (string) ( $fields['post_modified'] ?? $date ),
+			'post_title'    => (string) ( $fields['post_title'] ?? '' ),
+		);
+		$GLOBALS['diviops_test_posts'][ $id ] = $revision;
+		return $revision;
+	}
+}
+
+if ( ! function_exists( 'wp_get_post_revisions' ) ) {
+	/**
+	 * Model WP core's wp_get_post_revisions(): every post of type `revision` whose
+	 * post_parent is $post_id, ordered newest-first (post_date DESC, then ID DESC,
+	 * matching core's default ordering) and keyed by revision id. Honors
+	 * posts_per_page: -1 (or absent) returns all, a positive value truncates.
+	 * Returns [] for an unknown post, exactly as core returns an empty set.
+	 */
+	function wp_get_post_revisions( $post_id = 0, $args = array() ) {
+		$post_id   = is_object( $post_id ) ? (int) $post_id->ID : (int) $post_id;
+		$revisions = array();
+		foreach ( $GLOBALS['diviops_test_posts'] as $post ) {
+			if ( 'revision' === (string) ( $post->post_type ?? '' ) && (int) ( $post->post_parent ?? 0 ) === $post_id ) {
+				$revisions[ (int) $post->ID ] = $post;
+			}
+		}
+		uasort(
+			$revisions,
+			static function ( $a, $b ) {
+				$cmp = strcmp( (string) ( $b->post_date ?? '' ), (string) ( $a->post_date ?? '' ) );
+				return 0 !== $cmp ? $cmp : ( (int) $b->ID <=> (int) $a->ID );
+			}
+		);
+		$limit = isset( $args['posts_per_page'] ) ? (int) $args['posts_per_page'] : -1;
+		if ( $limit > 0 ) {
+			$revisions = array_slice( $revisions, 0, $limit, true );
+		}
+		return $revisions;
+	}
+}
+
+if ( ! function_exists( 'wp_restore_post_revision' ) ) {
+	/**
+	 * Model WP core's wp_restore_post_revision(): copy the revision's content back
+	 * onto its parent post and return the parent id. Returns false when the id is
+	 * not a revision or the parent is gone — the failure signals the restore handler
+	 * branches on. Core also restores title/excerpt and fires hooks; content is the
+	 * observable slice this store and the handler exercise.
+	 */
+	function wp_restore_post_revision( $revision_id, $fields = null ) {
+		$revision = get_post( $revision_id );
+		if ( ! is_object( $revision ) || 'revision' !== (string) ( $revision->post_type ?? '' ) ) {
+			return false;
+		}
+		$parent_id = (int) ( $revision->post_parent ?? 0 );
+		if ( ! isset( $GLOBALS['diviops_test_posts'][ $parent_id ] ) ) {
+			return false;
+		}
+		$GLOBALS['diviops_test_posts'][ $parent_id ]->post_content = (string) ( $revision->post_content ?? '' );
+		return $parent_id;
+	}
+}
+
+// invalidate_divi_cache() (called by revision_restore after a successful restore)
+// touches these WP primitives; model them minimally. WP_CONTENT_DIR points at a
+// path that does not exist, so the static-CSS glob branch is skipped.
+if ( ! defined( 'WP_CONTENT_DIR' ) ) {
+	define( 'WP_CONTENT_DIR', __DIR__ . '/.diviops-nonexistent-wp-content' );
+}
+
+if ( ! function_exists( 'current_time' ) ) {
+	function current_time( $type = 'mysql', $gmt = 0 ) {
+		return 'timestamp' === $type ? time() : gmdate( 'Y-m-d H:i:s' );
+	}
+}
+
+if ( ! function_exists( 'delete_transient' ) ) {
+	function delete_transient( $transient ) {
+		return true;
+	}
+}
+
+if ( ! function_exists( 'delete_post_meta' ) ) {
+	function delete_post_meta( $post_id, $key, $value = '' ) {
+		unset( $GLOBALS['diviops_test_post_meta'][ $post_id ][ $key ] );
+		return true;
+	}
+}
+
 if ( ! isset( $GLOBALS['diviops_test_post_types'] ) ) {
 	// The default WordPress content post types; tests register more as needed.
 	$GLOBALS['diviops_test_post_types'] = array( 'page' => true, 'post' => true );
