@@ -86,6 +86,48 @@ trait DiviOps_Agent_ModuleSchema {
 	 *
 	 * Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.
 	 */
+	/**
+	 * Every native module's full schema (with attributes), keyed by name, read
+	 * from the `module.json` files in a given components directory. The bulk
+	 * counterpart of native_module_list() (which returns basic info only) — this
+	 * carries the `attributes` tree each dump consumer needs. Pure of the live
+	 * path resolution so it is unit-testable against a fixture directory.
+	 *
+	 * @param string $components_dir The module-library components directory.
+	 * @return array<string,array>
+	 */
+	private static function native_module_schemas_all_from_dir( $components_dir ): array {
+		if ( ! is_string( $components_dir ) || ! is_dir( $components_dir ) ) {
+			return [];
+		}
+		$out = [];
+		foreach ( (array) glob( $components_dir . '/*/module.json' ) as $path ) {
+			if ( ! is_readable( $path ) ) {
+				continue;
+			}
+			$json = (string) file_get_contents( $path );
+			$data = json_decode( $json, true );
+			$name = is_array( $data ) ? (string) ( $data['name'] ?? '' ) : '';
+			if ( '' === $name ) {
+				continue;
+			}
+			$schema = self::parse_native_module_json( $json, $name );
+			if ( is_array( $schema ) ) {
+				$out[ $name ] = $schema;
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * Every native Divi 5 module's full schema, keyed by name (live path).
+	 *
+	 * @return array<string,array>
+	 */
+	private static function native_module_schemas_all(): array {
+		return self::native_module_schemas_all_from_dir( self::native_module_components_dir() );
+	}
+
 	public static function schema_get_module_dump_all( $request ) {
 		$registry = WP_Block_Type_Registry::get_instance();
 		$all      = $registry->get_all_registered();
@@ -104,6 +146,16 @@ trait DiviOps_Agent_ModuleSchema {
 				'attributes'  => $block_type->attributes ?? [],
 				'supports'    => $block_type->supports ?? [],
 			];
+		}
+
+		// Native Divi 5 core modules are largely absent from the block registry;
+		// add their full schemas from the on-disk module.json definitions so the
+		// bulk skill-regen source is complete. Registered entries win on a name
+		// collision (they carry the live block-type's own metadata).
+		foreach ( self::native_module_schemas_all() as $name => $schema ) {
+			if ( ! isset( $modules[ $name ] ) ) {
+				$modules[ $name ] = $schema;
+			}
 		}
 
 		ksort( $modules );
