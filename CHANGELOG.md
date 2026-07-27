@@ -10,4 +10,32 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.6.0](https://github.com/rubicon/diviops/compare/v1.5.10...v1.6.0) (2026-07-27)
+
+
+### Features
+
+* add library_delete for programmatic Divi Library removal ([#43](https://github.com/rubicon/diviops/issues/43)) ([91b53a2](https://github.com/rubicon/diviops/commit/91b53a2328e4e7766769e068216e71adfea07165)), closes [#26](https://github.com/rubicon/diviops/issues/26)
+* add variable_update for in-place design-token edits ([#39](https://github.com/rubicon/diviops/issues/39)) ([6ac17e7](https://github.com/rubicon/diviops/commit/6ac17e7aa7c8a4256c60babafcdb9053c1465226))
+* **G2:** let page_create author posts and custom post types ([#44](https://github.com/rubicon/diviops/issues/44)) ([14f4bf0](https://github.com/rubicon/diviops/commit/14f4bf01a9ff7490934db9e1bb203e7aad996cab))
+* **G5:** row/column insert-at-position for pages (page_block_insert) ([#47](https://github.com/rubicon/diviops/issues/47)) ([73cf42a](https://github.com/rubicon/diviops/commit/73cf42ad6cac927651737d1bc49c6ff0e26f7462))
+* **G6:** complete menu CRUD — delete, item-remove, item-reorder, location-unassign ([#46](https://github.com/rubicon/diviops/issues/46)) ([5194a06](https://github.com/rubicon/diviops/commit/5194a06bb7771ed825be9152e33a621fb329d48e)), closes [#30](https://github.com/rubicon/diviops/issues/30)
+
+
+### Bug Fixes
+
+* add layered write guard for the global-layout materialization hazard ([#21](https://github.com/rubicon/diviops/issues/21)) ([e304b5c](https://github.com/rubicon/diviops/commit/e304b5c585481ddb499c38e8077d4b4dae43b644))
+* check is_self_closing before find_all_sections()'s depth-scan ([#18](https://github.com/rubicon/diviops/issues/18)) ([ce5115a](https://github.com/rubicon/diviops/commit/ce5115a43b42c9d45cec11196498f6f89f146df1))
+* distinguish scan-failure from identity-loss in write-guard refusal ([#24](https://github.com/rubicon/diviops/issues/24)) ([74aec3a](https://github.com/rubicon/diviops/commit/74aec3a2574ae277fc9570e4c0ce13b0c66dabe3))
+* make block targeting namespace-agnostic for third-party Divi modules ([#4](https://github.com/rubicon/diviops/issues/4)) ([539f10c](https://github.com/rubicon/diviops/commit/539f10c8731b65c4e126a245c18bb76303ffd8b4))
+* make find_block() span calculation JSON-string-aware ([#7](https://github.com/rubicon/diviops/issues/7)) ([5b4cb6a](https://github.com/rubicon/diviops/commit/5b4cb6a1eda95ad30313ea026fbb774213b26bf7)), closes [#5](https://github.com/rubicon/diviops/issues/5)
+* resolve global-layout wrapper counted type from its own attrs ([#15](https://github.com/rubicon/diviops/issues/15)) ([27616db](https://github.com/rubicon/diviops/commit/27616dba3d1521e7a1f5ff27cd8ce47b3ecf8931))
+* resolve global-layout wrapper counted type in parser collectors ([#16](https://github.com/rubicon/diviops/issues/16)) ([0f12604](https://github.com/rubicon/diviops/commit/0f126040a3aeaaf4bb2cb4ba7ff1a4de93ae835a))
+* route remaining comment-terminator scans through block_opening_comment_end() ([#10](https://github.com/rubicon/diviops/issues/10)) ([cfa994a](https://github.com/rubicon/diviops/commit/cfa994ad5e7f12732d5a067dbb3b9e37a571cd40)), closes [#6](https://github.com/rubicon/diviops/issues/6)
+
+
+### Miscellaneous Chores
+
+* set up release-please + adopt maintained-fork versioning ([#51](https://github.com/rubicon/diviops/issues/51)) ([3c6fe9d](https://github.com/rubicon/diviops/commit/3c6fe9d9735f798ce5ec9b19703891315059da14)), closes [#48](https://github.com/rubicon/diviops/issues/48)
+
 ## [Unreleased]
