@@ -105,6 +105,8 @@ class DiviOps_Agent {
 		'global_font_audit_storage', 'global_font_create', 'global_font_delete', 'global_font_list', 'global_font_update',
 		// library
 		'library_delete', 'library_get', 'library_list', 'library_save',
+		// media
+		'media_upload', 'media_get', 'media_list', 'media_set_featured_image',
 		// meta
 		'meta_find_icon', 'meta_flush_cache',
 		// menu
@@ -958,6 +960,32 @@ class DiviOps_Agent {
 					'description' => 'When true, return the change plan without mutating state.',
 				],
 			],
+		] );
+
+		// ── Media Operations ─────────────────────────────────────────
+
+		register_rest_route( self::REST_NAMESPACE, '/media/upload', [
+			'methods'             => 'POST',
+			'callback'            => [ __CLASS__, 'media_upload' ],
+			'permission_callback' => [ __CLASS__, 'check_authenticated_permission' ],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/media/get/(?P<id>\d+)', [
+			'methods'             => 'GET',
+			'callback'            => [ __CLASS__, 'media_get' ],
+			'permission_callback' => [ __CLASS__, 'check_read_permission' ],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/media/list', [
+			'methods'             => 'GET',
+			'callback'            => [ __CLASS__, 'media_list' ],
+			'permission_callback' => [ __CLASS__, 'check_read_permission' ],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/media/set-featured-image', [
+			'methods'             => 'POST',
+			'callback'            => [ __CLASS__, 'media_set_featured_image' ],
+			'permission_callback' => [ __CLASS__, 'check_authenticated_permission' ],
 		] );
 
 		// ── Theme Builder Operations ────────────────────────────────

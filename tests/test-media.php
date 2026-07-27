@@ -17,6 +17,17 @@
 
 require_once __DIR__ . '/wp-shim.php';
 
+// ── Route/capability wiring (#28): the four media capability keys are ─────
+// registered on DiviOps_Agent::CAPABILITIES so the handshake advertises them
+// and REST clients (incl. the MCP server) can gate on them. ───────────────
+
+foreach ( array( 'media_upload', 'media_get', 'media_list', 'media_set_featured_image' ) as $capability ) {
+	assert_true(
+		in_array( $capability, DiviOps_Agent::CAPABILITIES, true ),
+		"CAPABILITIES includes $capability"
+	);
+}
+
 // ── media_ip_is_reserved(): reserved/private ranges are rejected ──────────
 
 foreach (
