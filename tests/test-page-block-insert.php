@@ -93,6 +93,16 @@ $target2    = diviops_call_ref( 'find_tb_block_by_path', $pathArgs2 );
 assert_same( 'divi/row', $target2['block_name'], 'path "0.0" descends to the row' );
 assert_same( 'First Row', $target2['admin_label'], 'the payload surfaces the row admin label' );
 
+// A non-zero index at depth: both single-level paths above resolve to index 0,
+// so they cannot catch an index-computation regression. A second child lets
+// path "0.1" assert index 1 — the index-at-depth is computed, not hardcoded.
+$tree_multi = diviops_pbi_tree();
+$tree_multi[0]['innerBlocks'][] = diviops_pbi_new_row( 'Second Row' );
+$multiArgs    = array( &$tree_multi, '0.1' );
+$target_multi = diviops_call_ref( 'find_tb_block_by_path', $multiArgs );
+assert_same( 1, $target_multi['index'], 'path "0.1" resolves to sibling index 1, not a hardcoded 0' );
+assert_same( 'Second Row', $target_multi['admin_label'], 'path "0.1" resolves to the second child' );
+
 // invalid + not-found path resolution returns WP_Error, not a fatal.
 $tree3     = diviops_pbi_tree();
 $badArgs   = array( &$tree3, 'nope' );
