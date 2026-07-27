@@ -179,3 +179,15 @@ assert_true(
 	'DiviOps_Agent::variable_update exists once the trait is mixed in'
 );
 assert_true( is_file( $trait_file ), 'trait-variable.php is where the handler is expected to live' );
+
+// Defense-in-depth: id and type are structurally immutable. Even if a caller —
+// or a future handler regression — puts them in the override set, the helper
+// must strip them so every existing $variable() reference stays valid. This
+// assertion fails against a bare array_merge and passes with the unset guard.
+$tampered = diviops_call( 'build_updated_variable_record', array(
+	array( 'id' => 'gvid-keep', 'type' => 'numbers', 'value' => '10px', 'label' => 'Keep' ),
+	array( 'id' => 'gvid-HIJACK', 'type' => 'gradients', 'value' => '20px' ),
+) );
+assert_same( 'gvid-keep', $tampered['id'], 'id override is structurally stripped — id is immutable' );
+assert_same( 'numbers', $tampered['type'], 'type override is structurally stripped — type is immutable' );
+assert_same( '20px', $tampered['value'], 'a legitimate value override still applies alongside the stripped id/type' );

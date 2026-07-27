@@ -1856,6 +1856,14 @@ trait DiviOps_Agent_Variable {
 	 * resolving to the (now-changed) value.
 	 */
 	private static function build_updated_variable_record( array $existing, array $overrides ) {
+		// Defense-in-depth for the id-preservation guarantee above: `id` and
+		// `type` identify the token and anchor every `$variable({...})$`
+		// reference on the site, so they are never overridable here regardless
+		// of what a caller passes. Enforcing it structurally (not just by the
+		// handler happening to omit them) means a future handler change that
+		// accidentally included them in the override set cannot silently break
+		// every existing reference.
+		unset( $overrides['id'], $overrides['type'] );
 		$overrides['lastUpdated'] = gmdate( 'Y-m-d\TH:i:s.000\Z' );
 		return array_merge( $existing, $overrides );
 	}
