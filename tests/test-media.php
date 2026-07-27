@@ -513,11 +513,52 @@ assert_true( 703 === $d['data']['items'][0]['attachment_id'], 'media_list search
 $r = diviops_call( 'media_list', array( diviops_media_req( array( 'search' => 'no-such-title-anywhere' ) ) ) );
 assert_true( 0 === $r->get_data()['data']['total'], 'media_list search: no match yields zero total' );
 
+// ── media_get() / media_list(): per-object edit_post read gate ──────────
+// Every other read handler in the plugin (library_get/list, canvas, page,
+// revision, theme-builder, rollback, variable) applies can_inspect_post_object()
+// on top of the coarse route gate. media_get/media_list must match that
+// convention: once Task 7 wires the route, a caller that clears the route gate
+// should still be unable to read an attachment it can't edit_post, and
+// media_list must not let it enumerate attachments it can't edit either.
+// diviops_test_uneditable_ids is the harness seam current_user_can() checks
+// for the 'edit_post' capability (wp-shim.php) — everything else stays
+// fixed-true, so this is real behavioral coverage of the gate, not a fake.
+
+$GLOBALS['diviops_test_posts']       = array();
+$GLOBALS['diviops_test_attachments'] = array();
+
+diviops_media_register_attachment( 801, 'Editable One', 'image/png', 'editable-one.png' );
+diviops_media_register_attachment( 802, 'Editable Two', 'image/png', 'editable-two.png' );
+diviops_media_register_attachment( 803, 'Not Editable', 'image/png', 'not-editable.png' );
+$GLOBALS['diviops_test_uneditable_ids'] = array( 803 );
+
+$r = diviops_call( 'media_get', array( diviops_media_req( array( 'id' => 803 ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'], 'media_get uneditable: not ok' );
+assert_true( 'forbidden' === $d['error']['code'], 'media_get uneditable: forbidden code' );
+assert_true( 403 === $r->get_status(), 'media_get uneditable: 403' );
+
+// The two editable attachments from earlier fixtures are still readable.
+$r = diviops_call( 'media_get', array( diviops_media_req( array( 'id' => 801 ) ) ) );
+assert_true( true === $r->get_data()['ok'], 'media_get editable id still readable while another id is gated' );
+
+$r = diviops_call( 'media_list', array( diviops_media_req( array() ) ) );
+$d = $r->get_data();
+$ids = array_column( $d['data']['items'], 'attachment_id' );
+assert_true( 2 === $d['data']['total'], 'media_list with an uneditable attachment: total excludes it' );
+assert_true(
+	in_array( 801, $ids, true ) && in_array( 802, $ids, true ) && ! in_array( 803, $ids, true ),
+	'media_list with an uneditable attachment: items exclude it'
+);
+
+unset( $GLOBALS['diviops_test_uneditable_ids'] );
+
 // Test-global hygiene: unset everything this suite set so later test files
 // start from a clean slate.
 unset(
 	$GLOBALS['diviops_test_posts'],
 	$GLOBALS['diviops_test_attachments'],
 	$GLOBALS['diviops_test_post_meta'],
-	$GLOBALS['diviops_test_attachment_metadata']
+	$GLOBALS['diviops_test_attachment_metadata'],
+	$GLOBALS['diviops_test_uneditable_ids']
 );

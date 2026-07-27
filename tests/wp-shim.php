@@ -220,7 +220,25 @@ if ( ! function_exists( 'sanitize_text_field' ) ) {
 }
 
 if ( ! function_exists( 'current_user_can' ) ) {
+	/**
+	 * Fixed-true stub, with one per-object seam: when the capability is
+	 * 'edit_post' and the target's id is listed in
+	 * $GLOBALS['diviops_test_uneditable_ids'], returns false. This is what
+	 * lets can_inspect_post_object()'s edit_post gate (trait-core.php) be
+	 * exercised behaviorally instead of only via source inspection (see the
+	 * comment in test-revision.php predating this seam). Every other
+	 * capability/call shape — 'upload_files', 'delete_post', etc. — is
+	 * unaffected and stays fixed-true, so existing tests keep passing.
+	 */
 	function current_user_can( ...$args ) {
+		$cap = $args[0] ?? '';
+		if ( 'edit_post' === $cap && isset( $args[1] ) ) {
+			$target = $args[1];
+			$id     = is_object( $target ) ? (int) ( $target->ID ?? 0 ) : (int) $target;
+			if ( in_array( $id, (array) ( $GLOBALS['diviops_test_uneditable_ids'] ?? array() ), true ) ) {
+				return false;
+			}
+		}
 		return true;
 	}
 }

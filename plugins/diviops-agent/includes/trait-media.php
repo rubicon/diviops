@@ -363,6 +363,15 @@ trait DiviOps_Agent_Media {
 				array( 'attachment_id' => $id )
 			);
 		}
+		if ( ! self::can_inspect_post_object( $post ) ) {
+			return self::envelope_error(
+				'forbidden',
+				"You are not allowed to read attachment #{$id}.",
+				'Authenticate as a user who can edit this attachment.',
+				403,
+				array( 'attachment_id' => $id )
+			);
+		}
 
 		$metadata = wp_get_attachment_metadata( $id );
 		$sizes    = ( is_array( $metadata ) && ! empty( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) )
@@ -390,17 +399,14 @@ trait DiviOps_Agent_Media {
 	 * @return WP_REST_Response
 	 */
 	public static function media_list( $request ) {
-		$page     = self::get_request_page( $request );
+		$page_num = self::get_request_page( $request );
 		$per_page = max( 1, min( absint( $request->get_param( 'per_page' ) ?? 20 ), 100 ) );
 		$mime     = sanitize_text_field( (string) ( $request->get_param( 'mime' ) ?? '' ) );
 		$search   = sanitize_text_field( (string) ( $request->get_param( 'search' ) ?? '' ) );
 
 		$args = array(
-			'post_type'      => 'attachment',
-			'post_status'    => 'inherit',
-			'posts_per_page' => $per_page,
-			'paged'          => $page,
-			'fields'         => 'ids',
+			'post_type'   => 'attachment',
+			'post_status' => 'inherit',
 		);
 		if ( '' !== $mime ) {
 			$args['post_mime_type'] = $mime;
@@ -409,16 +415,23 @@ trait DiviOps_Agent_Media {
 			$args['s'] = $search;
 		}
 
-		$query = new WP_Query( $args );
+		// query_inspectable_post_ids() applies the same per-object edit_post
+		// gate as every other list handler (library_list, canvas, page,
+		// theme-builder) — a caller only sees attachments it can edit, and
+		// `total` reflects the gated count, not the raw query count.
+		$page  = self::query_inspectable_post_ids( $args, $per_page, $page_num );
 		$items = array();
-		foreach ( $query->posts as $attachment_id ) {
-			$attachment_id = (int) $attachment_id;
-			$url           = (string) wp_get_attachment_url( $attachment_id );
-			$items[]       = array(
-				'attachment_id' => $attachment_id,
+		foreach ( $page['ids'] as $attachment_id ) {
+			$post = get_post( $attachment_id );
+			if ( ! $post ) {
+				continue;
+			}
+			$url     = (string) wp_get_attachment_url( $post->ID );
+			$items[] = array(
+				'attachment_id' => (int) $post->ID,
 				'url'           => $url,
-				'mime'          => (string) get_post_mime_type( $attachment_id ),
-				'title'         => (string) get_post_field( 'post_title', $attachment_id ),
+				'mime'          => (string) get_post_mime_type( $post->ID ),
+				'title'         => (string) $post->post_title,
 				'filename'      => wp_basename( $url ),
 			);
 		}
@@ -426,9 +439,9 @@ trait DiviOps_Agent_Media {
 		return self::envelope_success(
 			array(
 				'items'    => $items,
-				'page'     => $page,
+				'page'     => $page_num,
 				'per_page' => $per_page,
-				'total'    => (int) $query->found_posts,
+				'total'    => $page['total'],
 			)
 		);
 	}
