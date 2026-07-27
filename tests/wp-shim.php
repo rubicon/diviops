@@ -1275,6 +1275,100 @@ if ( ! class_exists( 'WP_Query' ) ) {
 	}
 }
 
+// ── media_set_featured_image() harness: thumbnail store + internal-request shim ──
+
+if ( ! isset( $GLOBALS['diviops_test_thumbnails'] ) ) {
+	$GLOBALS['diviops_test_thumbnails'] = array();
+}
+if ( ! isset( $GLOBALS['diviops_test_set_thumbnail_calls'] ) ) {
+	$GLOBALS['diviops_test_set_thumbnail_calls'] = array();
+}
+
+if ( ! function_exists( 'get_post_thumbnail_id' ) ) {
+	/**
+	 * Model WP core's get_post_thumbnail_id(): the post's featured-image
+	 * attachment id from the harness thumbnail map, 0 when unset (mirroring
+	 * core's cast of the unset `_thumbnail_id` meta through absint()). Test
+	 * seam: $GLOBALS['diviops_test_thumbnails'][ post_id ] = attachment_id.
+	 */
+	function get_post_thumbnail_id( $post = null ) {
+		$id = is_object( $post ) ? (int) ( $post->ID ?? 0 ) : (int) $post;
+		return (int) ( $GLOBALS['diviops_test_thumbnails'][ $id ] ?? 0 );
+	}
+}
+
+if ( ! function_exists( 'set_post_thumbnail' ) ) {
+	/**
+	 * Model WP core's set_post_thumbnail(): record the attachment id as the
+	 * post's featured image in the harness thumbnail map. Every call is also
+	 * appended to diviops_test_set_thumbnail_calls, so a test can assert an
+	 * idempotent no-op path never called this (not just that the end state
+	 * happens to match). Returns true, as core does on success.
+	 */
+	function set_post_thumbnail( $post, $thumbnail_id ) {
+		$id = is_object( $post ) ? (int) ( $post->ID ?? 0 ) : (int) $post;
+		$GLOBALS['diviops_test_thumbnails'][ $id ]     = (int) $thumbnail_id;
+		$GLOBALS['diviops_test_set_thumbnail_calls'][] = array(
+			'post_id'      => $id,
+			'thumbnail_id' => (int) $thumbnail_id,
+		);
+		return true;
+	}
+}
+
+if ( ! function_exists( 'has_post_thumbnail' ) ) {
+	function has_post_thumbnail( $post = null ) {
+		return get_post_thumbnail_id( $post ) > 0;
+	}
+}
+
+if ( ! class_exists( 'WP_REST_Request' ) ) {
+	/**
+	 * Minimal stand-in for WordPress core's WP_REST_Request, covering only
+	 * what media_set_featured_image()'s internal call to media_upload()
+	 * needs: construct, set_param(), then get_param(). Real WP_REST_Request
+	 * ships with the WordPress runtime in production; this shim exists so the
+	 * harness can load and exercise the SAME production code path rather than
+	 * a test-only substitute of it.
+	 */
+	class WP_REST_Request implements ArrayAccess {
+
+		private $method;
+		private $route;
+		private $params = array();
+
+		public function __construct( $method = '', $route = '' ) {
+			$this->method = $method;
+			$this->route  = $route;
+		}
+
+		public function set_param( $key, $value ) {
+			$this->params[ $key ] = $value;
+			return true;
+		}
+
+		public function get_param( $key ) {
+			return $this->params[ $key ] ?? null;
+		}
+
+		public function offsetExists( $offset ): bool {
+			return isset( $this->params[ $offset ] );
+		}
+
+		public function offsetGet( $offset ): mixed {
+			return $this->params[ $offset ] ?? null;
+		}
+
+		public function offsetSet( $offset, $value ): void {
+			$this->params[ $offset ] = $value;
+		}
+
+		public function offsetUnset( $offset ): void {
+			unset( $this->params[ $offset ] );
+		}
+	}
+}
+
 if ( ! class_exists( 'DiviOps_Agent' ) ) {
 	require_once dirname( __DIR__ ) . '/plugins/diviops-agent/diviops-agent.php';
 }

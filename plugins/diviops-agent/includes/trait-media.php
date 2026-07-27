@@ -447,6 +447,190 @@ trait DiviOps_Agent_Media {
 	}
 
 	/**
+	 * Set a post's featured image (thumbnail) from either an existing image
+	 * attachment id, or by uploading from a URL first (delegates to
+	 * media_upload()). Idempotent: setting to the post's current thumbnail is
+	 * a no-op. Supports dry_run.
+	 *
+	 * @param mixed $request REST request-like object (get_param()).
+	 * @return WP_REST_Response
+	 */
+	public static function media_set_featured_image( $request ) {
+		$post_id       = absint( $request->get_param( 'post_id' ) );
+		$attachment_id = $request->get_param( 'attachment_id' );
+		$url           = trim( (string) ( $request->get_param( 'url' ) ?? '' ) );
+		$dry_run       = (bool) $request->get_param( 'dry_run' );
+
+		$has_attachment_id = null !== $attachment_id && '' !== $attachment_id;
+		$has_url           = '' !== $url;
+		if ( $has_attachment_id === $has_url ) {
+			return self::envelope_error(
+				'invalid_input',
+				'Provide exactly one of attachment_id or url.',
+				'attachment_id sets from an existing attachment; url uploads a new one first.',
+				400
+			);
+		}
+
+		$post = get_post( $post_id );
+		if ( ! $post ) {
+			return self::envelope_error(
+				'not_found',
+				"Post #{$post_id} not found.",
+				'Verify the post id via diviops_page_list.',
+				404,
+				array( 'post_id' => $post_id )
+			);
+		}
+		if ( ! current_user_can( 'edit_post', $post_id ) ) {
+			return self::envelope_error(
+				'forbidden',
+				"Cannot edit post #{$post_id}.",
+				'Authenticate as a user with edit rights to this post.',
+				403,
+				array( 'post_id' => $post_id )
+			);
+		}
+
+		$previous_id = absint( get_post_thumbnail_id( $post_id ) );
+
+		if ( $has_attachment_id ) {
+			$attachment_id = absint( $attachment_id );
+			$attach_err    = self::media_validate_image_attachment( $attachment_id );
+			if ( null !== $attach_err ) {
+				return $attach_err;
+			}
+
+			if ( $dry_run ) {
+				return self::media_set_featured_image_dry_run( $post_id, $previous_id, $attachment_id );
+			}
+
+			return self::media_apply_featured_image( $post_id, $previous_id, $attachment_id );
+		}
+
+		// url path: describe the plan without fetching anything on dry_run.
+		if ( $dry_run ) {
+			return self::dry_run_response(
+				"Would upload '{$url}' and set it as the featured image for post #{$post_id} (current thumbnail: " . ( $previous_id ? "#{$previous_id}" : 'none' ) . ').',
+				array(
+					array(
+						'kind'   => 'set_featured_image',
+						'target' => "post#{$post_id}",
+						'before' => $previous_id ? $previous_id : null,
+						'after'  => 'uploaded-from-url',
+					),
+				),
+				array(),
+				array(
+					'post_id'               => $post_id,
+					'previous_thumbnail_id' => $previous_id,
+				)
+			);
+		}
+
+		$upload_request = new WP_REST_Request( 'POST' );
+		$upload_request->set_param( 'url', $url );
+		$upload_result  = self::media_upload( $upload_request );
+		$upload_data    = $upload_result->get_data();
+		if ( empty( $upload_data['ok'] ) ) {
+			return $upload_result;
+		}
+
+		$attachment_id = absint( $upload_data['data']['attachment_id'] ?? 0 );
+		if ( ! $attachment_id ) {
+			return self::envelope_error(
+				'upload_failed',
+				'media_upload did not return an attachment id.',
+				null,
+				500
+			);
+		}
+
+		return self::media_apply_featured_image( $post_id, $previous_id, $attachment_id );
+	}
+
+	/**
+	 * Validate that $attachment_id exists and is an image attachment.
+	 *
+	 * @param int $attachment_id Attachment id.
+	 * @return WP_REST_Response|null Error envelope, or null when valid.
+	 */
+	private static function media_validate_image_attachment( int $attachment_id ) {
+		$attachment = get_post( $attachment_id );
+		if ( ! $attachment || 'attachment' !== $attachment->post_type ) {
+			return self::envelope_error(
+				'not_found',
+				"Attachment #{$attachment_id} not found.",
+				'Use diviops_media_list to find a valid attachment id.',
+				404,
+				array( 'attachment_id' => $attachment_id )
+			);
+		}
+		$mime = (string) get_post_mime_type( $attachment_id );
+		if ( 0 !== strpos( $mime, 'image/' ) ) {
+			return self::envelope_error(
+				'invalid_input',
+				"Attachment #{$attachment_id} is not an image (mime: '{$mime}').",
+				'A post featured image must be an image attachment.',
+				400,
+				array( 'attachment_id' => $attachment_id, 'mime' => $mime )
+			);
+		}
+		return null;
+	}
+
+	/** Build the dry_run plan response for the attachment_id path. */
+	private static function media_set_featured_image_dry_run( int $post_id, int $previous_id, int $attachment_id ) {
+		$noop    = ( $previous_id === $attachment_id );
+		$summary = $noop
+			? "Post #{$post_id} already has attachment #{$attachment_id} as its featured image — no-op."
+			: "Would set post #{$post_id}'s featured image: " . ( $previous_id ? "#{$previous_id}" : 'none' ) . " → #{$attachment_id}.";
+
+		return self::dry_run_response(
+			$summary,
+			$noop ? array() : array(
+				array(
+					'kind'   => 'set_featured_image',
+					'target' => "post#{$post_id}",
+					'before' => $previous_id ? $previous_id : null,
+					'after'  => $attachment_id,
+				),
+			),
+			array(),
+			array(
+				'post_id'               => $post_id,
+				'previous_thumbnail_id' => $previous_id,
+				'thumbnail_id'          => $attachment_id,
+			)
+		);
+	}
+
+	/** Apply (or no-op) the thumbnail write and return the success envelope. */
+	private static function media_apply_featured_image( int $post_id, int $previous_id, int $attachment_id ) {
+		if ( $previous_id === $attachment_id ) {
+			return self::envelope_success(
+				array(
+					'post_id'               => $post_id,
+					'previous_thumbnail_id' => $previous_id,
+					'thumbnail_id'          => $attachment_id,
+					'noop'                  => true,
+				)
+			);
+		}
+
+		set_post_thumbnail( $post_id, $attachment_id );
+
+		return self::envelope_success(
+			array(
+				'post_id'               => $post_id,
+				'previous_thumbnail_id' => $previous_id,
+				'thumbnail_id'          => $attachment_id,
+				'noop'                  => false,
+			)
+		);
+	}
+
+	/**
 	 * Resolve a redirect's Location header against the URL it was returned
 	 * from. An already-absolute target (has both scheme and host) passes
 	 * through unchanged; a root-relative target (`/path`) inherits the base

@@ -562,3 +562,144 @@ unset(
 	$GLOBALS['diviops_test_attachment_metadata'],
 	$GLOBALS['diviops_test_uneditable_ids']
 );
+
+// ── media_set_featured_image(): by attachment_id / by url, gates, idempotency,
+// dry_run (#28 Task 6) ──────────────────────────────────────────────────────
+// Test-global hygiene: this suite sets diviops_test_posts, diviops_test_
+// attachments, diviops_test_thumbnails, diviops_test_set_thumbnail_calls,
+// diviops_test_uneditable_ids, and (for the url case) diviops_test_allowed_
+// mimes/diviops_test_filetype/diviops_test_http_responses plus the
+// diviops_media_host_resolver filter; every one is reset/unset (or the filter
+// removed) at the end so nothing leaks into files sharing this PHP process.
+
+$GLOBALS['diviops_test_posts']               = array();
+$GLOBALS['diviops_test_attachments']         = array();
+$GLOBALS['diviops_test_thumbnails']          = array();
+$GLOBALS['diviops_test_set_thumbnail_calls'] = array();
+
+diviops_test_register_post( 900, '', 'page', 'Featured Image Target' );
+diviops_media_register_attachment( 910, 'Hero Image', 'image/png', 'hero.png' );
+diviops_media_register_attachment( 911, 'Alt Hero', 'image/jpeg', 'alt-hero.jpg' );
+diviops_media_register_attachment( 912, 'A PDF', 'application/pdf', 'doc.pdf' );
+
+// ── success: set by attachment_id ──────────────────────────────────────
+$r = diviops_call( 'media_set_featured_image', array( diviops_media_req( array( 'post_id' => 900, 'attachment_id' => 910 ) ) ) );
+$d = $r->get_data();
+assert_true( true === $d['ok'], 'set by attachment_id: ok' );
+assert_true( 900 === $d['data']['post_id'], 'set by attachment_id: post_id' );
+assert_true( 0 === $d['data']['previous_thumbnail_id'], 'set by attachment_id: previous_thumbnail_id was none' );
+assert_true( 910 === $d['data']['thumbnail_id'], 'set by attachment_id: thumbnail_id' );
+assert_true( false === $d['data']['noop'], 'set by attachment_id: noop false' );
+assert_true( 910 === get_post_thumbnail_id( 900 ), 'set by attachment_id: thumbnail actually written' );
+
+// ── post not_found ────────────────────────────────────────────────────────
+$r = diviops_call( 'media_set_featured_image', array( diviops_media_req( array( 'post_id' => 999999, 'attachment_id' => 910 ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'], 'post not_found: not ok' );
+assert_true( 'not_found' === $d['error']['code'], 'post not_found: code' );
+assert_true( 404 === $r->get_status(), 'post not_found: 404' );
+
+// ── attachment not_found ─────────────────────────────────────────────────
+$r = diviops_call( 'media_set_featured_image', array( diviops_media_req( array( 'post_id' => 900, 'attachment_id' => 999999 ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'], 'attachment not_found: not ok' );
+assert_true( 'not_found' === $d['error']['code'], 'attachment not_found: code' );
+assert_true( 404 === $r->get_status(), 'attachment not_found: 404' );
+
+// ── attachment not an image ──────────────────────────────────────────────
+$r = diviops_call( 'media_set_featured_image', array( diviops_media_req( array( 'post_id' => 900, 'attachment_id' => 912 ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'], 'attachment not image: not ok' );
+assert_true( 'invalid_input' === $d['error']['code'], 'attachment not image: invalid_input code' );
+assert_true( 400 === $r->get_status(), 'attachment not image: 400' );
+
+// ── forbidden (uneditable post via the seam) ─────────────────────────────
+$GLOBALS['diviops_test_uneditable_ids'] = array( 900 );
+$r = diviops_call( 'media_set_featured_image', array( diviops_media_req( array( 'post_id' => 900, 'attachment_id' => 910 ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'], 'forbidden: not ok' );
+assert_true( 'forbidden' === $d['error']['code'], 'forbidden: code' );
+assert_true( 403 === $r->get_status(), 'forbidden: 403' );
+unset( $GLOBALS['diviops_test_uneditable_ids'] );
+
+// ── idempotent: same id → noop, no rewrite ───────────────────────────────
+$GLOBALS['diviops_test_set_thumbnail_calls'] = array();
+$r = diviops_call( 'media_set_featured_image', array( diviops_media_req( array( 'post_id' => 900, 'attachment_id' => 910 ) ) ) );
+$d = $r->get_data();
+assert_true( true === $d['ok'], 'idempotent: ok' );
+assert_true( true === $d['data']['noop'], 'idempotent: noop true' );
+assert_true( 910 === $d['data']['previous_thumbnail_id'], 'idempotent: previous_thumbnail_id' );
+assert_true( 910 === $d['data']['thumbnail_id'], 'idempotent: thumbnail_id' );
+assert_true( array() === $GLOBALS['diviops_test_set_thumbnail_calls'], 'idempotent: set_post_thumbnail not called' );
+
+// ── dry_run: plan, no write ────────────────────────────────────────────────
+$GLOBALS['diviops_test_set_thumbnail_calls'] = array();
+$r = diviops_call( 'media_set_featured_image', array( diviops_media_req( array( 'post_id' => 900, 'attachment_id' => 911, 'dry_run' => true ) ) ) );
+$d = $r->get_data();
+assert_true( true === $d['ok'] && isset( $d['data']['plan'] ), 'dry_run: returns plan' );
+assert_true( 910 === get_post_thumbnail_id( 900 ), 'dry_run: thumbnail unchanged' );
+assert_true( array() === $GLOBALS['diviops_test_set_thumbnail_calls'], 'dry_run: set_post_thumbnail not called' );
+
+// ── neither attachment_id nor url ────────────────────────────────────────
+$r = diviops_call( 'media_set_featured_image', array( diviops_media_req( array( 'post_id' => 900 ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'] && 'invalid_input' === $d['error']['code'], 'missing target: invalid_input' );
+
+// ── both attachment_id and url ───────────────────────────────────────────
+$r = diviops_call(
+	'media_set_featured_image',
+	array( diviops_media_req( array( 'post_id' => 900, 'attachment_id' => 910, 'url' => 'https://cdn.example.com/x.png' ) ) )
+);
+$d = $r->get_data();
+assert_true( false === $d['ok'] && 'invalid_input' === $d['error']['code'], 'both target params: invalid_input' );
+
+// ── url path: delegates to media_upload, sets the returned id ────────────
+$GLOBALS['diviops_test_allowed_mimes'] = array( 'png' => 'image/png' );
+$GLOBALS['diviops_test_filetype']      = array(
+	'new-hero.png' => array( 'ext' => 'png', 'type' => 'image/png', 'proper_filename' => false ),
+);
+diviops_media_set_resolver(
+	function ( $h ) {
+		return array( '8.8.8.8' );
+	}
+);
+$GLOBALS['diviops_test_http_responses'] = array( diviops_media_http_200() );
+$next_attach_id_before                  = ( $GLOBALS['diviops_test_next_attach_id'] ?? 100 ) + 1;
+$r = diviops_call(
+	'media_set_featured_image',
+	array( diviops_media_req( array( 'post_id' => 900, 'url' => 'https://cdn.example.com/new-hero.png' ) ) )
+);
+$d = $r->get_data();
+assert_true( true === $d['ok'], 'url path: ok' );
+assert_true( $next_attach_id_before === $d['data']['thumbnail_id'], 'url path: thumbnail_id is the uploaded attachment id' );
+assert_true( 910 === $d['data']['previous_thumbnail_id'], 'url path: previous_thumbnail_id' );
+assert_true( $d['data']['thumbnail_id'] === get_post_thumbnail_id( 900 ), 'url path: thumbnail actually written' );
+remove_all_filters( 'diviops_media_host_resolver' );
+
+// ── url path: media_upload's error envelope propagates unchanged ─────────
+diviops_media_set_resolver(
+	function ( $h ) {
+		return array( '169.254.169.254' );
+	}
+);
+$r = diviops_call(
+	'media_set_featured_image',
+	array( diviops_media_req( array( 'post_id' => 900, 'url' => 'https://evil.example/x.png' ) ) )
+);
+$d = $r->get_data();
+assert_true( false === $d['ok'] && 'forbidden_target' === $d['error']['code'], 'url path: media_upload error propagates' );
+remove_all_filters( 'diviops_media_host_resolver' );
+
+// Test-global hygiene: unset everything this suite set so later test files
+// start from a clean slate.
+unset(
+	$GLOBALS['diviops_test_posts'],
+	$GLOBALS['diviops_test_attachments'],
+	$GLOBALS['diviops_test_thumbnails'],
+	$GLOBALS['diviops_test_set_thumbnail_calls'],
+	$GLOBALS['diviops_test_allowed_mimes'],
+	$GLOBALS['diviops_test_filetype'],
+	$GLOBALS['diviops_test_http_responses'],
+	$GLOBALS['diviops_test_next_attach_id']
+);
+$GLOBALS['diviops_test_allowed_mimes'] = array( 'png' => 'image/png' );
