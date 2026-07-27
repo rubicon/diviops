@@ -1015,28 +1015,17 @@ if ( ! function_exists( 'wp_check_filetype_and_ext' ) ) {
 	}
 }
 
-// ── media_upload() harness: sideload/download primitives + attachment registry ──
+// ── media_upload() harness: sideload/fetch primitives + attachment registry ──
+//
+// download_url() is deliberately NOT stubbed here: media_fetch_to_temp()
+// (trait-media.php) does not call it — WP core's download_url() auto-follows
+// redirects with no per-hop SSRF revalidation, which is exactly the bypass
+// the redirect-hop guard exists to close (#28). The fetch path uses
+// wp_remote_get() with redirection disabled instead, stubbed below.
 
 if ( ! function_exists( 'wp_max_upload_size' ) ) {
 	function wp_max_upload_size() {
 		return $GLOBALS['diviops_test_max_upload'] ?? 8388608;
-	}
-}
-
-if ( ! function_exists( 'download_url' ) ) {
-	/**
-	 * Model WP core's download_url(): fetch a URL to a temp file, returning its
-	 * path. Test seam: $GLOBALS['diviops_test_download_fail'] models a fetch
-	 * failure (a WP_Error, matching core's contract); $GLOBALS
-	 * ['diviops_test_download_bytes'] supplies the "fetched" bytes.
-	 */
-	function download_url( $url, $timeout = 300 ) {
-		if ( ! empty( $GLOBALS['diviops_test_download_fail'] ) ) {
-			return new WP_Error( 'http_404', 'not found' );
-		}
-		$tmp = tempnam( sys_get_temp_dir(), 'divi' );
-		file_put_contents( $tmp, $GLOBALS['diviops_test_download_bytes'] ?? 'bytes' );
-		return $tmp;
 	}
 }
 
@@ -1066,6 +1055,64 @@ if ( ! function_exists( 'media_handle_sideload' ) ) {
 			@unlink( $file['tmp_name'] );
 		}
 		return $id;
+	}
+}
+
+if ( ! isset( $GLOBALS['diviops_test_http_responses'] ) ) {
+	$GLOBALS['diviops_test_http_responses'] = array();
+}
+if ( ! isset( $GLOBALS['diviops_test_remote_get_calls'] ) ) {
+	$GLOBALS['diviops_test_remote_get_calls'] = array();
+}
+
+if ( ! function_exists( 'wp_remote_get' ) ) {
+	/**
+	 * Model WP core's wp_remote_get() called with redirection disabled (the
+	 * caller — media_fetch_to_temp() — always passes 'redirection' => 0 so it
+	 * can revalidate each hop itself rather than letting the HTTP layer
+	 * auto-follow redirects past the SSRF guard). Pops the next scripted
+	 * response off $GLOBALS['diviops_test_http_responses'], a FIFO queue
+	 * tests script one entry per hop of a redirect chain. Each entry is
+	 * either a WP_Error (network failure) or an array shaped like core's
+	 * response: [ 'response' => [ 'code' => int ], 'headers' => [...],
+	 * 'body' => string ]. An empty queue means a call went unscripted — this
+	 * returns a WP_Error rather than a silent default, so a test that forgets
+	 * to script a hop fails loudly instead of quietly passing.
+	 */
+	function wp_remote_get( $url, $args = array() ) {
+		$GLOBALS['diviops_test_remote_get_calls'][] = array(
+			'url'  => $url,
+			'args' => $args,
+		);
+		if ( empty( $GLOBALS['diviops_test_http_responses'] ) ) {
+			return new WP_Error( 'http_request_failed', "diviops test harness: no scripted response for {$url}." );
+		}
+		return array_shift( $GLOBALS['diviops_test_http_responses'] );
+	}
+}
+
+if ( ! function_exists( 'wp_remote_retrieve_response_code' ) ) {
+	function wp_remote_retrieve_response_code( $response ) {
+		return (int) ( $response['response']['code'] ?? 0 );
+	}
+}
+
+if ( ! function_exists( 'wp_remote_retrieve_header' ) ) {
+	function wp_remote_retrieve_header( $response, $header ) {
+		$headers = $response['headers'] ?? array();
+		$header  = strtolower( (string) $header );
+		foreach ( $headers as $key => $value ) {
+			if ( strtolower( (string) $key ) === $header ) {
+				return $value;
+			}
+		}
+		return '';
+	}
+}
+
+if ( ! function_exists( 'wp_remote_retrieve_body' ) ) {
+	function wp_remote_retrieve_body( $response ) {
+		return (string) ( $response['body'] ?? '' );
 	}
 }
 

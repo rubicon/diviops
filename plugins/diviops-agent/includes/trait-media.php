@@ -159,7 +159,7 @@ trait DiviOps_Agent_Media {
 		}
 
 		// Load WP's sideload/media helpers only when not already present. The test
-		// harness stubs media_handle_sideload/download_url/etc., so guarding avoids
+		// harness stubs media_handle_sideload/wp_remote_get/etc., so guarding avoids
 		// require_once'ing WP-admin files that don't exist in the harness.
 		if ( ! function_exists( 'media_handle_sideload' ) ) {
 			require_once ABSPATH . 'wp-admin/includes/file.php';
@@ -176,8 +176,9 @@ trait DiviOps_Agent_Media {
 				return self::envelope_error( 'forbidden_target', $reason, 'Only public http/https image URLs are allowed.', 403, array( 'url' => $url ) );
 			}
 			$filename   = self::media_basename_from_url( $url );
-			$tmp_getter = function () use ( $url ) {
-				return download_url( $url, 20 );
+			$tmp_getter = function () use ( $url, $resolver ) {
+				$fetch_reason = null;
+				return self::media_fetch_to_temp( $url, $fetch_reason, $resolver );
 			};
 			$source     = array(
 				'kind' => 'url',
@@ -227,6 +228,12 @@ trait DiviOps_Agent_Media {
 
 		$tmp = call_user_func( $tmp_getter );
 		if ( is_wp_error( $tmp ) ) {
+			// A redirect hop that resolves to a blocked target surfaces the SAME
+			// forbidden_target/403 as a directly-blocked initial URL — the guard
+			// applies per hop, not just to the URL the caller supplied.
+			if ( 'forbidden_target' === $tmp->get_error_code() ) {
+				return self::envelope_error( 'forbidden_target', $tmp->get_error_message(), 'Only public http/https image URLs are allowed.', 403, array( 'url' => $url ) );
+			}
 			return self::envelope_error( 'fetch_failed', $tmp->get_error_message(), 'The source could not be retrieved.', 502, array( 'source' => $source ) );
 		}
 
@@ -281,5 +288,86 @@ trait DiviOps_Agent_Media {
 		$path = (string) wp_parse_url( $url, PHP_URL_PATH );
 		$name = sanitize_file_name( basename( $path ) );
 		return '' !== $name ? $name : 'download';
+	}
+
+	/**
+	 * Fetch a URL to a local temp file, following redirects explicitly with a
+	 * bounded hop count and re-running the FULL SSRF/address guard on every
+	 * hop — not just the caller's initial URL. WP's HTTP layer's automatic
+	 * redirect-following (`download_url()`) is deliberately not used here: a
+	 * public origin that 302s to 169.254.169.254 would otherwise sail straight
+	 * through a one-time check performed only on the URL we were handed.
+	 *
+	 * Known residual (documented, accepted): this validates each hop's
+	 * resolved address before requesting it, but does not pin that address
+	 * for the actual TCP connect — WP's HTTP layer resolves the host again at
+	 * connect time, so a DNS-rebinding attacker could still change the answer
+	 * in between. Accepted because this endpoint is authenticated and
+	 * admin-privileged, not attacker-reachable.
+	 *
+	 * @return string|WP_Error Temp file path on success, WP_Error otherwise.
+	 */
+	private static function media_fetch_to_temp( string $url, ?string &$reason = null, ?callable $resolver = null ) {
+		$max_hops = 5;
+		for ( $hop = 0; $hop <= $max_hops; $hop++ ) {
+			if ( ! self::media_url_is_safe( $url, $reason, $resolver ) ) {
+				return new WP_Error( 'forbidden_target', $reason );
+			}
+			$resp = wp_remote_get( $url, array( 'timeout' => 20, 'redirection' => 0 ) ); // do NOT auto-follow
+			if ( is_wp_error( $resp ) ) {
+				$reason = $resp->get_error_message();
+				return $resp;
+			}
+			$code = (int) wp_remote_retrieve_response_code( $resp );
+			if ( $code >= 300 && $code < 400 ) {
+				$loc = (string) wp_remote_retrieve_header( $resp, 'location' );
+				if ( '' === $loc ) {
+					$reason = 'Redirect with no Location header.';
+					return new WP_Error( 'fetch_failed', $reason );
+				}
+				$url = self::media_absolutize_url( $loc, $url );
+				continue; // revalidate the new target on the next loop iteration
+			}
+			if ( $code < 200 || $code >= 300 ) {
+				$reason = "Upstream returned HTTP {$code}.";
+				return new WP_Error( 'fetch_failed', $reason );
+			}
+			$body = wp_remote_retrieve_body( $resp );
+			$tmp  = wp_tempnam();
+			if ( false === file_put_contents( $tmp, $body ) ) {
+				$reason = 'Could not write temp file.';
+				return new WP_Error( 'fetch_failed', $reason );
+			}
+			return $tmp;
+		}
+		$reason = 'Too many redirects.';
+		return new WP_Error( 'fetch_failed', $reason );
+	}
+
+	/**
+	 * Resolve a redirect's Location header against the URL it was returned
+	 * from. An already-absolute target (has both scheme and host) passes
+	 * through unchanged; a root-relative target (`/path`) inherits the base
+	 * URL's scheme/host/port. Anything else is returned as-is — the next
+	 * hop's media_url_is_safe() call will reject it via the scheme/host check
+	 * if it isn't a valid absolute http(s) URL, which is the correct
+	 * rejection path for a malformed or unsupported Location value.
+	 */
+	private static function media_absolutize_url( string $location, string $base ): string {
+		$loc_parts = wp_parse_url( $location );
+		if ( ! empty( $loc_parts['scheme'] ) && ! empty( $loc_parts['host'] ) ) {
+			return $location;
+		}
+		$base_parts = wp_parse_url( $base );
+		$host       = $base_parts['host'] ?? '';
+		if ( '' === $host ) {
+			return $location;
+		}
+		$scheme = $base_parts['scheme'] ?? 'https';
+		$port   = isset( $base_parts['port'] ) ? ':' . $base_parts['port'] : '';
+		if ( 0 === strpos( $location, '/' ) ) {
+			return "{$scheme}://{$host}{$port}{$location}";
+		}
+		return $location;
 	}
 }

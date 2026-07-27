@@ -160,6 +160,31 @@ function diviops_media_set_resolver( callable $fn ) {
 	);
 }
 
+// Resolver used by every redirect-hop test below: a literal-IP host (a
+// redirect Location can point straight at an IP, as the SSRF finding's
+// scenario does) resolves to itself; anything else resolves to a public
+// address. This lets one resolver drive an entire hop chain, including a
+// hop that lands on a raw internal IP, without per-hostname bookkeeping.
+function diviops_media_resolver_ip_literal_or_public( $host ) {
+	return array( false !== filter_var( $host, FILTER_VALIDATE_IP ) ? $host : '8.8.8.8' );
+}
+
+function diviops_media_http_200( $body = 'fake-image-bytes' ) {
+	return array(
+		'response' => array( 'code' => 200 ),
+		'headers'  => array(),
+		'body'     => $body,
+	);
+}
+
+function diviops_media_http_redirect( $location ) {
+	return array(
+		'response' => array( 'code' => 302 ),
+		'headers'  => array( 'location' => $location ),
+		'body'     => '',
+	);
+}
+
 $GLOBALS['diviops_test_allowed_mimes'] = array( 'png' => 'image/png' );
 $GLOBALS['diviops_test_filetype']      = array(
 	'pic.png' => array(
@@ -173,11 +198,13 @@ $GLOBALS['diviops_test_post_meta']     = array();
 $GLOBALS['diviops_test_attachments']   = array();
 
 // url happy path — inject a safe resolver via the extensibility filter seam.
+// A direct 200 is one hop: no redirect involved.
 diviops_media_set_resolver(
 	function ( $h ) {
 		return array( '8.8.8.8' );
 	}
 );
+$GLOBALS['diviops_test_http_responses'] = array( diviops_media_http_200() );
 $r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png' ) ) ) );
 $d = $r->get_data();
 assert_true( true === $d['ok'] && ! empty( $d['data']['attachment_id'] ), 'url upload ok' );
@@ -214,6 +241,63 @@ $r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'ht
 $d = $r->get_data();
 assert_true( true === $d['ok'] && isset( $d['data']['plan'] ), 'dry-run returns plan, no write' );
 assert_true( $attachments_before_dry_run === count( $GLOBALS['diviops_test_attachments'] ), 'dry-run performs no write' );
+
+// ── Redirect-hop SSRF revalidation (#28 fix) ───────────────────────────────
+// The initial-URL SSRF test above proves the guard catches a directly-blocked
+// URL. These prove it also catches a URL that is safe on its face but 302s to
+// an internal target — the exact bypass download_url()'s auto-follow allowed.
+
+// A public origin 302s straight to the cloud-metadata IP: the redirect hop
+// must be revalidated and rejected, not silently followed.
+diviops_media_set_resolver( 'diviops_media_resolver_ip_literal_or_public' );
+$GLOBALS['diviops_test_http_responses'] = array(
+	diviops_media_http_redirect( 'http://169.254.169.254/latest/meta-data/' ),
+);
+$r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png' ) ) ) );
+$d = $r->get_data();
+assert_true(
+	false === $d['ok'] && 'forbidden_target' === $d['error']['code'],
+	'redirect hop to an internal target is blocked, not silently followed'
+);
+
+// A public origin 302s to another public origin, which serves the file: the
+// chain is followed and the upload succeeds.
+diviops_media_set_resolver( 'diviops_media_resolver_ip_literal_or_public' );
+$GLOBALS['diviops_test_http_responses']    = array(
+	diviops_media_http_redirect( 'https://cdn2.example.com/final.png' ),
+	diviops_media_http_200(),
+);
+$GLOBALS['diviops_test_remote_get_calls']  = array();
+$r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png' ) ) ) );
+$d = $r->get_data();
+assert_true(
+	true === $d['ok'] && ! empty( $d['data']['attachment_id'] ),
+	'a public-to-public redirect chain is followed and succeeds'
+);
+// Guards against a regression that re-enables WP's own redirect-following
+// (which would silently bypass the per-hop revalidation this fix exists
+// for): every hop must be requested with redirection disabled.
+$redirection_disabled_every_hop = true;
+foreach ( $GLOBALS['diviops_test_remote_get_calls'] as $call ) {
+	if ( 0 !== ( $call['args']['redirection'] ?? null ) ) {
+		$redirection_disabled_every_hop = false;
+	}
+}
+assert_true(
+	2 === count( $GLOBALS['diviops_test_remote_get_calls'] ) && $redirection_disabled_every_hop,
+	'every hop is fetched with redirection disabled (no auto-follow bypass)'
+);
+
+// A redirect chain that never terminates within the bounded hop count fails
+// closed rather than looping or following indefinitely.
+diviops_media_set_resolver( 'diviops_media_resolver_ip_literal_or_public' );
+$GLOBALS['diviops_test_http_responses'] = array_fill( 0, 6, diviops_media_http_redirect( 'https://cdn.example.com/pic.png' ) );
+$r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png' ) ) ) );
+$d = $r->get_data();
+assert_true(
+	false === $d['ok'] && 'fetch_failed' === $d['error']['code'],
+	'a redirect chain exceeding the bounded hop count is rejected'
+);
 
 // base64 happy path
 $GLOBALS['diviops_test_filetype']['photo.png'] = array(
@@ -259,12 +343,16 @@ $r = diviops_call(
 $d = $r->get_data();
 assert_true( false === $d['ok'] && 'unsupported_media_type' === $d['error']['code'], 'disallowed type rejected through media_upload' );
 
-// fetch failure surfaces as fetch_failed
-$GLOBALS['diviops_test_download_fail'] = true;
+// network failure (wp_remote_get returns a WP_Error) surfaces as fetch_failed
+diviops_media_set_resolver(
+	function ( $h ) {
+		return array( '8.8.8.8' );
+	}
+);
+$GLOBALS['diviops_test_http_responses'] = array( new WP_Error( 'http_request_failed', 'connection refused' ) );
 $r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png' ) ) ) );
 $d = $r->get_data();
-assert_true( false === $d['ok'] && 'fetch_failed' === $d['error']['code'], 'download failure surfaces as fetch_failed' );
-unset( $GLOBALS['diviops_test_download_fail'] );
+assert_true( false === $d['ok'] && 'fetch_failed' === $d['error']['code'], 'network failure surfaces as fetch_failed' );
 
 // Test-global hygiene: unset everything this suite set so later test files
 // (which share this PHP process) start from a clean slate.
@@ -276,7 +364,8 @@ unset(
 	$GLOBALS['diviops_test_post_meta'],
 	$GLOBALS['diviops_test_attachments'],
 	$GLOBALS['diviops_test_next_attach_id'],
-	$GLOBALS['diviops_test_download_bytes'],
+	$GLOBALS['diviops_test_http_responses'],
+	$GLOBALS['diviops_test_remote_get_calls'],
 	$GLOBALS['diviops_test_sideload_mime']
 );
 $GLOBALS['diviops_test_allowed_mimes'] = array( 'png' => 'image/png' );
