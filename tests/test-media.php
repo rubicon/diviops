@@ -96,24 +96,46 @@ assert_true(
 	'disallowed mime rejected'
 );
 
-// ── media_filetype_error(): SVG fail-closed on the sideload sanitizer (#28, #73) ─
-// SVG is a stored-XSS vector, so it is allowed only when a sanitizer is verified
-// active on the exact filter our upload path fires (wp_handle_sideload_prefilter).
+// ── media_filetype_error(): SVG fail-closed on Safe SVG's own callback (#28, #73) ─
+// SVG is a stored-XSS vector, so it is allowed only when Safe SVG's OWN callback is
+// verified active on the exact filter our upload path fires (wp_handle_sideload_
+// prefilter) — has_filter() alone would only prove *something* is listening, not
+// that it sanitizes, so the guard scans $wp_filter for a `safe_svg` instance.
 // Allow svg mime for these cases so the ONLY gate under test is the sanitizer.
 
-$GLOBALS['diviops_test_allowed_mimes']       = array( 'png' => 'image/png', 'svg' => 'image/svg+xml' );
+if ( ! class_exists( 'safe_svg' ) ) {
+	class safe_svg {
+		public function check_for_svg( $f ) { return $f; }
+	}
+}
+
+$GLOBALS['diviops_test_allowed_mimes']        = array( 'png' => 'image/png', 'svg' => 'image/svg+xml' );
 $GLOBALS['diviops_test_filetype']['logo.svg'] = array( 'ext' => 'svg', 'type' => 'image/svg+xml', 'proper_filename' => false );
 
-$GLOBALS['diviops_test_filters'] = array(); // no sanitizer
+// Case 1: Safe SVG's own callback registered — accepted.
+$GLOBALS['wp_filter']['wp_handle_sideload_prefilter'] = array(
+	10 => array( 'x' => array( 'function' => array( new safe_svg(), 'check_for_svg' ), 'accepted_args' => 1 ) ),
+);
+assert_true(
+	null === diviops_call_static( 'media_filetype_error', array( 'logo.svg', '/tmp/x' ) ),
+	'svg accepted when Safe SVG callback active'
+);
+
+// Case 2: an unrelated callback on the same filter — rejected (not a sanitizer).
+$GLOBALS['wp_filter']['wp_handle_sideload_prefilter'] = array(
+	10 => array( 'y' => array( 'function' => 'strlen', 'accepted_args' => 1 ) ),
+);
+assert_true(
+	null !== diviops_call_static( 'media_filetype_error', array( 'logo.svg', '/tmp/x' ) ),
+	'svg rejected when only an unrelated callback is on the filter'
+);
+
+// Case 3: nothing wired — rejected.
+$GLOBALS['wp_filter']['wp_handle_sideload_prefilter'] = array();
 assert_true(
 	null !== diviops_call_static( 'media_filetype_error', array( 'logo.svg', '/tmp/x' ) ),
 	'svg rejected when no sideload sanitizer'
 );
 
-$GLOBALS['diviops_test_filters'] = array( 'wp_handle_sideload_prefilter' => 10 ); // sanitizer wired
-assert_true(
-	null === diviops_call_static( 'media_filetype_error', array( 'logo.svg', '/tmp/x' ) ),
-	'svg accepted when sanitizer active'
-);
-unset( $GLOBALS['diviops_test_filters'], $GLOBALS['diviops_test_allowed_mimes'] );
+unset( $GLOBALS['wp_filter'], $GLOBALS['diviops_test_allowed_mimes'] );
 $GLOBALS['diviops_test_allowed_mimes'] = array( 'png' => 'image/png' );

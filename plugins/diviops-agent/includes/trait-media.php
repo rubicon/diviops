@@ -107,13 +107,33 @@ trait DiviOps_Agent_Media {
 	}
 
 	/**
-	 * SVG is a stored-XSS vector, so it is allowed only when a sanitizer is
-	 * verified active on the exact filter our upload path fires. Our upload
-	 * path calls media_handle_sideload(), which fires wp_handle_sideload_prefilter;
-	 * a sanitizer (e.g. Safe SVG) must be registered on that hook. Fail closed:
-	 * no registered callback means no verified sanitizer, so SVG is rejected.
+	 * SVG is a stored-XSS vector, so it is allowed only when Safe SVG's OWN
+	 * callback is verified active on the exact filter our upload path fires.
+	 * Our upload path calls media_handle_sideload(), which fires
+	 * wp_handle_sideload_prefilter; has_filter() alone only proves *something*
+	 * is listening, not that it sanitizes — an unrelated plugin's callback on
+	 * the same hook would otherwise let an unsanitized SVG through. This scans
+	 * $wp_filter directly for a callback bound to a `safe_svg` instance. Fail
+	 * closed: if Safe SVG isn't loaded, the `safe_svg` class is undefined and
+	 * `instanceof safe_svg` is false (safe in PHP even against an undefined
+	 * class), so an unrecognized or absent callback is rejected.
 	 */
 	private static function media_svg_sideload_sanitizer_active(): bool {
-		return false !== has_filter( 'wp_handle_sideload_prefilter' );
+		global $wp_filter;
+		if ( empty( $wp_filter['wp_handle_sideload_prefilter'] ) ) {
+			return false;
+		}
+		$hook      = $wp_filter['wp_handle_sideload_prefilter'];
+		$callbacks = ( $hook instanceof WP_Hook ) ? $hook->callbacks : (array) $hook;
+		foreach ( (array) $callbacks as $priority_group ) {
+			foreach ( (array) $priority_group as $registered ) {
+				$fn = ( is_array( $registered ) && isset( $registered['function'] ) ) ? $registered['function'] : $registered;
+				// instanceof against a possibly-undefined class is safe in PHP (returns false).
+				if ( is_array( $fn ) && isset( $fn[0] ) && is_object( $fn[0] ) && $fn[0] instanceof safe_svg ) {
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 }
