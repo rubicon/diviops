@@ -13,3 +13,8 @@ Thumbs.db
 # Local agent scratch
 .remember/
 .claude/settings.local.json
+
+# Node build artifacts (diviops-server)
+node_modules/
+dist/
+dist-test/
