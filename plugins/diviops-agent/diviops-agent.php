@@ -28,6 +28,7 @@ require_once __DIR__ . '/includes/trait-core.php';
 require_once __DIR__ . '/includes/trait-global-color.php';
 require_once __DIR__ . '/includes/trait-global-font.php';
 require_once __DIR__ . '/includes/trait-library.php';
+require_once __DIR__ . '/includes/trait-media.php';
 require_once __DIR__ . '/includes/trait-meta.php';
 require_once __DIR__ . '/includes/trait-module-schema.php';
 require_once __DIR__ . '/includes/trait-menu.php';
@@ -53,6 +54,7 @@ class DiviOps_Agent {
 	use DiviOps_Agent_GlobalColor;
 	use DiviOps_Agent_GlobalFont;
 	use DiviOps_Agent_Library;
+	use DiviOps_Agent_Media;
 	use DiviOps_Agent_Meta;
 	use DiviOps_Agent_Menu;
 	use DiviOps_Agent_ModuleSchema;

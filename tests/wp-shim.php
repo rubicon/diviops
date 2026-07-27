@@ -47,6 +47,24 @@ if ( ! function_exists( 'wp_strip_all_tags' ) ) {
 	}
 }
 
+if ( ! function_exists( 'wp_parse_url' ) ) {
+	/**
+	 * Thin passthrough over parse_url() for the test harness.
+	 *
+	 * WordPress's real wp_parse_url() additionally handles scheme-less URLs
+	 * (e.g. "//example.com/a.png") by faking a scheme before delegating to
+	 * parse_url() and stripping it back out. None of media_url_is_safe()'s
+	 * test cases are scheme-less, so a plain passthrough is sufficient here.
+	 *
+	 * @param string $url       URL to parse.
+	 * @param int    $component Optional PHP_URL_* component constant.
+	 * @return mixed
+	 */
+	function wp_parse_url( $url, $component = -1 ) {
+		return parse_url( $url, $component );
+	}
+}
+
 if ( ! class_exists( 'WP_Error' ) ) {
 	class WP_Error {
 
@@ -944,6 +962,31 @@ if ( ! function_exists( 'diviops_call_ref' ) ) {
 	 * @return mixed
 	 */
 	function diviops_call_ref( string $method, array &$args ) {
+		$reflection = new ReflectionMethod( 'DiviOps_Agent', $method );
+		if ( PHP_VERSION_ID < 80100 ) {
+			$reflection->setAccessible( true );
+		}
+		return $reflection->invokeArgs( null, $args );
+	}
+}
+
+if ( ! function_exists( 'diviops_call_static' ) ) {
+	/**
+	 * Call a private static method on DiviOps_Agent, with no request object.
+	 *
+	 * Mirrors diviops_call(), but for helpers that take plain positional args
+	 * instead of a REST request — e.g. media_ip_is_reserved(), media_url_is_safe().
+	 * Uses invokeArgs() rather than invoke(...$args) so an $args element built as
+	 * a reference (e.g. `array( $url, &$reason, $resolver )`) stays bound: PHP
+	 * preserves per-element reference status across an array copy, so invokeArgs()
+	 * with the plain (non-reference) $args parameter still passes the reference
+	 * through to the callee's by-reference parameter.
+	 *
+	 * @param string $method Method name.
+	 * @param array  $args   Positional arguments.
+	 * @return mixed
+	 */
+	function diviops_call_static( string $method, array $args = array() ) {
 		$reflection = new ReflectionMethod( 'DiviOps_Agent', $method );
 		if ( PHP_VERSION_ID < 80100 ) {
 			$reflection->setAccessible( true );
