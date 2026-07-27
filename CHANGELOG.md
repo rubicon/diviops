@@ -10,6 +10,14 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.7.0](https://github.com/rubicon/diviops/compare/v1.6.0...v1.7.0) (2026-07-27)
+
+
+### Features
+
+* **#50a:** include native modules in schema_get_module_dump_all ([#66](https://github.com/rubicon/diviops/issues/66)) ([1111f98](https://github.com/rubicon/diviops/commit/1111f98ee1213c53b863c5794ae91ac04d4b2500)), closes [#61](https://github.com/rubicon/diviops/issues/61)
+* native Divi 5 module schema introspection via on-disk module.json ([#57](https://github.com/rubicon/diviops/issues/57)) ([add17b5](https://github.com/rubicon/diviops/commit/add17b572073ed9af61d174aa17ef5f758018eb0))
+
 ## [1.6.0](https://github.com/rubicon/diviops/compare/v1.5.10...v1.6.0) (2026-07-27)
 
 
