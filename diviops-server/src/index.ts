@@ -3486,6 +3486,65 @@ registerPluginTool(
 );
 
 registerPluginTool(
+  "diviops_page_block_insert",
+  {
+    description:
+      "Insert one or more serialized Divi blocks (a new row, column, or module) at a specific position on a page/post, without rebuilding the surrounding section. This is the page counterpart to diviops_tb_layout_block_insert. Target a unique parent with `parent_selector` (for example `divi/section[adminLabel=\"Hero\"]`, or `divi/section` only when unique) or an explicit zero-based `parent_path` from the parsed block tree such as `0.1.2`. `position=append|prepend` inserts as children of the target block; `position=before|after` inserts beside the target within its parent. Ambiguous selectors return ok:false with code 'invalid_input'; missing targets return 'not_found'. Providing neither or both of parent_selector/parent_path returns 'invalid_input'. The route parses and validates the inserted blocks and the final serialized page before saving, refuses any write that would materialize a divi/global-layout wrapper into the page (returns a `page.global_layout_drift` error), and returns a no-op when the exact requested block sequence already exists at the insertion point." +
+      DRY_RUN_DESC_SUFFIX,
+    inputSchema: {
+      page_id: z.number().int().describe("Page/post ID to mutate"),
+      parent_selector: z
+        .string()
+        .optional()
+        .describe('Unique selector such as `divi/section[adminLabel="Hero"]` or `divi/row`. Provide exactly one of parent_selector or parent_path.'),
+      parent_path: z
+        .string()
+        .optional()
+        .describe('Zero-based parsed-tree path such as `0`, `0.1`, or `0.1.2`. Provide exactly one of parent_selector or parent_path.'),
+      position: z
+        .enum(["append", "prepend", "before", "after"])
+        .optional()
+        .default("append")
+        .describe("Where to insert relative to the target block."),
+      content: z.string().describe("One or more serialized Divi blocks to insert"),
+      dry_run: DRY_RUN_FIELD,
+      backup: BACKUP_FIELD,
+    },
+    annotations: { idempotentHint: false },
+    _meta: { idempotent: "conditional" },
+  },
+  async ({ page_id, parent_selector, parent_path, position, content, dry_run, backup }) => {
+    const backupGate = backupCapabilityError("diviops_page_block_insert", backup);
+    if (backupGate) return backupGate;
+    const isolationGate = writerIsolationErrorResult(
+      "diviops_page_block_insert",
+      { content },
+    );
+    if (isolationGate) return isolationGate;
+    const body: Record<string, unknown> = {
+      content,
+      position: position ?? "append",
+    };
+    if (parent_selector !== undefined) body.parent_selector = parent_selector;
+    if (parent_path !== undefined) body.parent_path = parent_path;
+    if (dry_run) body.dry_run = true;
+    if (backup) body.backup = true;
+    const result = await wp.requestEnveloped(
+      `/page/block-insert/${page_id}`,
+      {
+        method: "POST",
+        body,
+      },
+    );
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_page_block_insert") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
   "diviops_tb_template_create",
   {
     description:

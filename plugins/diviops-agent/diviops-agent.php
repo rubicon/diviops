@@ -107,7 +107,7 @@ class DiviOps_Agent {
 		'module_clone', 'module_get', 'module_lock', 'module_move', 'module_unlock', 'module_update',
 		'module_clone_backup', 'module_lock_backup', 'module_move_backup', 'module_unlock_backup', 'module_update_backup',
 		// page
-		'page_create', 'page_get', 'page_get_layout', 'page_list',
+		'page_block_insert', 'page_create', 'page_get', 'page_get_layout', 'page_list',
 		'page_trash', 'page_update_content', 'page_update_content_backup', 'page_update_meta', 'page_update_status',
 		// preset
 		'preset_audit', 'preset_audit_storage', 'preset_cleanup', 'preset_create', 'preset_delete', 'preset_inspect', 'preset_registry_doctor',
@@ -1577,6 +1577,21 @@ class DiviOps_Agent {
 				'content'   => [ 'required' => false, 'type' => 'string', 'default' => '' ],
 				'status'    => [ 'required' => false, 'type' => 'string', 'default' => 'draft' ],
 				'post_type' => [ 'required' => false, 'type' => 'string', 'default' => 'page' ],
+			],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/page/block-insert/(?P<id>\d+)', [
+			'methods'             => 'POST',
+			'callback'            => [ __CLASS__, 'page_block_insert' ],
+			'permission_callback' => [ __CLASS__, 'check_write_permission' ],
+			'args'                => [
+				'id'              => [ 'required' => true ],
+				'content'         => [ 'required' => true, 'type' => 'string' ],
+				'position'        => [ 'required' => false, 'type' => 'string', 'default' => 'append' ],
+				'parent_selector' => [ 'required' => false, 'type' => 'string', 'default' => '' ],
+				'parent_path'     => [ 'required' => false, 'type' => 'string', 'default' => '' ],
+				'dry_run'         => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
+				'backup'          => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
 			],
 		] );
 
