@@ -106,6 +106,19 @@ assert_true(
 	'drift is true when a wrapper is replaced by a different one — the opener count is unchanged but globalModule id 100 is gone'
 );
 
+// Mutation/behavior-coupling proof: a naive COUNT-only comparison (how many
+// wrapper openers appear on each side, not which ids they carry) would see
+// one wrapper before and one wrapper after and call that "no drift" — it is
+// blind to the id swap. Asserting both the naive count's verdict AND the real
+// verdict pins identity-awareness as load-bearing rather than incidental,
+// mirroring the decoy proof below for the JSON-aware scan.
+$naive_count_idswap_before = count( diviops_call( 'global_layout_wrapper_identities', array( $original_idswap ) ) );
+$naive_count_idswap_after  = count( diviops_call( 'global_layout_wrapper_identities', array( $serialized_idswap ) ) );
+assert_true(
+	$naive_count_idswap_before === $naive_count_idswap_after,
+	'sanity check on the fixture: a naive count-only comparison sees the same wrapper count on both sides and would wrongly report no drift'
+);
+
 // ── (f) FAIL CLOSED: an unterminated opener ahead of a removed wrapper is
 // refused rather than silently masked ────────────────────────────────────
 //
@@ -126,6 +139,22 @@ $serialized_malformed_wrapper_gone  = $malformed_prefix . $plain_section;
 assert_true(
 	diviops_call( 'global_layout_wrapper_drift', array( $original_malformed_with_wrapper, $serialized_malformed_wrapper_gone ) ),
 	'fail closed: an unterminated opener ahead of a removed wrapper is refused rather than silently masked'
+);
+
+// Mutation/behavior-coupling proof: a naive implementation that treats an
+// unreliable scan (null) as "no drift" instead of refusing would compare two
+// empty results — both scans give up at the same unterminated opener before
+// ever reaching the wrapper — and wrongly ALLOW this write. Asserting both
+// the naive verdict AND the real fail-closed verdict pins "null scan is
+// itself drift" as load-bearing rather than incidental.
+$naive_before_f     = diviops_call( 'global_layout_wrapper_identities', array( $original_malformed_with_wrapper ) );
+$naive_after_f      = diviops_call( 'global_layout_wrapper_identities', array( $serialized_malformed_wrapper_gone ) );
+$naive_allows_write = ( null === $naive_before_f || null === $naive_after_f )
+	? true // naive: an unreliable scan defaults to "no drift", the opposite of fail-closed
+	: array() === array_diff( $naive_before_f, $naive_after_f );
+assert_true(
+	$naive_allows_write,
+	'sanity check on the fixture: a naive "unscannable = no drift" comparison would have wrongly allowed this write'
 );
 
 // ── (g) FAIL CLOSED, documented tradeoff: malformed markup but nothing was
@@ -186,4 +215,78 @@ $naive_after  = substr_count( $serialized_h2, '<!-- wp:divi/global-layout' );
 assert_true(
 	$naive_before > $naive_after,
 	'sanity check on the fixture: a naive substr_count comparison would have seen a drop here and wrongly flagged drift'
+);
+
+// ── (i) global_layout_write_refusal_reason() distinguishes WHY a write is
+// refused: an actual identity loss vs an unreliable scan (#23). Both reasons
+// still refuse the write (fail-closed behavior is unchanged) — only the
+// diagnostic differs, so a caller can tell "your markup is malformed, I
+// couldn't verify this" apart from "this write would have detached a global
+// layout". global_layout_wrapper_drift() stays a thin bool wrapper around
+// this so trait-preset.php's direct caller is unaffected.
+
+assert_same(
+	null,
+	diviops_call( 'global_layout_write_refusal_reason', array( $plain_section, $plain_section ) ),
+	'refusal reason is null (write allowed) when neither side has a wrapper and both scan reliably'
+);
+
+assert_same(
+	'identity_lost',
+	diviops_call( 'global_layout_write_refusal_reason', array( $original_a, $serialized_a ) ),
+	'refusal reason is identity_lost when a wrapper id present in the original is missing from the serialized output'
+);
+
+assert_same(
+	'scan_unreliable',
+	diviops_call( 'global_layout_write_refusal_reason', array( $original_malformed_with_wrapper, $serialized_malformed_wrapper_gone ) ),
+	'refusal reason is scan_unreliable when the content cannot be scanned reliably, even though a wrapper is also present'
+);
+
+assert_same(
+	'scan_unreliable',
+	diviops_call( 'global_layout_write_refusal_reason', array( $malformed_prefix, $plain_section ) ),
+	'refusal reason is scan_unreliable, not identity_lost, on a page with NO wrapper at all whose markup cannot be scanned reliably — the false-attribution case #23 fixes'
+);
+
+// ── (j) update_post_content_with_integrity_guard() surfaces a distinct error
+// code and message per refusal reason (#23). Both fixtures pass the earlier
+// preflight balance check (assert_divi_full_content_safe_for_write() only
+// inspects the NEW content being written, never $previous_content), so each
+// call reaches the drift branch under test.
+
+$identity_lost_result = diviops_call(
+	'update_post_content_with_integrity_guard',
+	array( 123, $serialized_a, 'test_ns', 'test target', $original_a, true )
+);
+assert_true(
+	is_wp_error( $identity_lost_result ),
+	'update_post_content_with_integrity_guard refuses a write that actually lost a wrapper identity'
+);
+assert_same(
+	'test_ns.global_layout_drift',
+	$identity_lost_result->get_error_code(),
+	'identity_lost keeps the existing global_layout_drift error code'
+);
+assert_true(
+	false !== strpos( $identity_lost_result->get_error_message(), "materialize a divi/global-layout wrapper's resolved content" ),
+	'identity_lost keeps the existing wrapper-materialization message, which is accurate here'
+);
+
+$scan_unreliable_result = diviops_call(
+	'update_post_content_with_integrity_guard',
+	array( 456, $plain_section, 'test_ns', 'test target', $malformed_prefix, true )
+);
+assert_true(
+	is_wp_error( $scan_unreliable_result ),
+	'update_post_content_with_integrity_guard refuses a write when the original content cannot be scanned reliably'
+);
+assert_same(
+	'test_ns.global_layout_scan_unreliable',
+	$scan_unreliable_result->get_error_code(),
+	'scan_unreliable gets its own distinct error code, separate from an actual identity loss'
+);
+assert_true(
+	false === strpos( $scan_unreliable_result->get_error_message(), 'materialize' ),
+	'scan_unreliable message does not claim a wrapper would be materialized — nothing was necessarily lost, the scan just could not verify it'
 );

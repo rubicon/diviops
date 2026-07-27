@@ -309,8 +309,8 @@ trait DiviOps_Agent_Core {
 	}
 
 	/**
-	 * Detect whether a write round-trip materialized a `divi/global-layout`
-	 * wrapper's resolved content into the page, losing the wrapper itself (#11).
+	 * Determine WHY a write round-trip should be refused for the
+	 * `divi/global-layout` wrapper hazard (#11), or null if it should not be.
 	 *
 	 * This is the Layer 2 backstop for when Layer 1 (parse_blocks_for_write())
 	 * could not apply — i.e. Divi's save-context parser class is absent — and
@@ -328,20 +328,27 @@ trait DiviOps_Agent_Core {
 	 * they're still covered by the same multiset check.
 	 *
 	 * Fails CLOSED: an unreliable scan of either side (global_layout_wrapper_
-	 * identities() returning null) is treated as drift, refusing the write
-	 * rather than risking a masked loss (#11 adversarial review, F4).
+	 * identities() returning null) refuses the write too, rather than risking
+	 * a masked loss (#11 adversarial review, F4). That case is reported as its
+	 * own reason, distinct from an actual identity loss (#23): the scan can be
+	 * unreliable on a page that never had a wrapper at all, in which case
+	 * "would materialize a global layout" is simply false, and the caller
+	 * needs to know the write was refused because it could not be verified,
+	 * not because something was detected being lost.
 	 *
 	 * @param string $original   Content before the write round-trip.
 	 * @param string $serialized Content about to be persisted.
-	 * @return bool True when a wrapper id present in $original is missing from
-	 *              $serialized, or either side could not be scanned reliably.
+	 * @return string|null 'scan_unreliable' when either side could not be
+	 *                      scanned reliably, 'identity_lost' when a wrapper id
+	 *                      present in $original is missing from $serialized,
+	 *                      or null when the write is safe to proceed.
 	 */
-	private static function global_layout_wrapper_drift( string $original, string $serialized ): bool {
+	private static function global_layout_write_refusal_reason( string $original, string $serialized ): ?string {
 		$before = self::global_layout_wrapper_identities( $original );
 		$after  = self::global_layout_wrapper_identities( $serialized );
 
 		if ( null === $before || null === $after ) {
-			return true;
+			return 'scan_unreliable';
 		}
 
 		$before_counts = array_count_values( $before );
@@ -349,11 +356,27 @@ trait DiviOps_Agent_Core {
 
 		foreach ( $before_counts as $id => $count ) {
 			if ( ( $after_counts[ $id ] ?? 0 ) < $count ) {
-				return true;
+				return 'identity_lost';
 			}
 		}
 
-		return false;
+		return null;
+	}
+
+	/**
+	 * Detect whether a write round-trip should be refused for the
+	 * `divi/global-layout` wrapper hazard (#11).
+	 *
+	 * Thin bool wrapper around global_layout_write_refusal_reason() for
+	 * callers that only need the fail/pass verdict, not which of the two
+	 * reasons applies (currently preset_reassign()'s own batch-write guard).
+	 *
+	 * @param string $original   Content before the write round-trip.
+	 * @param string $serialized Content about to be persisted.
+	 * @return bool True when the write should be refused, for either reason.
+	 */
+	private static function global_layout_wrapper_drift( string $original, string $serialized ): bool {
+		return null !== self::global_layout_write_refusal_reason( $original, $serialized );
 	}
 
 	/**
@@ -528,15 +551,35 @@ trait DiviOps_Agent_Core {
 			return $preflight;
 		}
 
-		if ( $check_global_layout_drift && self::global_layout_wrapper_drift( $previous_content, $content ) ) {
-			return new WP_Error(
-				$error_namespace . '.global_layout_drift',
-				"Refused {$target_label} write because it would materialize a divi/global-layout wrapper's resolved content into this page, permanently detaching it from the referenced global layout.",
-				[
-					'status' => 409,
-					'hint'   => 'This happens when Divi\'s write-time parser guard for the global-layout wrapper fails open outside a genuine REST request (for example wp eval / wp-cli). Retry this operation through the REST API or the MCP server, where Divi preserves the wrapper, or edit the referenced global layout directly instead of this page.',
-				]
-			);
+		if ( $check_global_layout_drift ) {
+			$refusal_reason = self::global_layout_write_refusal_reason( $previous_content, $content );
+
+			if ( 'identity_lost' === $refusal_reason ) {
+				return new WP_Error(
+					$error_namespace . '.global_layout_drift',
+					"Refused {$target_label} write because it would materialize a divi/global-layout wrapper's resolved content into this page, permanently detaching it from the referenced global layout.",
+					[
+						'status' => 409,
+						'hint'   => 'This happens when Divi\'s write-time parser guard for the global-layout wrapper fails open outside a genuine REST request (for example wp eval / wp-cli). Retry this operation through the REST API or the MCP server, where Divi preserves the wrapper, or edit the referenced global layout directly instead of this page.',
+					]
+				);
+			}
+
+			// A malformed/unterminated block comment anywhere in the document
+			// makes the scan itself untrustworthy (#11 fail-closed backstop),
+			// which can happen on a page with no divi/global-layout wrapper at
+			// all — the wrapper-materialization message above would be false
+			// in that case, since nothing was being materialized (#23).
+			if ( 'scan_unreliable' === $refusal_reason ) {
+				return new WP_Error(
+					$error_namespace . '.global_layout_scan_unreliable',
+					"Refused {$target_label} write because the stored block markup could not be scanned reliably (a malformed or unterminated block comment), so this guard could not verify the write would not detach a global layout.",
+					[
+						'status' => 409,
+						'hint'   => 'Fix the malformed block markup (for example via the page content tools) and retry. This does not mean a global layout was actually detached, only that the guard could not verify the write was safe.',
+					]
+				);
+			}
 		}
 
 		$result = wp_update_post( [
