@@ -4609,6 +4609,76 @@ registerPluginTool(
 );
 
 registerPluginTool(
+  "diviops_variable_update",
+  {
+    description:
+      "Update an existing design token variable in place by id. Strict update — id must reference an existing variable; unknown id returns code 'not_found' (HTTP 404) rather than silently creating one. Auto-detects storage bucket from the id prefix, same as diviops_variable_delete (gcid-* = colors, gvid-* = numbers/strings/images/links/fonts/gradients). Partial: only supplied fields (label, value, status) are written; everything else, including order, is preserved. The id itself, and the variable's type/bucket, are never changed by this tool, which is exactly what makes it safe: a page's $variable({...})$ token embeds the id, not the value, so existing references keep resolving after the value they point at changes, unlike diviops_variable_delete + diviops_variable_create which mints a new id unless you explicitly re-supply the old one. `value` validation mirrors diviops_variable_create's per-type rules: hex color for colors, the structured `gradient` object (or a full $variable(gradient) token) for type=gradients, plain text/URL otherwise. Does NOT regenerate a fluid clamp() from min/max/targets — pass the replacement value directly (a hand-built clamp() string is a valid value), or use diviops_variable_create_fluid_system with overwrite=true for bulk fluid regeneration. Customizer-bound color defaults (gcid-primary-color, gcid-secondary-color, gcid-heading-color, gcid-body-color, gcid-link-color) reject with code 'variable.customizer_default_immutable' (HTTP 403), same as delete. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; input-shape rejections (missing id, invalid status enum, non-hex color, malformed gradient) return code 'invalid_input' with `error.data` documenting the failed field." +
+      DRY_RUN_DESC_SUFFIX,
+    inputSchema: {
+      id: z
+        .string()
+        .describe(
+          'Variable ID to update (e.g. "gcid-oa-accent" or "gvid-oa-size-xl"). Get from diviops_variable_list.',
+        ),
+      label: z
+        .string()
+        .optional()
+        .describe("New human-readable label. Omit to keep existing; pass empty string to clear."),
+      value: z
+        .string()
+        .optional()
+        .describe(
+          'New variable value: hex color for colors (e.g. "#3a7a6a"), CSS value for numbers (e.g. "clamp(30px, 8vw, 100px)" or "2rem"), arbitrary text/URL for strings/links/images. For type=gradients do NOT pass a CSS gradient string here — it stores an unrenderable variable; use the `gradient` object instead (or pass a full $variable({"type":"gradient",…})$ token verbatim). Omit to keep the existing value.',
+        ),
+      gradient: z
+        .object({
+          stops: z
+            .array(z.object({ position: z.union([z.string(), z.number()]), color: z.string() }))
+            .min(2)
+            .describe('Gradient color stops, min 2. position = unitless number 0–100 (string or number; PHP normalizes to string); color = hex or a $variable(gcid-…)$ token.'),
+          type: z
+            .enum(["linear", "circular", "elliptical", "conic"])
+            .optional()
+            .describe('Gradient type (default linear). circular/elliptical render as radial-gradient(circle|ellipse …); conic as conic-gradient. NOTE: the enum is circular/elliptical, NOT "radial".'),
+          direction: z.string().optional().describe('CSS angle for linear/conic (default "180deg"), e.g. "90deg".'),
+          directionRadial: z.string().optional().describe('Position keyword for circular/elliptical/conic (default "center"), e.g. "top left".'),
+          length: z.string().optional().describe('Gradient length (default "100%").'),
+          repeat: z.enum(["on", "off"]).optional().describe('Repeat the gradient (default "off").'),
+          overlaysImage: z.enum(["on", "off"]).optional().describe('Place gradient above a background image (default "off").'),
+        })
+        .optional()
+        .describe(
+          'Structured gradient settings, only meaningful when the target variable is type=gradients. Same shape as diviops_variable_create — the server serializes the canonical $variable({"type":"gradient",…})$ token that Divi resolves to a defined --gvid-* custom property.',
+        ),
+      status: z
+        .enum(["active", "inactive", "archived", "temporary"])
+        .optional()
+        .describe('New status. Omit to keep existing.'),
+      dry_run: DRY_RUN_FIELD,
+    },
+    annotations: { idempotentHint: false },
+    _meta: { idempotent: "conditional" },
+  },
+  async ({ id, label, value, gradient, status, dry_run }) => {
+    const body: Record<string, unknown> = { id };
+    if (label !== undefined) body.label = label;
+    if (value !== undefined) body.value = value;
+    if (gradient !== undefined) body.gradient = gradient;
+    if (status !== undefined) body.status = status;
+    if (dry_run) body.dry_run = true;
+    const result = await wp.requestEnveloped("/variable/update", {
+      method: "POST",
+      body,
+    });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_variable_update") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
   "diviops_variable_create_fluid_system",
   {
     description:
