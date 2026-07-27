@@ -65,18 +65,8 @@ trait DiviOps_Agent_ModuleSchema {
 		}
 
 		// Native Divi 5 modules are largely absent from the block registry; add
-		// them from their on-disk module.json definitions, skipping any already
-		// listed (a native module that also happens to be registered).
-		$seen = [];
-		foreach ( $modules as $listed ) {
-			$seen[ $listed['name'] ] = true;
-		}
-		foreach ( self::native_module_list() as $native ) {
-			if ( empty( $seen[ $native['name'] ] ) ) {
-				$modules[]                 = $native;
-				$seen[ $native['name'] ]   = true;
-			}
-		}
+		// them from their on-disk module.json definitions, de-duplicating by name.
+		$modules = self::merge_module_lists( $modules, self::native_module_list() );
 
 		return self::envelope_success( $modules );
 	}
@@ -261,7 +251,10 @@ trait DiviOps_Agent_ModuleSchema {
 			return null;
 		}
 		$slug = substr( $name, strlen( 'divi/' ) );
-		if ( ! preg_match( '/^[a-z0-9]+(?:-[a-z0-9]+)*$/', $slug ) ) {
+		// The `D` modifier is load-bearing: without it PCRE's `$` also matches
+		// just before a single trailing newline, so a slug ending in "\n" would
+		// pass the guard. `D` anchors `$` to the true end of the string.
+		if ( ! preg_match( '/^[a-z0-9]+(?:-[a-z0-9]+)*$/D', $slug ) ) {
 			return null;
 		}
 		return $slug;
@@ -355,6 +348,9 @@ trait DiviOps_Agent_ModuleSchema {
 		}
 		$out = [];
 		foreach ( (array) glob( $dir . '/*/module.json' ) as $path ) {
+			if ( ! is_readable( $path ) ) {
+				continue;
+			}
 			$data = json_decode( (string) file_get_contents( $path ), true );
 			if ( ! is_array( $data ) || empty( $data['name'] ) ) {
 				continue;
@@ -369,6 +365,34 @@ trait DiviOps_Agent_ModuleSchema {
 			];
 		}
 		return $out;
+	}
+
+	/**
+	 * Merge a native-module list into a registered-module list, de-duplicating
+	 * by `name`: a native module already present as a registered block is not
+	 * added twice, and no registered entry is dropped. Pure (no I/O) so the
+	 * merge/dedup contract is unit-testable without a live Divi install.
+	 *
+	 * @param array $registered Registered-module entries (each with a `name`).
+	 * @param array $native      Native module.json entries (each with a `name`).
+	 * @return array
+	 */
+	private static function merge_module_lists( array $registered, array $native ): array {
+		$seen = [];
+		foreach ( $registered as $entry ) {
+			if ( isset( $entry['name'] ) ) {
+				$seen[ $entry['name'] ] = true;
+			}
+		}
+		$merged = $registered;
+		foreach ( $native as $entry ) {
+			$name = $entry['name'] ?? '';
+			if ( '' !== $name && empty( $seen[ $name ] ) ) {
+				$merged[]       = $entry;
+				$seen[ $name ]  = true;
+			}
+		}
+		return $merged;
 	}
 
 	/**

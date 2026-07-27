@@ -76,6 +76,62 @@ assert_true(
 assert_true(
 	method_exists( 'DiviOps_Agent', 'native_module_schema_from_dir' )
 		&& method_exists( 'DiviOps_Agent', 'native_module_slug_from_name' )
-		&& method_exists( 'DiviOps_Agent', 'parse_native_module_json' ),
+		&& method_exists( 'DiviOps_Agent', 'parse_native_module_json' )
+		&& method_exists( 'DiviOps_Agent', 'merge_module_lists' ),
 	'the native-schema helpers are mixed into DiviOps_Agent'
 );
+
+// ── trailing-newline slug (the `D`-modifier guard) ────────────────────────
+// PCRE's `$` without the D modifier matches before a single trailing newline,
+// which would let a slug ending in "\n" through. Assert it is rejected.
+assert_same( null, diviops_call( 'native_module_slug_from_name', array( "divi/text\n" ) ), 'a slug with a trailing newline is rejected (the D-modifier anchor)' );
+
+// ── realpath containment: a symlink out of the components dir is blocked ───
+// The slug regex alone rejects every traversal-shaped NAME, so it never
+// exercises the second guard. A symlinked directory has a valid slug but
+// resolves outside the components dir — only the realpath-containment check
+// catches it. This test therefore fails if that check is removed.
+$tmp_base = sys_get_temp_dir() . '/diviops_ns_' . getmypid() . '_' . mt_rand();
+$outside  = $tmp_base . '/outside/decoy';
+$comps    = $tmp_base . '/components';
+@mkdir( $outside, 0777, true );
+@mkdir( $comps, 0777, true );
+file_put_contents(
+	$outside . '/module.json',
+	(string) json_encode( array( 'name' => 'divi/escape', 'title' => 'Escape', 'category' => 'module', 'attributes' => array( 'module' => array() ) ) )
+);
+$linked = @symlink( $outside, $comps . '/escape' );
+if ( $linked ) {
+	assert_same(
+		null,
+		diviops_call( 'native_module_schema_from_dir', array( 'divi/escape', $comps ) ),
+		'a valid slug resolving through a symlink outside the components dir is blocked by the realpath containment check'
+	);
+} else {
+	assert_true( true, 'symlink() unsupported here; realpath containment is inspected-only on this platform' );
+}
+@unlink( $comps . '/escape' );
+@unlink( $outside . '/module.json' );
+@rmdir( $outside );
+@rmdir( $tmp_base . '/outside' );
+@rmdir( $comps );
+@rmdir( $tmp_base );
+
+// ── merge_module_lists: dedup by name, keep registered, drop nothing ──────
+$registered = array(
+	array( 'name' => 'difl/faq', 'title' => 'FAQ' ),
+	array( 'name' => 'divi/text', 'title' => 'Text (registered)' ),
+);
+$native = array(
+	array( 'name' => 'divi/text', 'title' => 'Text (native)' ),
+	array( 'name' => 'divi/blurb', 'title' => 'Blurb' ),
+);
+$merged = diviops_call( 'merge_module_lists', array( $registered, $native ) );
+$names  = array_map( static function ( $m ) { return $m['name']; }, $merged );
+assert_same( 3, count( $merged ), 'merge keeps all registered plus only the new native entries (divi/text is deduped)' );
+assert_true( in_array( 'difl/faq', $names, true ) && in_array( 'divi/blurb', $names, true ), 'a registered-only and a native-only module both survive' );
+$text = null;
+foreach ( $merged as $m ) {
+	if ( 'divi/text' === $m['name'] ) { $text = $m; break; }
+}
+assert_same( 'Text (registered)', $text['title'], 'a native module already registered keeps the registered entry (not the native duplicate)' );
