@@ -1,0 +1,15 @@
+{
+  "_comment": "Synthetic fixture modeling Divi 5's module.json shape (NOT copied from Divi).",
+  "name": "divi/text",
+  "d4Shortcode": "et_pb_text",
+  "moduleClassName": "et_pb_text",
+  "title": "Text",
+  "category": "module",
+  "childrenName": [],
+  "customCssFields": { "before": {} },
+  "attributes": {
+    "module": { "type": "object" },
+    "content": { "type": "object" }
+  },
+  "settings": { "content": {}, "advanced": {}, "groups": {} }
+}
