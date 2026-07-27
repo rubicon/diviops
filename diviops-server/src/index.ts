@@ -2221,7 +2221,7 @@ registerPluginTool(
   "diviops_page_create",
   {
     description:
-      "Create a new WordPress page, optionally with Divi block content. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; non-string content or invalid status return code 'invalid_input' with `error.data` documenting the failed field." +
+      "Create a new WordPress page — or, via post_type, a post or custom post type — optionally with Divi block content. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; non-string content, invalid status, or an unregistered post_type return code 'invalid_input' with `error.data` documenting the failed field. Unlike listing, creation does NOT silently fall back to 'page' on an unknown post_type — it rejects it." +
       DRY_RUN_DESC_SUFFIX,
     inputSchema: {
       title: z.string().describe("Page title"),
@@ -2235,17 +2235,29 @@ registerPluginTool(
         .optional()
         .default("draft")
         .describe("Post status"),
+      post_type: z
+        .string()
+        .optional()
+        .default("page")
+        .describe(
+          "Post type to create (default 'page'). Any registered type — e.g. 'post' or a custom post type. An unregistered type returns invalid_input rather than silently creating a page.",
+        ),
       dry_run: DRY_RUN_FIELD,
     },
     annotations: { idempotentHint: false },
     _meta: { idempotent: "false" },
   },
-  async ({ title, content, status, dry_run }) => {
+  async ({ title, content, status, post_type, dry_run }) => {
     const isolationGate = writerIsolationErrorResult("diviops_page_create", {
       content: content ?? "",
     });
     if (isolationGate) return isolationGate;
-    const body: Record<string, unknown> = { title, content: content ?? "", status: status ?? "draft" };
+    const body: Record<string, unknown> = {
+      title,
+      content: content ?? "",
+      status: status ?? "draft",
+      post_type: post_type ?? "page",
+    };
     if (dry_run) body.dry_run = true;
     const result = await wp.requestEnveloped("/page/create", {
       method: "POST",

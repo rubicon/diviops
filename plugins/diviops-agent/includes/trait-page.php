@@ -605,6 +605,14 @@ trait DiviOps_Agent_Page {
 		$content = $request->get_param( 'content' ) ?? '';
 		$status  = sanitize_key( (string) ( $request->get_param( 'status' ) ?? 'draft' ) );
 		$dry_run = (bool) $request->get_param( 'dry_run' );
+
+		// Optional post_type (default 'page'). Unlike page_list, which silently
+		// falls back to 'page' on an unknown type — harmless for a read — creation
+		// rejects an unknown type: silently retargeting a write to the wrong post
+		// type would create the wrong thing with no signal to the caller.
+		$post_type_param = $request->get_param( 'post_type' );
+		$post_type       = ( null === $post_type_param ) ? 'page' : sanitize_key( (string) $post_type_param );
+
 		if ( ! is_string( $content ) ) {
 			return self::envelope_error(
 				'invalid_input',
@@ -628,17 +636,27 @@ trait DiviOps_Agent_Page {
 				]
 			);
 		}
+		if ( ! post_type_exists( $post_type ) ) {
+			return self::envelope_error(
+				'invalid_input',
+				"post_type '{$post_type}' is not a registered post type.",
+				'Pass a registered post type (e.g. page, post) or omit for page. Creation does not silently fall back the way listing does.',
+				400,
+				[ 'field' => 'post_type', 'received' => $post_type ]
+			);
+		}
 
 		if ( $dry_run ) {
 			return self::dry_run_response(
-				"Would create page (post_type=page, status={$status}, title='{$title}', " . strlen( $content ) . " bytes content).",
+				"Would create {$post_type} (post_type={$post_type}, status={$status}, title='{$title}', " . strlen( $content ) . " bytes content).",
 				[ [
 					'kind'   => 'page.create',
-					'target' => 'page',
+					'target' => $post_type,
 					'after'  => [
-						'title'   => $title,
-						'status'  => $status,
-						'bytes'   => strlen( $content ),
+						'title'     => $title,
+						'status'    => $status,
+						'post_type' => $post_type,
+						'bytes'     => strlen( $content ),
 					],
 				] ]
 			);
@@ -648,15 +666,15 @@ trait DiviOps_Agent_Page {
 			'post_title'   => $title,
 			'post_content' => wp_slash( $content ),
 			'post_status'  => $status,
-			'post_type'    => 'page',
+			'post_type'    => $post_type,
 		], true );
 
 		if ( is_wp_error( $post_id ) ) {
 			return self::envelope_from_wp_error( $post_id );
 		}
 
-		// New MCP-created pages should behave like Divi-created pages by default.
-		self::initialize_divi_page_meta( $post_id );
+		// New MCP-created posts should behave like Divi-created ones by default.
+		self::initialize_divi_page_meta( $post_id, $post_type );
 
 		return self::envelope_success( [
 			'success' => true,
@@ -3049,11 +3067,13 @@ trait DiviOps_Agent_Page {
 	 *
 	 * This mirrors Divi's own onboarding and page creation helpers.
 	 */
-	private static function initialize_divi_page_meta( $post_id ) {
+	private static function initialize_divi_page_meta( $post_id, $post_type = 'page' ) {
 		update_post_meta( $post_id, '_et_pb_use_builder', 'on' );
 		update_post_meta( $post_id, '_et_pb_use_divi_5', 'on' );
 		update_post_meta( $post_id, '_et_pb_page_layout', 'et_full_width_page' );
-		update_post_meta( $post_id, '_et_pb_built_for_post_type', 'page' );
+		// Divi keys the builder to the post type the layout was built for; this is
+		// the post_type the caller actually created, not a hardcoded 'page'.
+		update_post_meta( $post_id, '_et_pb_built_for_post_type', $post_type );
 		// Uses default page.php template (with header/footer).
 		// et_full_width_page layout removes the sidebar.
 		// For blank (no header/footer), set template to 'page-template-blank.php' via page_set_meta.
