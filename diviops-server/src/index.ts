@@ -903,7 +903,7 @@ registerPluginTool(
   "diviops_menu_item_add_page",
   {
     description:
-      "Append a readable published page to an existing WordPress nav menu. Free/core single-site menu authoring primitive. Requires edit_theme_options plus read access to the page. Validates menu, page status/visibility, and optional parent menu item. Existing same page under the same parent returns noop:true; a different existing label returns conflict because item-update/reorder are deferred. No delete, reorder, or broad reconcile path. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }." +
+      "Append a readable published page to an existing WordPress nav menu. Free/core single-site menu authoring primitive. Requires edit_theme_options plus read access to the page. Validates menu, page status/visibility, and optional parent menu item. Existing same page under the same parent returns noop:true; a different existing label returns conflict because item-update is deferred. Remove items with diviops_menu_item_remove and reorder them with diviops_menu_item_reorder. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }." +
       DRY_RUN_DESC_SUFFIX,
     inputSchema: {
       menu_id: z.number().int().positive().describe("WordPress nav menu term ID"),
@@ -939,7 +939,7 @@ registerPluginTool(
   "diviops_menu_item_add_custom",
   {
     description:
-      "Append a custom URL item to an existing WordPress nav menu. Free/core single-site menu authoring primitive. Requires edit_theme_options. URL validation allows only http, https, root-relative paths, same-page hashes, mailto, and tel; protocol-relative/javascript/data URLs are rejected. Existing same URL under the same parent with the same label returns noop:true. No delete, reorder, or broad reconcile path. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }." +
+      "Append a custom URL item to an existing WordPress nav menu. Free/core single-site menu authoring primitive. Requires edit_theme_options. URL validation allows only http, https, root-relative paths, same-page hashes, mailto, and tel; protocol-relative/javascript/data URLs are rejected. Existing same URL under the same parent with the same label returns noop:true. Remove items with diviops_menu_item_remove and reorder them with diviops_menu_item_reorder. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }." +
       DRY_RUN_DESC_SUFFIX,
     inputSchema: {
       menu_id: z.number().int().positive().describe("WordPress nav menu term ID"),
@@ -975,7 +975,7 @@ registerPluginTool(
   "diviops_menu_location_assign",
   {
     description:
-      "Assign an existing WordPress nav menu to a registered theme location discovered from the current theme. Free/core single-site menu authoring primitive. Requires edit_theme_options. Rejects arbitrary location strings; call diviops_menu_list first and use data.registered_locations keys. Reassigning the same menu/location returns noop:true. No location removal path in this MVP. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }." +
+      "Assign an existing WordPress nav menu to a registered theme location discovered from the current theme. Free/core single-site menu authoring primitive. Requires edit_theme_options. Rejects arbitrary location strings; call diviops_menu_list first and use data.registered_locations keys. Reassigning the same menu/location returns noop:true. Clear a location with diviops_menu_location_unassign. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }." +
       DRY_RUN_DESC_SUFFIX,
     inputSchema: {
       menu_id: z.number().int().positive().describe("WordPress nav menu term ID"),
@@ -995,6 +995,137 @@ registerPluginTool(
     return {
       content: [
         { type: "text" as const, text: serializeEnvelope(result, "diviops_menu_location_assign") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
+  "diviops_menu_delete",
+  {
+    description:
+      "Permanently delete a WordPress nav menu and its items. Free/core single-site menu authoring primitive. Requires edit_theme_options. Nav menus have no trash, so this is irreversible — there is no force flag and no undo. Any theme locations pointing at the menu are freed and reported in data.freed_locations. Missing menu_id returns not_found. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; success payload is { id, name, deleted:true, freed_locations[] }." +
+      DRY_RUN_DESC_SUFFIX,
+    inputSchema: {
+      menu_id: z.number().int().positive().describe("WordPress nav menu term ID"),
+      dry_run: DRY_RUN_FIELD,
+    },
+    annotations: { idempotentHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ menu_id, dry_run }) => {
+    const body: Record<string, unknown> = {};
+    if (dry_run) body.dry_run = true;
+    const result = await wp.requestEnveloped(`/menu/delete/${menu_id}`, {
+      method: "POST",
+      body,
+    });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_menu_delete") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
+  "diviops_menu_item_remove",
+  {
+    description:
+      "Remove one item from a WordPress nav menu. Free/core single-site menu authoring primitive. Requires edit_theme_options. By default (cascade=false) only the target item is removed and its direct children are re-parented to the target's own parent, so the surviving tree stays connected; pass cascade=true to also remove every descendant beneath the target. The item must exist AND belong to menu_id, else not_found (field item_id). Success payload is the menu readback { menu, items, tree } plus removed_item_ids[] and reparented_child_ids[] (empty under cascade or when the item had no children). Returns the standardized envelope { ok, data?, error: { code, message, hint? } }." +
+      DRY_RUN_DESC_SUFFIX,
+    inputSchema: {
+      menu_id: z.number().int().positive().describe("WordPress nav menu term ID"),
+      item_id: z.number().int().positive().describe("Menu item ID from diviops_menu_get to remove"),
+      cascade: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "When true, remove the item and all its descendants. Default false removes only the item and re-parents its direct children to the item's own parent.",
+        ),
+      dry_run: DRY_RUN_FIELD,
+    },
+    annotations: { idempotentHint: false },
+  },
+  async ({ menu_id, item_id, cascade, dry_run }) => {
+    const body: Record<string, unknown> = { menu_id, item_id };
+    if (cascade) body.cascade = true;
+    if (dry_run) body.dry_run = true;
+    const result = await wp.requestEnveloped("/menu/item/remove", {
+      method: "POST",
+      body,
+    });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_menu_item_remove") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
+  "diviops_menu_item_reorder",
+  {
+    description:
+      "Reorder the items at one level of a WordPress nav menu (all items sharing a parent). Free/core single-site menu authoring primitive. Requires edit_theme_options. `order` must be exactly the set of item IDs whose parent equals `parent` — a complete permutation of that level, with no extras, omissions, or duplicates — else invalid_input (error.data.expected lists the level's ids). The items are renumbered menu_order 1..N in the given sequence; nesting is unchanged. Use parent=0 for the top level. Success payload is the menu readback { menu, items, tree }. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }." +
+      DRY_RUN_DESC_SUFFIX,
+    inputSchema: {
+      menu_id: z.number().int().positive().describe("WordPress nav menu term ID"),
+      order: z
+        .array(z.number().int().positive())
+        .min(1)
+        .describe("Full set of item IDs at this level, in the desired order"),
+      parent: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .default(0)
+        .describe("Parent menu item ID whose children are being reordered; 0 for the top level."),
+      dry_run: DRY_RUN_FIELD,
+    },
+    annotations: { idempotentHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ menu_id, order, parent, dry_run }) => {
+    const body: Record<string, unknown> = { menu_id, order, parent: parent ?? 0 };
+    if (dry_run) body.dry_run = true;
+    const result = await wp.requestEnveloped("/menu/item/reorder", {
+      method: "POST",
+      body,
+    });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_menu_item_reorder") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
+  "diviops_menu_location_unassign",
+  {
+    description:
+      "Clear a registered theme location's WordPress nav menu assignment (the mirror of diviops_menu_location_assign). Free/core single-site menu authoring primitive. Requires edit_theme_options. Rejects arbitrary location strings; call diviops_menu_list first and use data.registered_locations keys. Unassigning a location that is not currently assigned returns ok:true with noop:true and reason 'location_not_assigned'. Success payload is { location, assigned } where assigned is the updated location→menu map. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }." +
+      DRY_RUN_DESC_SUFFIX,
+    inputSchema: {
+      location: z.string().min(1).describe("Registered theme location key from diviops_menu_list"),
+      dry_run: DRY_RUN_FIELD,
+    },
+    annotations: { idempotentHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ location, dry_run }) => {
+    const body: Record<string, unknown> = { location };
+    if (dry_run) body.dry_run = true;
+    const result = await wp.requestEnveloped("/menu/location/unassign", {
+      method: "POST",
+      body,
+    });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_menu_location_unassign") },
       ],
     };
   },

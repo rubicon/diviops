@@ -366,8 +366,20 @@ if ( ! function_exists( 'wp_delete_post' ) ) {
 	 * $force_delete argument is accepted for signature parity; this store has no
 	 * trash-vs-permanent distinction to honor, so a hard removal models both the
 	 * force path and (for callers that pass false) the trash-bypass fallback.
+	 *
+	 * Nav-menu items are posts of type nav_menu_item in real WordPress, so
+	 * wp_delete_post is exactly how menu_item_remove destroys them. This store
+	 * keeps nav items in their own registry (see diviops_test_register_nav_menu_item),
+	 * so this checks that registry first and removes from it, then falls back to
+	 * the ordinary post registry — the same primitive, routed to whichever store
+	 * actually holds the id.
 	 */
 	function wp_delete_post( $post_id, $force_delete = false ) {
+		if ( isset( $GLOBALS['diviops_test_nav_menu_items'][ $post_id ] ) ) {
+			$item = $GLOBALS['diviops_test_nav_menu_items'][ $post_id ];
+			unset( $GLOBALS['diviops_test_nav_menu_items'][ $post_id ] );
+			return $item;
+		}
 		if ( ! isset( $GLOBALS['diviops_test_posts'][ $post_id ] ) ) {
 			return false;
 		}
@@ -519,6 +531,260 @@ if ( ! class_exists( 'DiviOps_Test_Request' ) ) {
 		public function offsetUnset( $offset ): void {
 			unset( $this->params[ $offset ] );
 		}
+	}
+}
+
+// ── Nav-menu registry + primitives ────────────────────────────────────────
+//
+// WordPress models a nav menu as a `nav_menu` taxonomy term, its items as posts
+// of type `nav_menu_item` linked to that term, and the item hierarchy/type/target
+// in per-item post meta (menu_order is a post column, the parent lives in the
+// `_menu_item_menu_item_parent` meta key). wp_get_nav_menu_items() re-reads that
+// meta on every call via wp_setup_nav_menu_item(). These shims model that contract:
+// the parent is stored in the shared post-meta registry (so update_post_meta on a
+// child's parent key actually re-parents it), menu_order lives on the item record
+// (so wp_update_post reorders it), and wp_get_nav_menu_items() hydrates a fresh
+// view sorted by menu_order — exactly the surface the menu handlers depend on.
+
+if ( ! isset( $GLOBALS['diviops_test_nav_menus'] ) ) {
+	$GLOBALS['diviops_test_nav_menus'] = array();
+}
+if ( ! isset( $GLOBALS['diviops_test_nav_menu_items'] ) ) {
+	$GLOBALS['diviops_test_nav_menu_items'] = array();
+}
+if ( ! isset( $GLOBALS['diviops_test_theme_mods'] ) ) {
+	$GLOBALS['diviops_test_theme_mods'] = array();
+}
+if ( ! isset( $GLOBALS['diviops_test_registered_nav_menus'] ) ) {
+	$GLOBALS['diviops_test_registered_nav_menus'] = array();
+}
+
+if ( ! function_exists( 'sanitize_title' ) ) {
+	/**
+	 * Minimal sanitize_title(): lowercase, collapse runs of non-alnum to a single
+	 * hyphen, trim leading/trailing hyphens. Enough for deriving a menu slug from
+	 * its name in the nav-menu registration helper.
+	 */
+	function sanitize_title( $title ) {
+		$title = strtolower( trim( (string) $title ) );
+		$title = preg_replace( '/[^a-z0-9]+/', '-', $title );
+		return trim( (string) $title, '-' );
+	}
+}
+
+if ( ! function_exists( 'get_post_meta' ) ) {
+	/**
+	 * Model WP core's get_post_meta() against the harness meta registry that
+	 * update_post_meta() writes to. Honors the $single flag: a single read returns
+	 * the scalar (or '' when unset), a non-single read returns a list. This is what
+	 * lets wp_get_nav_menu_items() read each item's `_menu_item_menu_item_parent`.
+	 */
+	function get_post_meta( $post_id, $key = '', $single = false ) {
+		$meta = $GLOBALS['diviops_test_post_meta'][ $post_id ] ?? array();
+		if ( '' === $key ) {
+			return $meta;
+		}
+		if ( ! array_key_exists( $key, $meta ) ) {
+			return $single ? '' : array();
+		}
+		return $single ? $meta[ $key ] : array( $meta[ $key ] );
+	}
+}
+
+if ( ! function_exists( 'wp_get_nav_menu_object' ) ) {
+	/**
+	 * Model WP core's wp_get_nav_menu_object(): resolve a menu by id (or accept an
+	 * object as-is) to its term object, false when unknown.
+	 */
+	function wp_get_nav_menu_object( $menu ) {
+		if ( is_object( $menu ) ) {
+			return $menu;
+		}
+		$menu_id = (int) $menu;
+		return $GLOBALS['diviops_test_nav_menus'][ $menu_id ] ?? false;
+	}
+}
+
+if ( ! function_exists( 'wp_get_nav_menu_items' ) ) {
+	/**
+	 * Model WP core's wp_get_nav_menu_items(): return the items belonging to a menu
+	 * ordered by menu_order, each with menu_item_parent hydrated from post meta
+	 * (mirroring wp_setup_nav_menu_item), or false when the menu term is unknown.
+	 * The item objects are fresh clones so mutating a returned row cannot corrupt
+	 * the registry, exactly as core hands back per-call hydrated objects.
+	 */
+	function wp_get_nav_menu_items( $menu, $args = array() ) {
+		$menu_id = is_object( $menu ) ? (int) $menu->term_id : (int) $menu;
+		if ( ! isset( $GLOBALS['diviops_test_nav_menus'][ $menu_id ] ) ) {
+			return false;
+		}
+		$items = array();
+		foreach ( $GLOBALS['diviops_test_nav_menu_items'] as $base ) {
+			if ( (int) $base->menu_id !== $menu_id ) {
+				continue;
+			}
+			$item                   = clone $base;
+			$item->menu_item_parent = (int) get_post_meta( $item->ID, '_menu_item_menu_item_parent', true );
+			$items[]                = $item;
+		}
+		usort(
+			$items,
+			static function ( $a, $b ) {
+				return (int) $a->menu_order <=> (int) $b->menu_order;
+			}
+		);
+		return $items;
+	}
+}
+
+if ( ! function_exists( 'get_nav_menu_locations' ) ) {
+	/**
+	 * Model WP core's get_nav_menu_locations(): the `nav_menu_locations` theme mod,
+	 * a map of theme-location key => menu term id. set_theme_mod writes the same
+	 * slot, so assign/unassign round-trip through here.
+	 */
+	function get_nav_menu_locations() {
+		$locations = $GLOBALS['diviops_test_theme_mods']['nav_menu_locations'] ?? array();
+		return is_array( $locations ) ? $locations : array();
+	}
+}
+
+if ( ! function_exists( 'get_registered_nav_menus' ) ) {
+	/**
+	 * Model WP core's get_registered_nav_menus(): the theme-declared locations,
+	 * a map of location key => human label.
+	 */
+	function get_registered_nav_menus() {
+		return $GLOBALS['diviops_test_registered_nav_menus'];
+	}
+}
+
+if ( ! function_exists( 'set_theme_mod' ) ) {
+	/**
+	 * Model WP core's set_theme_mod(): store a theme mod by name. get_nav_menu_locations
+	 * reads the `nav_menu_locations` slot this writes.
+	 */
+	function set_theme_mod( $name, $value ) {
+		$GLOBALS['diviops_test_theme_mods'][ $name ] = $value;
+		return true;
+	}
+}
+
+if ( ! function_exists( 'wp_update_post' ) ) {
+	/**
+	 * Model WP core's wp_update_post() for the columns the menu handlers touch.
+	 * Nav-menu items are posts, so a reorder writes each item's menu_order through
+	 * here; this routes an ID in the nav-item registry to that record's menu_order
+	 * (and title/url if supplied), and any other ID to the ordinary post registry.
+	 * Returns the post id on success, 0 on failure — matching core's contract.
+	 */
+	function wp_update_post( $postarr, $wp_error = false ) {
+		$id = (int) ( $postarr['ID'] ?? 0 );
+		if ( $id <= 0 ) {
+			return 0;
+		}
+		if ( isset( $GLOBALS['diviops_test_nav_menu_items'][ $id ] ) ) {
+			$item = $GLOBALS['diviops_test_nav_menu_items'][ $id ];
+			if ( array_key_exists( 'menu_order', $postarr ) ) {
+				$item->menu_order = (int) $postarr['menu_order'];
+			}
+			if ( array_key_exists( 'post_title', $postarr ) ) {
+				$item->title = (string) $postarr['post_title'];
+			}
+			return $id;
+		}
+		if ( isset( $GLOBALS['diviops_test_posts'][ $id ] ) ) {
+			foreach ( $postarr as $key => $value ) {
+				if ( 'ID' !== $key ) {
+					$GLOBALS['diviops_test_posts'][ $id ]->$key = $value;
+				}
+			}
+			return $id;
+		}
+		return 0;
+	}
+}
+
+if ( ! function_exists( 'wp_delete_nav_menu' ) ) {
+	/**
+	 * Model WP core's wp_delete_nav_menu(): permanently remove the menu term, all
+	 * of its items, and free every theme location that pointed at it. Nav menus
+	 * have no trash, so this is a hard removal. Returns true on success, a WP_Error
+	 * when the menu id is unknown — the two outcomes menu_delete branches on.
+	 */
+	function wp_delete_nav_menu( $menu ) {
+		$menu_id = is_object( $menu ) ? (int) $menu->term_id : (int) $menu;
+		if ( ! isset( $GLOBALS['diviops_test_nav_menus'][ $menu_id ] ) ) {
+			return new WP_Error( 'nav_menu_not_found', 'Nav menu does not exist.' );
+		}
+		foreach ( $GLOBALS['diviops_test_nav_menu_items'] as $item_id => $base ) {
+			if ( (int) $base->menu_id === $menu_id ) {
+				unset( $GLOBALS['diviops_test_nav_menu_items'][ $item_id ] );
+			}
+		}
+		$locations = get_nav_menu_locations();
+		$changed   = false;
+		foreach ( $locations as $location => $assigned_id ) {
+			if ( (int) $assigned_id === $menu_id ) {
+				unset( $locations[ $location ] );
+				$changed = true;
+			}
+		}
+		if ( $changed ) {
+			set_theme_mod( 'nav_menu_locations', $locations );
+		}
+		unset( $GLOBALS['diviops_test_nav_menus'][ $menu_id ] );
+		return true;
+	}
+}
+
+if ( ! function_exists( 'diviops_test_register_nav_menu' ) ) {
+	/**
+	 * Register a fake nav menu term so the menu handlers can be exercised directly.
+	 *
+	 * @param int    $term_id Menu term id.
+	 * @param string $name    Menu display name.
+	 * @param string $slug    Optional slug; derived from the name when omitted.
+	 * @return object
+	 */
+	function diviops_test_register_nav_menu( int $term_id, string $name, string $slug = '' ) {
+		$menu = (object) array(
+			'term_id' => $term_id,
+			'name'    => $name,
+			'slug'    => '' !== $slug ? $slug : sanitize_title( $name ),
+			'count'   => 0,
+		);
+		$GLOBALS['diviops_test_nav_menus'][ $term_id ] = $menu;
+		return $menu;
+	}
+}
+
+if ( ! function_exists( 'diviops_test_register_nav_menu_item' ) ) {
+	/**
+	 * Register a fake nav-menu item linked to a menu. The parent is written to the
+	 * `_menu_item_menu_item_parent` post meta (where wp_get_nav_menu_items reads it),
+	 * not stored on the record, so re-parenting through update_post_meta behaves
+	 * exactly as it does in WordPress.
+	 *
+	 * @param array $fields ID, menu_id, title, url, type, object, object_id,
+	 *                      menu_order, parent.
+	 * @return object
+	 */
+	function diviops_test_register_nav_menu_item( array $fields ) {
+		$id   = (int) ( $fields['ID'] ?? 0 );
+		$item = (object) array(
+			'ID'         => $id,
+			'menu_id'    => (int) ( $fields['menu_id'] ?? 0 ),
+			'title'      => (string) ( $fields['title'] ?? '' ),
+			'url'        => (string) ( $fields['url'] ?? '' ),
+			'type'       => (string) ( $fields['type'] ?? 'custom' ),
+			'object'     => (string) ( $fields['object'] ?? '' ),
+			'object_id'  => (int) ( $fields['object_id'] ?? 0 ),
+			'menu_order' => (int) ( $fields['menu_order'] ?? 0 ),
+		);
+		$GLOBALS['diviops_test_nav_menu_items'][ $id ] = $item;
+		update_post_meta( $id, '_menu_item_menu_item_parent', (int) ( $fields['parent'] ?? 0 ) );
+		return $item;
 	}
 }
 

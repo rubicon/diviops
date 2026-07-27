@@ -102,7 +102,7 @@ class DiviOps_Agent {
 		// meta
 		'meta_find_icon', 'meta_flush_cache',
 		// menu
-		'menu_create', 'menu_get', 'menu_item_add_custom', 'menu_item_add_page', 'menu_list', 'menu_location_assign',
+		'menu_create', 'menu_delete', 'menu_get', 'menu_item_add_custom', 'menu_item_add_page', 'menu_item_remove', 'menu_item_reorder', 'menu_list', 'menu_location_assign', 'menu_location_unassign',
 		// module
 		'module_clone', 'module_get', 'module_lock', 'module_move', 'module_unlock', 'module_update',
 		'module_clone_backup', 'module_lock_backup', 'module_move_backup', 'module_unlock_backup', 'module_update_backup',
@@ -1081,6 +1081,50 @@ class DiviOps_Agent {
 			'permission_callback' => [ __CLASS__, 'check_menu_permission' ],
 			'args'                => [
 				'menu_id'  => [ 'required' => true, 'type' => 'integer' ],
+				'location' => [ 'required' => true, 'type' => 'string' ],
+				'dry_run'  => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
+			],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/menu/delete/(?P<id>\d+)', [
+			'methods'             => 'POST',
+			'callback'            => [ __CLASS__, 'menu_delete' ],
+			'permission_callback' => [ __CLASS__, 'check_menu_permission' ],
+			'args'                => [
+				'id'      => [ 'required' => true, 'type' => 'integer' ],
+				'dry_run' => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
+			],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/menu/item/remove', [
+			'methods'             => 'POST',
+			'callback'            => [ __CLASS__, 'menu_item_remove' ],
+			'permission_callback' => [ __CLASS__, 'check_menu_permission' ],
+			'args'                => [
+				'menu_id' => [ 'required' => true, 'type' => 'integer' ],
+				'item_id' => [ 'required' => true, 'type' => 'integer' ],
+				'cascade' => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
+				'dry_run' => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
+			],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/menu/item/reorder', [
+			'methods'             => 'POST',
+			'callback'            => [ __CLASS__, 'menu_item_reorder' ],
+			'permission_callback' => [ __CLASS__, 'check_menu_permission' ],
+			'args'                => [
+				'menu_id' => [ 'required' => true, 'type' => 'integer' ],
+				'order'   => [ 'required' => true, 'type' => 'array', 'items' => [ 'type' => 'integer' ] ],
+				'parent'  => [ 'required' => false, 'type' => 'integer', 'default' => 0 ],
+				'dry_run' => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
+			],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/menu/location/unassign', [
+			'methods'             => 'POST',
+			'callback'            => [ __CLASS__, 'menu_location_unassign' ],
+			'permission_callback' => [ __CLASS__, 'check_menu_permission' ],
+			'args'                => [
 				'location' => [ 'required' => true, 'type' => 'string' ],
 				'dry_run'  => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
 			],
