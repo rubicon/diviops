@@ -64,6 +64,10 @@ trait DiviOps_Agent_ModuleSchema {
 			];
 		}
 
+		// Native Divi 5 modules are largely absent from the block registry; add
+		// them from their on-disk module.json definitions, de-duplicating by name.
+		$modules = self::merge_module_lists( $modules, self::native_module_list() );
+
 		return self::envelope_success( $modules );
 	}
 
@@ -220,6 +224,178 @@ trait DiviOps_Agent_ModuleSchema {
 	}
 
 	/**
+	 * The Divi 5 native-module `module.json` components directory.
+	 *
+	 * Divi ships one `module.json` per native module under this tree, each
+	 * carrying the module's `name` (`divi/<slug>`), `title`, `category`, and full
+	 * `attributes`. Resolved through `get_theme_file_path()` like the plugin's
+	 * other builder-5 lookups, so it follows a child/parent theme correctly.
+	 */
+	private static function native_module_components_dir() {
+		return get_theme_file_path( 'includes/builder-5/visual-builder/packages/module-library/src/components' );
+	}
+
+	/**
+	 * Map a `divi/<slug>` block name to its component directory slug.
+	 *
+	 * This is also the path-traversal defense: the slug must be lowercase
+	 * alphanumeric with single hyphens (the shape every real Divi module dir
+	 * uses), so nothing containing `.`, `/`, `..`, or an empty segment can reach
+	 * the filesystem. Returns null for any non-`divi/` name or a malformed slug.
+	 *
+	 * @param string $name Full block name.
+	 * @return string|null
+	 */
+	private static function native_module_slug_from_name( string $name ) {
+		if ( 0 !== strpos( $name, 'divi/' ) ) {
+			return null;
+		}
+		$slug = substr( $name, strlen( 'divi/' ) );
+		// The `D` modifier is load-bearing: without it PCRE's `$` also matches
+		// just before a single trailing newline, so a slug ending in "\n" would
+		// pass the guard. `D` anchors `$` to the true end of the string.
+		if ( ! preg_match( '/^[a-z0-9]+(?:-[a-z0-9]+)*$/D', $slug ) ) {
+			return null;
+		}
+		return $slug;
+	}
+
+	/**
+	 * Parse a native module's `module.json` string into the schema shape.
+	 *
+	 * Rejects (returns null) malformed JSON and a file whose declared `name`
+	 * does not match the requested block name, so a slug can never surface a
+	 * different module's schema than the one asked for.
+	 *
+	 * @param string $json Raw module.json contents.
+	 * @param string $name The block name that was requested.
+	 * @return array|null
+	 */
+	private static function parse_native_module_json( string $json, string $name ) {
+		$data = json_decode( $json, true );
+		if ( ! is_array( $data ) || ( $data['name'] ?? '' ) !== $name ) {
+			return null;
+		}
+		return [
+			'name'          => (string) $data['name'],
+			'title'         => (string) ( $data['title'] ?? '' ),
+			'category'      => (string) ( $data['category'] ?? '' ),
+			'description'   => '',
+			'attributes'    => is_array( $data['attributes'] ?? null ) ? $data['attributes'] : [],
+			'settings'      => is_array( $data['settings'] ?? null ) ? $data['settings'] : [],
+			'custom_css'    => is_array( $data['customCssFields'] ?? null ) ? $data['customCssFields'] : [],
+			'children_name' => is_array( $data['childrenName'] ?? null ) ? $data['childrenName'] : [],
+			'module_class'  => (string) ( $data['moduleClassName'] ?? '' ),
+			'd4_shortcode'  => (string) ( $data['d4Shortcode'] ?? '' ),
+			'supports'      => [],
+			'source'        => 'divi_module_json',
+		];
+	}
+
+	/**
+	 * Read a native module's schema from a given components directory.
+	 *
+	 * Split from native_module_schema() so the read/parse logic is testable
+	 * against a fixture directory without a live Divi install. Enforces the slug
+	 * guard AND a realpath-containment check (defense in depth) so a resolved
+	 * file can never sit outside the components directory.
+	 *
+	 * @param string $name           Full block name.
+	 * @param string $components_dir  The module-library components directory.
+	 * @return array|null
+	 */
+	private static function native_module_schema_from_dir( string $name, $components_dir ) {
+		$slug = self::native_module_slug_from_name( $name );
+		if ( null === $slug || ! is_string( $components_dir ) || '' === $components_dir ) {
+			return null;
+		}
+		$path     = $components_dir . '/' . $slug . '/module.json';
+		$real     = realpath( $path );
+		$real_dir = realpath( $components_dir );
+		if ( false === $real || false === $real_dir || 0 !== strpos( $real, $real_dir . DIRECTORY_SEPARATOR ) ) {
+			return null;
+		}
+		$json = file_get_contents( $real );
+		if ( false === $json ) {
+			return null;
+		}
+		return self::parse_native_module_json( $json, $name );
+	}
+
+	/**
+	 * Resolve a native Divi 5 module's schema from its on-disk `module.json`,
+	 * or null if $name is not a native module / the file is missing.
+	 *
+	 * @param string $name Full block name.
+	 * @return array|null
+	 */
+	private static function native_module_schema( string $name ) {
+		return self::native_module_schema_from_dir( $name, self::native_module_components_dir() );
+	}
+
+	/**
+	 * List every native Divi 5 module from its on-disk `module.json` files.
+	 *
+	 * Basic-info shape matching schema_list_modules' registered entries, so the
+	 * two sets merge cleanly. Empty array when the components dir is absent.
+	 *
+	 * @return array
+	 */
+	private static function native_module_list() {
+		$dir = self::native_module_components_dir();
+		if ( ! is_string( $dir ) || ! is_dir( $dir ) ) {
+			return [];
+		}
+		$out = [];
+		foreach ( (array) glob( $dir . '/*/module.json' ) as $path ) {
+			if ( ! is_readable( $path ) ) {
+				continue;
+			}
+			$data = json_decode( (string) file_get_contents( $path ), true );
+			if ( ! is_array( $data ) || empty( $data['name'] ) ) {
+				continue;
+			}
+			$out[] = [
+				'name'        => (string) $data['name'],
+				'title'       => (string) ( $data['title'] ?? $data['name'] ),
+				'category'    => (string) ( $data['category'] ?? '' ),
+				'description' => '',
+				'supports'    => [],
+				'source'      => 'divi_module_json',
+			];
+		}
+		return $out;
+	}
+
+	/**
+	 * Merge a native-module list into a registered-module list, de-duplicating
+	 * by `name`: a native module already present as a registered block is not
+	 * added twice, and no registered entry is dropped. Pure (no I/O) so the
+	 * merge/dedup contract is unit-testable without a live Divi install.
+	 *
+	 * @param array $registered Registered-module entries (each with a `name`).
+	 * @param array $native      Native module.json entries (each with a `name`).
+	 * @return array
+	 */
+	private static function merge_module_lists( array $registered, array $native ): array {
+		$seen = [];
+		foreach ( $registered as $entry ) {
+			if ( isset( $entry['name'] ) ) {
+				$seen[ $entry['name'] ] = true;
+			}
+		}
+		$merged = $registered;
+		foreach ( $native as $entry ) {
+			$name = $entry['name'] ?? '';
+			if ( '' !== $name && empty( $seen[ $name ] ) ) {
+				$merged[]       = $entry;
+				$seen[ $name ]  = true;
+			}
+		}
+		return $merged;
+	}
+
+	/**
 	 * Get full schema/attributes for a specific module.
 	 *
 	 * Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.
@@ -237,10 +413,17 @@ trait DiviOps_Agent_ModuleSchema {
 		$block_type = $registry->get_registered( $name );
 
 		if ( ! $block_type ) {
+			// Native Divi 5 core modules (divi/text, divi/section, …) are largely
+			// absent from WP_Block_Type_Registry; fall back to Divi's own on-disk
+			// module.json definition so they are introspectable too.
+			$native = self::native_module_schema( $name );
+			if ( is_array( $native ) ) {
+				return self::envelope_success( $native );
+			}
 			return self::envelope_error(
 				'not_found',
 				"Module '{$name}' not found",
-				'Run diviops_schema_list_modules to see registered Divi modules.',
+				'Run diviops_schema_list_modules to see available modules. Native Divi modules resolve from their on-disk module.json; third-party modules must be registered.',
 				404
 			);
 		}
@@ -252,6 +435,7 @@ trait DiviOps_Agent_ModuleSchema {
 			'description' => $block_type->description ?? '',
 			'attributes'  => $block_type->attributes ?? [],
 			'supports'    => $block_type->supports ?? [],
+			'source'      => 'block_registry',
 		] );
 	}
 }
