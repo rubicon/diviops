@@ -278,4 +278,130 @@ trait DiviOps_Agent_Library {
 			'message'     => "Saved to Divi Library as '{$title}'.",
 		] );
 	}
+
+	/**
+	 * Delete a Divi Library item (et_pb_layout).
+	 *
+	 * Mirrors the sibling page_trash: soft-trash by default (reversible), an
+	 * opt-in `force` for permanent deletion, dry-run planning, and idempotent
+	 * no-op semantics on an already-trashed item. Trash is the safe default here
+	 * for the same reason page_trash uses it, and it does not strand the domain's
+	 * re-save contract: library_existing_id_by_title() queries post_status=>'any',
+	 * which excludes trash, so a trashed item never blocks re-saving its title.
+	 *
+	 * The route is admin-gated (check_admin_permission, like library_save); the
+	 * per-object delete_post check below is defense-in-depth mirroring page_trash
+	 * and is the WP-native per-item gate. It does not invalidate the Divi cache
+	 * because the sibling library_save does not either — library items are not
+	 * page-render cache; any library-list caching concern would apply equally to
+	 * save and is out of scope for this endpoint.
+	 */
+	public static function library_delete( $request ) {
+		$post_id = absint( $request['id'] );
+		$force   = (bool) $request->get_param( 'force' );
+		$dry_run = (bool) $request->get_param( 'dry_run' );
+
+		$post = get_post( $post_id );
+		if ( ! $post || 'et_pb_layout' !== $post->post_type ) {
+			return self::envelope_error(
+				'not_found',
+				"Library item #{$post_id} not found.",
+				'Use diviops_library_list to find a valid item ID.',
+				404,
+				[ 'library_id' => $post_id ]
+			);
+		}
+		if ( ! current_user_can( 'delete_post', $post_id ) ) {
+			return self::envelope_error(
+				'forbidden',
+				"Cannot delete library item #{$post_id}.",
+				'Authenticate as a user with delete rights to this library item.',
+				403,
+				[ 'library_id' => $post_id ]
+			);
+		}
+
+		$current_status = (string) $post->post_status;
+		$title          = (string) $post->post_title;
+		$already_trash  = ( 'trash' === $current_status );
+
+		// Idempotency + dry-run plan selection.
+		if ( $force ) {
+			$summary   = "Would permanently delete library item #{$post_id} (title: '{$title}', current status: {$current_status}).";
+			$action    = 'delete';
+			$end_state = 'deleted';
+		} elseif ( $already_trash ) {
+			$summary   = "Library item #{$post_id} (title: '{$title}') is already in trash — no-op.";
+			$action    = 'noop';
+			$end_state = 'trash';
+		} else {
+			$summary   = "Would move library item #{$post_id} (title: '{$title}', current status: {$current_status}) to trash.";
+			$action    = 'trash';
+			$end_state = 'trash';
+		}
+
+		if ( $dry_run ) {
+			return self::dry_run_response(
+				$summary,
+				[
+					[
+						'kind'   => $action,
+						'target' => "library_item#{$post_id}",
+						'before' => $current_status,
+						'after'  => $end_state,
+					],
+				],
+				[],
+				[
+					'id'    => $post_id,
+					'title' => $title,
+				]
+			);
+		}
+
+		if ( $force ) {
+			$result = wp_delete_post( $post_id, true );
+			if ( ! $result ) {
+				return self::envelope_error(
+					'wp_error',
+					"Failed to permanently delete library item #{$post_id}.",
+					'wp_delete_post returned false; check WordPress error logs.',
+					500,
+					[ 'library_id' => $post_id ]
+				);
+			}
+			return self::envelope_success( [
+				'id'     => $post_id,
+				'title'  => $title,
+				'status' => 'deleted',
+			] );
+		}
+
+		// Idempotent success on an already-trashed item: repeat-safe for AI-agent
+		// retries; the already_trashed flag preserves the no-op signal.
+		if ( $already_trash ) {
+			return self::envelope_success( [
+				'id'              => $post_id,
+				'title'           => $title,
+				'status'          => 'trash',
+				'already_trashed' => true,
+			] );
+		}
+
+		$result = wp_trash_post( $post_id );
+		if ( ! $result ) {
+			return self::envelope_error(
+				'wp_error',
+				"Failed to trash library item #{$post_id}.",
+				'wp_trash_post returned false; check WordPress error logs.',
+				500,
+				[ 'library_id' => $post_id ]
+			);
+		}
+		return self::envelope_success( [
+			'id'     => $post_id,
+			'title'  => $title,
+			'status' => 'trash',
+		] );
+	}
 }

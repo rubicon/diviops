@@ -98,7 +98,7 @@ class DiviOps_Agent {
 		'global_color_audit_storage', 'global_color_create', 'global_color_delete', 'global_color_list', 'global_color_update',
 		'global_font_audit_storage', 'global_font_create', 'global_font_delete', 'global_font_list', 'global_font_update',
 		// library
-		'library_get', 'library_list', 'library_save',
+		'library_delete', 'library_get', 'library_list', 'library_save',
 		// meta
 		'meta_find_icon', 'meta_flush_cache',
 		// menu
@@ -887,6 +887,27 @@ class DiviOps_Agent {
 				'content'     => [ 'required' => true, 'type' => 'string' ],
 				'layout_type' => [ 'required' => false, 'type' => 'string', 'default' => 'section' ],
 				'scope'       => [ 'required' => false, 'type' => 'string', 'default' => 'non_global' ],
+			],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/library/delete/(?P<id>\d+)', [
+			'methods'             => 'POST',
+			'callback'            => [ __CLASS__, 'library_delete' ],
+			'permission_callback' => [ __CLASS__, 'check_admin_permission' ],
+			'args'                => [
+				'id'      => [ 'required' => true ],
+				'force'   => [
+					'required'    => false,
+					'type'        => 'boolean',
+					'default'     => false,
+					'description' => 'When true, permanently delete (wp_delete_post). Default false moves to trash.',
+				],
+				'dry_run' => [
+					'required'    => false,
+					'type'        => 'boolean',
+					'default'     => false,
+					'description' => 'When true, return the change plan without mutating state.',
+				],
 			],
 		] );
 

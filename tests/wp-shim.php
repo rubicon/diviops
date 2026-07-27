@@ -341,6 +341,42 @@ if ( ! function_exists( 'get_post' ) ) {
 	}
 }
 
+if ( ! function_exists( 'wp_trash_post' ) ) {
+	/**
+	 * Model WP core's wp_trash_post() against the harness post registry: flip the
+	 * post's status to 'trash' and return its data object on success, false when
+	 * the id is unknown. This is the same category of primitive stub as get_post()
+	 * above — WordPress core with a simple documented contract — not a fake of
+	 * Divi's proprietary option storage, which the variable_update suite correctly
+	 * declined to fabricate.
+	 */
+	function wp_trash_post( $post_id ) {
+		if ( ! isset( $GLOBALS['diviops_test_posts'][ $post_id ] ) ) {
+			return false;
+		}
+		$GLOBALS['diviops_test_posts'][ $post_id ]->post_status = 'trash';
+		return $GLOBALS['diviops_test_posts'][ $post_id ];
+	}
+}
+
+if ( ! function_exists( 'wp_delete_post' ) ) {
+	/**
+	 * Model WP core's wp_delete_post(): remove the post from the registry and
+	 * return its data object on success, false when the id is unknown. The
+	 * $force_delete argument is accepted for signature parity; this store has no
+	 * trash-vs-permanent distinction to honor, so a hard removal models both the
+	 * force path and (for callers that pass false) the trash-bypass fallback.
+	 */
+	function wp_delete_post( $post_id, $force_delete = false ) {
+		if ( ! isset( $GLOBALS['diviops_test_posts'][ $post_id ] ) ) {
+			return false;
+		}
+		$post = $GLOBALS['diviops_test_posts'][ $post_id ];
+		unset( $GLOBALS['diviops_test_posts'][ $post_id ] );
+		return $post;
+	}
+}
+
 if ( ! function_exists( 'diviops_test_register_post' ) ) {
 	/**
 	 * Register a fake post for get_post() to return, so a REST-handler method
