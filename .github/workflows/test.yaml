@@ -53,3 +53,34 @@ jobs:
       # empty suite fails here rather than reporting a green PASS of zero assertions.
       - name: Run test suite
         run: php tests/run.php
+
+  server-security-test:
+    name: diviops-server security tests (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # package.json declares "engines.node": ">=18.0.0", so the floor is
+        # tested alongside current LTS.
+        node: ['18', '22']
+    defaults:
+      run:
+        working-directory: diviops-server
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Scoped to wp-cli.ts and wp-cli-fs-validator.ts (the WP-CLI command
+      # allowlist and the filesystem path validator) via tsconfig.test.json,
+      # not the project-wide "test" script — src/index.ts currently fails to
+      # build for unrelated reasons (missing cross-env-preflight modules),
+      # which would otherwise block this unrelated security suite from ever
+      # running.
+      - name: Run WP-CLI allowlist / filesystem path validator tests
+        run: npm run test:server-security

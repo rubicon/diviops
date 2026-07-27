@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist-test"
+  },
+  "include": ["src/wp-cli.ts", "src/wp-cli-fs-validator.ts", "src/__tests__/**/*.ts"]
+}
