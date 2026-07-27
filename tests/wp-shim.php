@@ -407,6 +407,85 @@ if ( ! function_exists( 'diviops_test_register_post' ) ) {
 	}
 }
 
+if ( ! isset( $GLOBALS['diviops_test_post_types'] ) ) {
+	// The default WordPress content post types; tests register more as needed.
+	$GLOBALS['diviops_test_post_types'] = array( 'page' => true, 'post' => true );
+}
+
+if ( ! function_exists( 'post_type_exists' ) ) {
+	/**
+	 * Model WP core's post_type_exists(): membership in the registered set.
+	 */
+	function post_type_exists( $post_type ) {
+		return isset( $GLOBALS['diviops_test_post_types'][ (string) $post_type ] );
+	}
+}
+
+if ( ! function_exists( 'get_post_stati' ) ) {
+	/**
+	 * Model WP core's get_post_stati() for the non-internal statuses page_create
+	 * validates against. Values are the status names, matching how the handler
+	 * consumes them (in_array on values, array_values for the error payload).
+	 */
+	function get_post_stati( $args = array() ) {
+		return array(
+			'publish' => 'publish',
+			'future'  => 'future',
+			'draft'   => 'draft',
+			'pending' => 'pending',
+			'private' => 'private',
+		);
+	}
+}
+
+if ( ! function_exists( 'wp_slash' ) ) {
+	function wp_slash( $value ) {
+		return $value;
+	}
+}
+
+if ( ! function_exists( 'wp_insert_post' ) ) {
+	/**
+	 * Model WP core's wp_insert_post(): assign an incrementing id, store the post
+	 * in the registry, and record the args of the most recent call so a test can
+	 * assert what the handler asked WordPress to create (e.g. the post_type it
+	 * resolved). Returns the new id. This records HANDLER input, it does not fake
+	 * handler behavior.
+	 */
+	function wp_insert_post( $postarr, $wp_error = false ) {
+		$GLOBALS['diviops_test_last_insert'] = $postarr;
+		$id = ( $GLOBALS['diviops_test_next_id'] ?? 9000 );
+		$GLOBALS['diviops_test_next_id'] = $id + 1;
+		$GLOBALS['diviops_test_posts'][ $id ] = (object) array(
+			'ID'           => $id,
+			'post_content' => $postarr['post_content'] ?? '',
+			'post_type'    => $postarr['post_type'] ?? 'post',
+			'post_title'   => $postarr['post_title'] ?? '',
+			'post_status'  => $postarr['post_status'] ?? 'draft',
+		);
+		return $id;
+	}
+}
+
+if ( ! function_exists( 'update_post_meta' ) ) {
+	function update_post_meta( $post_id, $key, $value ) {
+		$GLOBALS['diviops_test_post_meta'][ $post_id ][ $key ] = $value;
+		return true;
+	}
+}
+
+if ( ! function_exists( 'get_permalink' ) ) {
+	function get_permalink( $post_id ) {
+		return 'http://example.test/?p=' . (int) $post_id;
+	}
+}
+
+if ( ! function_exists( 'admin_url' ) ) {
+	function admin_url( $path = '' ) {
+		return 'http://example.test/wp-admin/' . ltrim( (string) $path, '/' );
+	}
+}
+
 if ( ! class_exists( 'DiviOps_Test_Request' ) ) {
 	/**
 	 * Minimal stand-in for WP_REST_Request. get_param() plus array access for

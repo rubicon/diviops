@@ -1529,9 +1529,10 @@ class DiviOps_Agent {
 			'callback'            => [ __CLASS__, 'page_create' ],
 			'permission_callback' => [ __CLASS__, 'check_write_permission' ],
 			'args'                => [
-				'title'   => [ 'required' => true, 'type' => 'string' ],
-				'content' => [ 'required' => false, 'type' => 'string', 'default' => '' ],
-				'status'  => [ 'required' => false, 'type' => 'string', 'default' => 'draft' ],
+				'title'     => [ 'required' => true, 'type' => 'string' ],
+				'content'   => [ 'required' => false, 'type' => 'string', 'default' => '' ],
+				'status'    => [ 'required' => false, 'type' => 'string', 'default' => 'draft' ],
+				'post_type' => [ 'required' => false, 'type' => 'string', 'default' => 'page' ],
 			],
 		] );
 
