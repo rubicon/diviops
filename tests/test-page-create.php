@@ -66,6 +66,16 @@ $data = $resp->get_data();
 assert_true( $data['ok'], 'a real create with a valid post_type succeeds' );
 assert_true( is_int( $data['data']['page_id'] ), 'the response carries the new post id' );
 assert_same( 'post', $GLOBALS['diviops_test_last_insert']['post_type'], 'wp_insert_post received the resolved post_type, not a hardcoded page' );
+// The Divi builder keys off _et_pb_built_for_post_type; it must reflect the real
+// created type, not a hardcoded 'page'. This locks the initialize_divi_page_meta
+// threading so dropping the $post_type arg (reverting to the old hardcoded 'page')
+// fails a test instead of silently regressing.
+$new_post_id = $data['data']['page_id'];
+assert_same(
+	'post',
+	$GLOBALS['diviops_test_post_meta'][ $new_post_id ]['_et_pb_built_for_post_type'] ?? null,
+	'_et_pb_built_for_post_type meta reflects the created post_type, not a hardcoded page'
+);
 
 // (5) Default create still asks WordPress for a page.
 unset( $GLOBALS['diviops_test_last_insert'] );
