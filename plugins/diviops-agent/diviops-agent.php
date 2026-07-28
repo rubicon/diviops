@@ -968,24 +968,54 @@ class DiviOps_Agent {
 			'methods'             => 'POST',
 			'callback'            => [ __CLASS__, 'media_upload' ],
 			'permission_callback' => [ __CLASS__, 'check_authenticated_permission' ],
+			'args'                => [
+				'url'         => [ 'required' => false, 'type' => 'string' ],
+				'data_base64' => [ 'required' => false, 'type' => 'string' ],
+				'filename'    => [ 'required' => false, 'type' => 'string' ],
+				'title'       => [ 'required' => false, 'type' => 'string' ],
+				'alt'         => [ 'required' => false, 'type' => 'string' ],
+				'caption'     => [ 'required' => false, 'type' => 'string' ],
+				'attach_to'   => [ 'required' => false, 'type' => 'integer' ],
+				'dry_run'     => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
+			],
 		] );
 
 		register_rest_route( self::REST_NAMESPACE, '/media/get/(?P<id>\d+)', [
 			'methods'             => 'GET',
 			'callback'            => [ __CLASS__, 'media_get' ],
 			'permission_callback' => [ __CLASS__, 'check_read_permission' ],
+			'args'                => [
+				'id' => [
+					'required'          => true,
+					'validate_callback' => function ( $param ) {
+						return is_numeric( $param );
+					},
+				],
+			],
 		] );
 
 		register_rest_route( self::REST_NAMESPACE, '/media/list', [
 			'methods'             => 'GET',
 			'callback'            => [ __CLASS__, 'media_list' ],
 			'permission_callback' => [ __CLASS__, 'check_read_permission' ],
+			'args'                => [
+				'page'     => [ 'required' => false, 'type' => 'integer', 'default' => 1 ],
+				'per_page' => [ 'required' => false, 'type' => 'integer', 'default' => 20 ],
+				'mime'     => [ 'required' => false, 'type' => 'string' ],
+				'search'   => [ 'required' => false, 'type' => 'string' ],
+			],
 		] );
 
 		register_rest_route( self::REST_NAMESPACE, '/media/set-featured-image', [
 			'methods'             => 'POST',
 			'callback'            => [ __CLASS__, 'media_set_featured_image' ],
 			'permission_callback' => [ __CLASS__, 'check_authenticated_permission' ],
+			'args'                => [
+				'post_id'       => [ 'required' => true,  'type' => 'integer' ],
+				'attachment_id' => [ 'required' => false, 'type' => 'integer' ],
+				'url'           => [ 'required' => false, 'type' => 'string' ],
+				'dry_run'       => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
+			],
 		] );
 
 		// ── Theme Builder Operations ────────────────────────────────

@@ -296,6 +296,43 @@ assert_true( 'forbidden' === $d['error']['code'], 'upload_files denied: forbidde
 assert_true( 403 === $r->get_status(), 'upload_files denied: 403' );
 unset( $GLOBALS['diviops_test_denied_caps'] );
 
+// ── attach_to permission check (v1.9.1 hotfix Fix 1) ───────────────────────
+// current_user_can( 'upload_files' ) alone does not authorize attaching the
+// upload to an ARBITRARY post — a caller must also be able to edit_post the
+// target. diviops_test_uneditable_ids is the harness seam for edit_post.
+diviops_test_register_post( 950, '', 'page', 'Attach Target Editable' );
+diviops_test_register_post( 951, '', 'page', 'Attach Target Uneditable' );
+$GLOBALS['diviops_test_uneditable_ids'] = array( 951 );
+
+diviops_media_set_resolver(
+	function ( $h ) {
+		return array( '8.8.8.8' );
+	}
+);
+
+$GLOBALS['diviops_test_http_responses'] = array( diviops_media_http_200() );
+$r = diviops_call(
+	'media_upload',
+	array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png', 'attach_to' => 951 ) ) )
+);
+$d = $r->get_data();
+assert_true( false === $d['ok'], 'attach_to uneditable post: not ok' );
+assert_true( 'forbidden' === $d['error']['code'], 'attach_to uneditable post: forbidden code' );
+assert_true( 403 === $r->get_status(), 'attach_to uneditable post: 403' );
+
+$GLOBALS['diviops_test_http_responses'] = array( diviops_media_http_200() );
+$r = diviops_call(
+	'media_upload',
+	array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png', 'attach_to' => 950 ) ) )
+);
+$d = $r->get_data();
+assert_true(
+	true === $d['ok'] && ! empty( $d['data']['attachment_id'] ),
+	'attach_to editable post: upload succeeds'
+);
+
+unset( $GLOBALS['diviops_test_uneditable_ids'] );
+
 // SSRF
 diviops_media_set_resolver(
 	function ( $h ) {
@@ -317,6 +354,80 @@ $r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'ht
 $d = $r->get_data();
 assert_true( true === $d['ok'] && isset( $d['data']['plan'] ), 'dry-run returns plan, no write' );
 assert_true( $attachments_before_dry_run === count( $GLOBALS['diviops_test_attachments'] ), 'dry-run performs no write' );
+
+// ── dry_run robust coercion (v1.9.1 hotfix Fix 4a) ─────────────────────────
+// A REST caller's dry_run may arrive as a string (query params, form-encoded
+// bodies) rather than a native bool. (bool) casts truthy on ANY non-empty
+// string, including "false"/"0" — the exact strings a caller would send to
+// mean "do not dry-run". filter_var(..., FILTER_VALIDATE_BOOLEAN) must be
+// used instead so those strings coerce to false and the upload actually runs.
+diviops_media_set_resolver(
+	function ( $h ) {
+		return array( '8.8.8.8' );
+	}
+);
+
+// String "false" must NOT dry-run — it performs a real upload.
+$GLOBALS['diviops_test_http_responses'] = array( diviops_media_http_200() );
+$r = diviops_call(
+	'media_upload',
+	array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png', 'dry_run' => 'false' ) ) )
+);
+$d = $r->get_data();
+assert_true(
+	true === $d['ok'] && ! empty( $d['data']['attachment_id'] ) && ! isset( $d['data']['plan'] ),
+	'dry_run string "false" performs a real upload, not a dry-run'
+);
+
+// String "0" must NOT dry-run either.
+$GLOBALS['diviops_test_http_responses'] = array( diviops_media_http_200() );
+$r = diviops_call(
+	'media_upload',
+	array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png', 'dry_run' => '0' ) ) )
+);
+$d = $r->get_data();
+assert_true(
+	true === $d['ok'] && ! empty( $d['data']['attachment_id'] ) && ! isset( $d['data']['plan'] ),
+	'dry_run string "0" performs a real upload, not a dry-run'
+);
+
+// String "" (unset from a form) must NOT dry-run.
+$GLOBALS['diviops_test_http_responses'] = array( diviops_media_http_200() );
+$r = diviops_call(
+	'media_upload',
+	array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png', 'dry_run' => '' ) ) )
+);
+$d = $r->get_data();
+assert_true(
+	true === $d['ok'] && ! empty( $d['data']['attachment_id'] ) && ! isset( $d['data']['plan'] ),
+	'dry_run string "" performs a real upload, not a dry-run'
+);
+
+// String "true" DOES dry-run.
+$attachments_before_string_true = count( $GLOBALS['diviops_test_attachments'] );
+$r = diviops_call(
+	'media_upload',
+	array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png', 'dry_run' => 'true' ) ) )
+);
+$d = $r->get_data();
+assert_true( true === $d['ok'] && isset( $d['data']['plan'] ), 'dry_run string "true" returns a plan' );
+assert_true(
+	$attachments_before_string_true === count( $GLOBALS['diviops_test_attachments'] ),
+	'dry_run string "true" performs no write'
+);
+
+// Native bool true still dry-runs (regression guard for the existing behavior).
+$attachments_before_bool_true = count( $GLOBALS['diviops_test_attachments'] );
+$r = diviops_call(
+	'media_upload',
+	array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png', 'dry_run' => true ) ) )
+);
+$d = $r->get_data();
+assert_true( true === $d['ok'] && isset( $d['data']['plan'] ), 'dry_run native bool true returns a plan' );
+assert_true(
+	$attachments_before_bool_true === count( $GLOBALS['diviops_test_attachments'] ),
+	'dry_run native bool true performs no write'
+);
 
 // ── Redirect-hop SSRF revalidation (#28 fix) ───────────────────────────────
 // The initial-URL SSRF test above proves the guard catches a directly-blocked
@@ -506,6 +617,32 @@ $GLOBALS['diviops_test_http_responses'] = array( new WP_Error( 'http_request_fai
 $r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png' ) ) ) );
 $d = $r->get_data();
 assert_true( false === $d['ok'] && 'fetch_failed' === $d['error']['code'], 'network failure surfaces as fetch_failed' );
+
+// ── url fetch: oversized response body rejected (v1.9.1 hotfix Fix 3) ──────
+// media_fetch_to_temp() must reject a fetched body larger than
+// wp_max_upload_size(), so a URL upload cannot be used to smuggle an
+// arbitrarily large payload onto the server. limit_response_size on the
+// wp_remote_get() args is the WP-HTTP-layer cap (not enforced by this
+// harness's stub); the explicit strlen() check this test exercises is the
+// belt-and-braces guard that fires regardless.
+diviops_media_set_resolver(
+	function ( $h ) {
+		return array( '8.8.8.8' );
+	}
+);
+$GLOBALS['diviops_test_max_upload']     = 10;
+$GLOBALS['diviops_test_http_responses'] = array( diviops_media_http_200( str_repeat( 'x', 100 ) ) );
+$attachments_before_oversized           = count( $GLOBALS['diviops_test_attachments'] );
+$r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png' ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'], 'oversized url response rejected: not ok' );
+assert_true( 'payload_too_large' === $d['error']['code'], 'oversized url response rejected: payload_too_large code' );
+assert_true( 413 === $r->get_status(), 'oversized url response rejected: 413' );
+assert_true(
+	$attachments_before_oversized === count( $GLOBALS['diviops_test_attachments'] ),
+	'oversized url response rejected: no attachment created'
+);
+unset( $GLOBALS['diviops_test_max_upload'] );
 
 // Test-global hygiene: unset everything this suite set so later test files
 // (which share this PHP process) start from a clean slate.
