@@ -287,7 +287,7 @@ against the per-module extractor (`php scripts/extract-decoration-paths.php
 <builder5> Text`), which additionally confirms the `module.decoration.` prefix is
 real for every one of these four families (Text's own `TextPresetAttrsMap.php`
 declares the identical subfield sets under that exact prefix — boxShadow/filters at
-`:2096-2192`, transform at `:2191-2215`, sticky at `:2592-2626`).
+`:2096-2190`, transform at `:2191-2215`, sticky at `:2592-2626`).
 
 ---
 
@@ -442,17 +442,18 @@ genuinely supported variant, not merely a stored-but-inert value:
 sticky-setting payload as-is whenever more than one breakpoint is present, only collapsing to a
 bare scalar when `desktop` is the sole key (`StickyUtils.php:167-173`). The hardcoded
 `'breakpoint' => 'desktop', 'state' => 'value'` in `StickyScriptData.php:111-113` does **not**
-gate this walk — it is passed only into the separate incompatible-position guard,
-`ModuleUtils::get_attr_subname_value()` reading `affectingAttrs['position']['mode']`
-(`StickyUtils.php:323-330`), which checks whether the module's own `position` attribute is
-`absolute`/`fixed` (incompatible with sticky), not whether a sticky subfield has a
-breakpoint-specific value. At runtime, Divi's compiled sticky JS resolves the correct
-breakpoint's value itself: `getCurrentWindowMode()`
-(`visual-builder/build/script-library-utils-sticky.js`) determines the active breakpoint, and
-consumers such as `window.getClosestStickyModuleOffsetTop`
-(`visual-builder/build/script-library-sticky-elements.js`) read the per-breakpoint value with an
-explicit phone→tablet→desktop fallback chain when a breakpoint-specific key is missing. Author
-tablet/phone sticky overrides with confidence — they are read, not inert.
+gate this walk — it is consumed by the `affectingAttrs['position']` reads (the incompatible-position
+guard at `:323-330`, plus the `position.origin` read at `:466-467` and the `position.offset` read
+at `:484`), none of which gate the sticky-subfield walk at `:338-382`. At runtime, Divi's compiled
+sticky JS resolves the correct breakpoint's value itself: the sticky store's `getSetting()`
+(`visual-builder/build/script-library-sticky-elements.js`) implements the literal cascade —
+`case"phone":return n?.phone??n?.tablet??n?.desktop??e;case"tablet":return n?.tablet??n?.desktop??e;default:return n?.desktop??e`
+— gated on a `responsiveOptions` list (`["position","topOffset","bottomOffset","topLimit","bottomLimit","offsetSurrounding","transition","topOffsetModules","bottomOffsetModules"]`,
+`visual-builder/build/script-library-stores-sticky.js`) that names exactly the settings
+`StickyUtils::get_sticky_setting()` produces. That same sticky store's own `getProp()`
+(also `visual-builder/build/script-library-stores-sticky.js`) performs the equivalent
+breakpoint-keyed lookup for its internal props. Author tablet/phone sticky overrides with
+confidence — they are read and resolved, not inert.
 
 Minimal copy-paste `attrs` fragment (stick to top, offset by 20px, re-anchored to its section's
 bottom edge instead of the browser window):
