@@ -70,7 +70,7 @@ register it for presets and under what prefix.
 ## Box Shadow
 
 7 subfields, from `module.decoration.boxShadow__{style,horizontal,vertical,blur,spread,color,position}`
-*(verified 2026-07-28)*.
+*(VB-verified 2026-07-28)*.
 
 | Path | Value shape | Notes |
 |---|---|---|
@@ -149,6 +149,12 @@ cross-checked against `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php
 `divi.module.options.boxShadow.styleOptions` filter default and preset label strings in
 compiled `visual-builder/build/module.js`. Path list cross-verified against
 `php scripts/extract-decoration-paths.php <builder5> --shared` (see verification below).
+**VB round-trip** (2026-07-28): all 7 subfields plus a `desktop.hover.color` override
+written via `diviops_module_update` to a scratch Text module (page 900587, trashed
+after) at the exact `module.decoration.boxShadow.desktop.value.*` / `.hover.color`
+paths shown in this section's copy-paste fragment; `diviops_module_get` and an
+independent raw `wp post get --field=post_content` read both returned the identical
+serialized shape — no rewrite, no dropped keys. Matches the documented path exactly.
 
 ---
 
@@ -294,7 +300,7 @@ declares the identical subfield sets under that exact prefix — boxShadow/filte
 ## Transform
 
 5 subfields, from `module.decoration.transform__{origin,rotate,scale,skew,translate}`
-*(verified 2026-07-28)*.
+*(VB-verified 2026-07-28)*.
 
 | Path | Value shape | Notes |
 |---|---|---|
@@ -385,6 +391,13 @@ set cross-checked against
 `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2191-2215`. Path list cross-verified
 against `php scripts/extract-decoration-paths.php <builder5> --shared` (see the "Path
 verification" section).
+**VB round-trip** (2026-07-28): all 5 subfields (`scale`/`translate`/`rotate`/`skew`/`origin`)
+plus a `desktop.hover.{scale,rotate}` override written via `diviops_module_update` to the
+same scratch Text module (page 900587, trashed after) at the exact
+`module.decoration.transform.desktop.value.*` / `.hover.*` object-with-`{x,y[,z]}` paths shown
+in this section's copy-paste fragment; `diviops_module_get` and an independent raw
+`wp post get --field=post_content` read both returned the identical serialized shape. Matches
+the documented path exactly.
 
 ---
 
@@ -393,7 +406,7 @@ verification" section).
 7 subfields (note the nested dot-paths — this is the one shared family whose subnames are
 themselves paths, not flat identifiers), from `module.decoration.sticky__position`,
 `sticky__offset.{top,bottom,surrounding}`, `sticky__limit.{top,bottom}`, `sticky__transition`
-*(verified 2026-07-28)*.
+*(VB-verified 2026-07-28)*.
 
 | Path | Value shape | Notes |
 |---|---|---|
@@ -492,13 +505,20 @@ subfield's `hover:false` field flag are all confirmed in compiled
 cross-checked against `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2592-2626`. Path
 list cross-verified against `php scripts/extract-decoration-paths.php <builder5> --shared` (see
 the "Path verification" section).
+**VB round-trip** (2026-07-28): all 7 subfields (`position`, `offset.{top,bottom,surrounding}`,
+`limit.{top,bottom}`, `transition`) written via `diviops_module_update` to the same scratch Text
+module (page 900587, trashed after) at the exact `module.decoration.sticky.desktop.value.*`
+dot-paths shown in this section's copy-paste fragment (including the literal `offset.top` /
+`limit.bottom` inner dots, not double-underscores); `diviops_module_get` and an independent raw
+`wp post get --field=post_content` read both returned the identical serialized shape. Matches
+the documented path exactly.
 
 ---
 
 ## Transition
 
 3 subfields, from `module.decoration.transition__{duration,delay,speedCurve}`
-*(verified 2026-07-28)*.
+*(VB-verified 2026-07-28)*.
 
 Unlike every other family in this document, Transition doesn't apply a visual style to
 the module itself — it configures **how other families' hover/sticky/focus/active/checked
@@ -566,6 +586,12 @@ $ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'transi
   module.decoration.transition__duration
   module.decoration.transition__speedCurve
 ```
+
+**VB round-trip** (2026-07-28): all 3 subfields (`duration`, `delay`, `speedCurve`) written via
+`diviops_module_update` to the same scratch Text module (page 900587, trashed after) at the exact
+`module.decoration.transition.desktop.value.*` paths shown in this section's copy-paste fragment;
+`diviops_module_get` and an independent raw `wp post get --field=post_content` read both returned
+the identical serialized shape. Matches the documented path exactly.
 
 ---
 
