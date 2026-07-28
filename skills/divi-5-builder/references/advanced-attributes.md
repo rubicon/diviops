@@ -246,7 +246,7 @@ Every path documented above was checked against the authoritative extractor outp
 `Module/Options/<Group>/<Group>PresetAttrsMap.php` classes directly):
 
 ```
-$ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'boxShadow|filters'
+$ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'boxShadow|filters|transform|sticky'
 ## boxShadow (7)
   module.decoration.boxShadow__blur
   module.decoration.boxShadow__color
@@ -265,13 +265,29 @@ $ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'boxSha
   module.decoration.filters__opacity
   module.decoration.filters__saturate
   module.decoration.filters__sepia
+## transform (5)
+  module.decoration.transform__origin
+  module.decoration.transform__rotate
+  module.decoration.transform__scale
+  module.decoration.transform__skew
+  module.decoration.transform__translate
+## sticky (7)
+  module.decoration.sticky__limit.bottom
+  module.decoration.sticky__limit.top
+  module.decoration.sticky__offset.bottom
+  module.decoration.sticky__offset.surrounding
+  module.decoration.sticky__offset.top
+  module.decoration.sticky__position
+  module.decoration.sticky__transition
 ```
 
-All 7 boxShadow paths and all 9 filters paths documented in this file appear in that
-output — none invented. Cross-checked against the per-module extractor
-(`php scripts/extract-decoration-paths.php <builder5> Text`), which additionally
-confirms the `module.decoration.` prefix is real (Text's own `TextPresetAttrsMap.php`
-declares the identical subfield set under that exact prefix).
+All 7 boxShadow paths, all 9 filters paths, all 5 transform paths, and all 7 sticky
+paths documented in this file appear in that output — none invented. Cross-checked
+against the per-module extractor (`php scripts/extract-decoration-paths.php
+<builder5> Text`), which additionally confirms the `module.decoration.` prefix is
+real for every one of these four families (Text's own `TextPresetAttrsMap.php`
+declares the identical subfield sets under that exact prefix — boxShadow/filters at
+`:2096-2192`, transform at `:2191-2215`, sticky at `:2592-2626`).
 
 ---
 
@@ -311,11 +327,19 @@ state carries no scale/translate/rotate/skew values of its own, the declaration 
 `transform: none` (`:311-316`) rather than falling back to the non-hover value — a hover-only
 `attrs` fragment that sets nothing under `transform` therefore *resets* the transform on hover, it
 does not inherit desktop's transform. The same trait reads an `$additional['normalStateOrigin']`
-fallback for hover `origin` inheritance (`:254`), but no caller along the only call path found
-(`Module/Options/Transform/TransformStyle.php::style()`, which populates `$additional` with only
-`positionAttrs`) was found supplying it — treat automatic hover-`origin` inheritance from the
-non-hover value as `<!-- UNVERIFIED -->`; set `origin` explicitly under `hover` if it needs to
-differ from (or match) the non-hover value.
+fallback for hover `origin` inheritance (`:254`) — and this is a genuine **VB-vs-PHP-front-end
+divergence**, not dead code. In PHP, the only caller
+(`Module/Options/Transform/TransformStyle.php::style()`) populates `$additional` with only
+`positionAttrs`, never `normalStateOrigin`, so PHP front-end render never inherits hover `origin`
+from the non-hover value — a hover state with no `origin` of its own renders with no
+`transform-origin` override at all. The Visual Builder does wire it up: compiled
+`visual-builder/build/module.js`'s hover-specific `declarationFunction` reads the non-hover origin
+directly off attrs (`p?.[e.breakpoint]?.value?.origin`) and threads it through as
+`normalStateOrigin`, and the JS mirror of `style_declaration()` in compiled
+`visual-builder/build/style-library.js` consumes it (`e.origin||o?.normalStateOrigin`), so the VB
+preview *does* fall back to the non-hover origin. Because PHP front-end render and the VB
+disagree here, set `origin` explicitly under `hover` whenever the rendered page needs to match
+what the Visual Builder previews.
 
 Minimal copy-paste `attrs` fragment (scale + rotate, distinct hover transform):
 
@@ -346,8 +370,11 @@ emission (shorthand composition order, scale's percentage-to-decimal conversion,
 transform-origin default-axis merge) from
 `server/Packages/StyleLibrary/Declarations/Transform/TransformTraits/ValueTrait.php` and
 `server/Packages/StyleLibrary/Declarations/Transform/TransformTraits/StyleDeclarationTrait.php`;
-the hover-resets-to-`none` behavior and the unwired `normalStateOrigin` fallback are both
-confirmed in the latter file. VB control-default values (`{x:"100%",y:"100%",linked:"on"}` scale,
+the hover-resets-to-`none` behavior is confirmed in the latter file. The VB-vs-PHP divergence in
+hover-`origin` inheritance (PHP never populates `normalStateOrigin`; the VB does) is confirmed by
+contrasting `server/Packages/Module/Options/Transform/TransformStyle.php::style()` against the
+hover `declarationFunction` in compiled `visual-builder/build/module.js` and its JS-side consumer
+in compiled `visual-builder/build/style-library.js`. VB control-default values (`{x:"100%",y:"100%",linked:"on"}` scale,
 `{x:"0px",y:"0px",linked:"on"}` translate, `{x:"0deg",y:"0deg",z:"0deg"}` rotate,
 `{x:"0deg",y:"0deg",linked:"on"}` skew, `{x:"50%",y:"50%"}` origin) and per-field labels,
 placeholders, and `defaultUnit`s (`px` for translate, `deg` for rotate/skew) confirmed against the
@@ -356,17 +383,8 @@ placeholders, and `defaultUnit`s (`px` for translate, `deg` for rotate/skew) con
 compiled `visual-builder/build/module.js`; `module.decoration.*` prefix and the full 5-subfield
 set cross-checked against
 `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2191-2215`. Path list cross-verified
-against `php scripts/extract-decoration-paths.php <builder5> --shared`:
-
-```
-$ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'transform'
-## transform (5)
-  module.decoration.transform__origin
-  module.decoration.transform__rotate
-  module.decoration.transform__scale
-  module.decoration.transform__skew
-  module.decoration.transform__translate
-```
+against `php scripts/extract-decoration-paths.php <builder5> --shared` (see the "Path
+verification" section).
 
 ---
 
@@ -383,9 +401,16 @@ themselves paths, not flat identifiers), from `module.decoration.sticky__positio
 | `module.decoration.sticky__offset.top` | length, e.g. `"20px"` | Default `"0px"`. `divi/range` field — vertical offset from the top edge of the viewport while stuck. |
 | `module.decoration.sticky__offset.bottom` | length, e.g. `"20px"` | Default `"0px"`. Same as above, from the bottom edge. |
 | `module.decoration.sticky__offset.surrounding` | enum: `"on"` \| `"off"` | Default `"on"`. `divi/toggle` field. Governs whether this element's own sticky offset accounts for a neighboring sticky element already stuck above/below it, so stacked sticky elements don't overlap. |
-| `module.decoration.sticky__limit.top` | enum: `"none"` \| `"body"` \| `"section"` \| `"row"` \| `"column"` | Default `"none"`. **Not a length**, despite the `"none"` default reading like an open-ended value — this is a `divi/select` of container-type keywords (confirmed option map in compiled `visual-builder/build/module.js`): the element stops sticking once the ancestor container of that type scrolls out of view. |
-| `module.decoration.sticky__limit.bottom` | enum: `"none"` \| `"body"` \| `"section"` \| `"row"` \| `"column"` | Default `"none"`. Same container-type enum, applied to the bottom edge. |
+| `module.decoration.sticky__limit.top` | enum: `"none"` \| `"body"` \| `"section"` \| `"row"` \| `"column"` | Default `"none"`. **Not a length**, despite the `"none"` default reading like an open-ended value — this is a `divi/select` of container-type keywords (confirmed option map in compiled `visual-builder/build/module.js`). It does not release the element from stickiness — it **re-anchors the sticky reference to that container's edge**: Divi's own field description reads *"If defined, this element will stick to the top of this container, overriding its stickiness edge of the browser"* (compiled `visual-builder/build/module.js`). |
+| `module.decoration.sticky__limit.bottom` | enum: `"none"` \| `"body"` \| `"section"` \| `"row"` \| `"column"` | Default `"none"`. Same container-type enum, re-anchoring to that container's bottom edge instead: *"If defined, this element will stick to the bottom of this container, overriding its stickiness to the edge of the browser"* (compiled `visual-builder/build/module.js`). |
 | `module.decoration.sticky__transition` | enum: `"on"` \| `"off"` | Default `"on"`. `divi/toggle` field. Animates the element's transition between its normal and stuck styles when it becomes (or stops being) sticky. |
+
+Every default above does double duty: it's both the VB control's displayed default and the value
+actually used when the attrs key is completely absent —
+`StickyUtils::format_sticky_setting()` returns its `$default_value` argument outright whenever
+`get_formatted_subname_values()` found no value at all for that subfield
+(`StickyUtils.php:167-169`), and those `$default_value` arguments are exactly the `defaultAttr`
+values shown in the table above (`StickyUtils.php:296-313`).
 
 **Dot-paths, not double-underscores**: Sticky's `offset.*`/`limit.*` sub-paths use a literal dot
 inside the `subName` (`offset.top`, never `offset__top`) — confirmed both server-side
@@ -409,19 +434,28 @@ does not apply to this family.
 with `features:{hover:false, sticky:false}` in its VB field config (confirmed for `position`,
 `offsetTop`, `offsetBottom`, `limitTop`, `limitBottom`, `offsetSurrounding`, and `transition`,
 compiled `visual-builder/build/module.js`), so there is no `desktop.hover` key to author for this
-family. Responsive (tablet/phone) values ARE part of the attrs shape —
+family. Responsive (tablet/phone) overrides, in contrast, ARE read and resolved — this is a
+genuinely supported variant, not merely a stored-but-inert value:
 `StickyUtils::get_formatted_subname_values()` walks every breakpoint key present under
-`attrs.module.decoration.sticky` (`StickyUtils.php:106-130`) — but the one caller that turns this
-into actual front-end sticky behavior, `StickyScriptData::set()`, invokes
-`StickyUtils::get_sticky_setting()` with a hardcoded `'breakpoint' => 'desktop', 'state' =>
-'value'` (`StickyScriptData.php:111-113`; the file's own inline comment flags this breakpoint
-value as a `TODO` that "might not be needed", i.e. Divi's own authors flagged it as provisional).
-Treat a tablet/phone-only override of any `sticky__*` subfield as **stored in attrs but not
-currently read into the front-end sticky behavior**, rather than as a supported responsive
-variant.
+`attrs.module.decoration.sticky` and returns a breakpoint-keyed value map
+(`StickyUtils.php:120-127`), and `format_sticky_setting()` passes that map through to the runtime
+sticky-setting payload as-is whenever more than one breakpoint is present, only collapsing to a
+bare scalar when `desktop` is the sole key (`StickyUtils.php:167-173`). The hardcoded
+`'breakpoint' => 'desktop', 'state' => 'value'` in `StickyScriptData.php:111-113` does **not**
+gate this walk — it is passed only into the separate incompatible-position guard,
+`ModuleUtils::get_attr_subname_value()` reading `affectingAttrs['position']['mode']`
+(`StickyUtils.php:323-330`), which checks whether the module's own `position` attribute is
+`absolute`/`fixed` (incompatible with sticky), not whether a sticky subfield has a
+breakpoint-specific value. At runtime, Divi's compiled sticky JS resolves the correct
+breakpoint's value itself: `getCurrentWindowMode()`
+(`visual-builder/build/script-library-utils-sticky.js`) determines the active breakpoint, and
+consumers such as `window.getClosestStickyModuleOffsetTop`
+(`visual-builder/build/script-library-sticky-elements.js`) read the per-breakpoint value with an
+explicit phone→tablet→desktop fallback chain when a breakpoint-specific key is missing. Author
+tablet/phone sticky overrides with confidence — they are read, not inert.
 
-Minimal copy-paste `attrs` fragment (stick to top, offset by 20px, released once its section
-scrolls away):
+Minimal copy-paste `attrs` fragment (stick to top, offset by 20px, re-anchored to its section's
+bottom edge instead of the browser window):
 
 ```json
 {
@@ -455,19 +489,8 @@ container-type enum (`none`/`body`/`section`/`row`/`column`), `offset.surroundin
 subfield's `hover:false` field flag are all confirmed in compiled
 `visual-builder/build/module.js`. `module.decoration.*` prefix and the full 7-subfield set
 cross-checked against `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2592-2626`. Path
-list cross-verified against `php scripts/extract-decoration-paths.php <builder5> --shared`:
-
-```
-$ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'sticky'
-## sticky (7)
-  module.decoration.sticky__limit.bottom
-  module.decoration.sticky__limit.top
-  module.decoration.sticky__offset.bottom
-  module.decoration.sticky__offset.surrounding
-  module.decoration.sticky__offset.top
-  module.decoration.sticky__position
-  module.decoration.sticky__transition
-```
+list cross-verified against `php scripts/extract-decoration-paths.php <builder5> --shared` (see
+the "Path verification" section).
 
 ---
 
