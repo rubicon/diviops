@@ -10,6 +10,13 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.9.0](https://github.com/rubicon/diviops/compare/v1.8.0...v1.9.0) (2026-07-28)
+
+
+### Features
+
+* add media domain (upload, get, list, set-featured-image) ([#28](https://github.com/rubicon/diviops/issues/28)) ([7bdc5d3](https://github.com/rubicon/diviops/commit/7bdc5d3a66e35185a41a46c91547bfdf93628974))
+
 ## [1.8.0](https://github.com/rubicon/diviops/compare/v1.7.0...v1.8.0) (2026-07-27)
 
 
