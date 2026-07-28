@@ -45,17 +45,25 @@ Divi splits every advanced decoration family into two layers:
 
 **Why the shared Options classes, not any one module's `PresetAttrsMap.php`, are the
 definition of record**: individual modules vary in how much of the shared vocabulary
-they re-declare. Text's `TextPresetAttrsMap.php` enumerates the full
+they *register* for preset save/load, even when the attribute itself is declared
+available. Text's `TextPresetAttrsMap.php` enumerates the full
 `module.decoration.boxShadow__*` / `module.decoration.filters__*` set explicitly
-(confirmed at `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2096-2192`).
+(confirmed at `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2096-2190`).
 Blurb's `BlurbPresetAttrsMap.php` declares **none** of the `module.decoration.*` shared
-families at all — Blurb only exposes `imageIcon.decoration.*` and
-`content.decoration.*` element-scoped groups (confirmed: `extract-decoration-paths.php
-<builder5> Blurb` errors with "zero decoration paths matched", by design — see
-`task-1-report.md`). Reading Text alone would over-generalize; reading Blurb alone would
-miss the family entirely. The shared `Module/Options/<Group>/<Group>PresetAttrsMap.php`
-classes are the one place the subfield vocabulary is guaranteed to be complete for
-every family, independent of which modules choose to expose it and under what prefix.
+families (confirmed: `extract-decoration-paths.php <builder5> Blurb` errors with "zero
+decoration paths matched", by design — see `task-1-report.md`) — **but this is a
+preset-map registration gap, not an attribute-availability gap.** Blurb's own
+`module.json` still declares `attributes.module.settings.decoration.boxShadow` and
+`.filters` as available option groups on its `module` element (confirmed: both keys
+present, as empty `{}` placeholders, same as Text's). In other words: `module.decoration.boxShadow`
+and `module.decoration.filters` are safe to send to a Blurb module — Blurb just doesn't
+list their subfields in its own `PresetAttrsMap.php`, so its preset system won't
+save/restore them by name the way it does for Text. Reading Text alone would
+over-generalize the *registration* completeness; reading Blurb alone would miss the
+subfield vocabulary entirely. The shared
+`Module/Options/<Group>/<Group>PresetAttrsMap.php` classes are the one place that
+vocabulary is guaranteed complete for every family, independent of which modules
+register it for presets and under what prefix.
 
 ---
 
@@ -66,13 +74,13 @@ every family, independent of which modules choose to expose it and under what pr
 
 | Path | Value shape | Notes |
 |---|---|---|
-| `module.decoration.boxShadow__style` | enum: `"none"` \| `"preset1"`–`"preset7"` | Selects one of 7 built-in shadow presets (offset/blur/spread/color bundles) or disables the shadow. There is no literal `"custom"` value — a custom shadow is authored by setting `style` to a preset and then overriding individual subfields (`horizontal`/`vertical`/`blur`/`spread`/`color`/`position`), which take precedence over the preset's own values. Missing/omitted key ≠ explicit `"none"`: `BoxShadow::value()` in the StyleLibrary declaration distinguishes "key absent" (let preset CSS apply) from "key present and `none`" (explicit override to no shadow). |
+| `module.decoration.boxShadow__style` | enum: `"none"` \| `"preset1"`–`"preset7"` | Selects one of 7 built-in shadow presets (offset/blur/spread/color bundles) or disables the shadow. There is no literal `"custom"` value — a custom shadow is authored by setting `style` to a preset and then overriding individual subfields (`horizontal`/`vertical`/`blur`/`spread`/`color`/`position`), which take precedence over the preset's own values. Missing/omitted key ≠ explicit `"none"`: `BoxShadow::value()` in the StyleLibrary declaration distinguishes "key absent" (let preset CSS apply) from "key present and `none`" (explicit override to no shadow). **No hover, no responsive override**: the VB field config for `style` sets `features:{hover:false,sticky:false,responsive:false}` — it's a single value for the whole module, not per-breakpoint or per-state. |
 | `module.decoration.boxShadow__horizontal` | length, e.g. `"0px"` | Horizontal offset. Presets use `px`; not unit-restricted. |
 | `module.decoration.boxShadow__vertical` | length, e.g. `"2px"` | Vertical offset. |
 | `module.decoration.boxShadow__blur` | length, e.g. `"18px"` | Blur radius. |
 | `module.decoration.boxShadow__spread` | length, e.g. `"0px"` or negative (`"-6px"`) | Spread radius; negative values are used by some built-in presets (preset3). |
 | `module.decoration.boxShadow__color` | color string, e.g. `"rgba(0,0,0,0.3)"` or hex | Any CSS color syntax Divi accepts elsewhere (hex, rgba, hsl, `$variable()$` global color token). |
-| `module.decoration.boxShadow__position` | enum: `"outer"` \| `"inner"` | `"inner"` emits CSS `inset`; `"outer"` (default) is a normal drop shadow. **Do not confuse with the separate `module.decoration.position` family** (absolute/relative/fixed positioning + origin/offset) — this `position` subfield only controls inner-vs-outer shadow rendering. |
+| `module.decoration.boxShadow__position` | enum: `"outer"` \| `"inner"` | `"inner"` emits CSS `inset`; `"outer"` (default) is a normal drop shadow. **Do not confuse with the separate `module.decoration.position` family** (absolute/relative/fixed positioning + origin/offset) — this `position` subfield only controls inner-vs-outer shadow rendering. **No hover**: the VB field config sets `features:{hover:false,sticky:false}` (responsive is still allowed). |
 
 The 7 built-in presets and their subfield bundles (from
 `StyleLibrary/Declarations/BoxShadow/BoxShadow.php`'s `$_presets`, all `position: "outer"`
@@ -93,8 +101,15 @@ All presets default `color: "rgba(0,0,0,0.3)"`.
 **Responsive + hover**: standard shape — `tablet`/`phone` siblings of `desktop` for
 responsive overrides (phone inherits tablet, tablet inherits desktop); hover values go
 under `desktop.hover` (a sibling of `desktop.value`), never as a top-level `hover` key.
-`StyleDeclarations`' state-aware inheritance (used by both BoxShadow and Filters) means
-partial hover overrides (e.g. hover-only `color`) inherit the rest from `value`.
+**Exceptions**: `style` supports neither hover nor responsive (see table above);
+`position` supports responsive but not hover. The remaining subfields
+(`horizontal`/`vertical`/`blur`/`spread`/`color`) support both. Where hover is
+supported, inheritance is handled by `ModuleUtils::use_attr_value()` (called with
+`mode: 'getAndInheritAll'` from `BoxShadowStyle.php:218-225`) — **not** by
+`StyleDeclarations` (`server/Packages/StyleLibrary/Utils/StyleDeclarations.php` contains
+no inheritance logic at all; it only assembles the final CSS declaration string/array).
+A partial hover override (e.g. hover-only `color`) resolves the rest of the shadow from
+`value` via that same utility.
 
 Minimal copy-paste `attrs` fragment (custom shadow, hover color swap):
 
@@ -124,8 +139,12 @@ Minimal copy-paste `attrs` fragment (custom shadow, hover color swap):
 **Provenance**: shared subfield vocabulary from
 `server/Packages/Module/Options/BoxShadow/BoxShadowPresetAttrsMap.php` (`get_map()`);
 CSS emission (units, preset table, inner/outer → `inset`) from
-`server/Packages/StyleLibrary/Declarations/BoxShadow/BoxShadow.php`; `module.decoration.*`
-prefix cross-checked against `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2096-2145`;
+`server/Packages/StyleLibrary/Declarations/BoxShadow/BoxShadow.php`; hover/responsive
+inheritance mechanism from `server/Packages/Module/Options/BoxShadow/BoxShadowStyle.php:218-225`
+(`ModuleUtils::use_attr_value( mode: 'getAndInheritAll' )`); per-subfield hover/responsive
+`features` flags (`style`: none of either, `position`: no hover) from the VB field
+definitions in compiled `visual-builder/build/module.js`; `module.decoration.*` prefix
+cross-checked against `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2096-2145`;
 `style` enum values (`none`, `preset1`–`preset7`) confirmed against the VB's
 `divi.module.options.boxShadow.styleOptions` filter default and preset label strings in
 compiled `visual-builder/build/module.js`. Path list cross-verified against
@@ -146,7 +165,16 @@ excluded from the `filter:` value-building loop and added via its own
 `$style_declarations->add( 'mix-blend-mode', ... )` call). All 9 still share the same
 `module.decoration.filters__*` subfield map and the same responsive/hover shape.
 
-| Path | Value shape | Default | Notes |
+The "Default" column below is the VB **control** default (`defaultAttr` shown when a
+user opens the field with no value set) — not a fallback value the renderer substitutes
+when the key is omitted. `Filters::value()` skips any subfield that isn't `isset()` on
+the attr array entirely, so an omitted `saturate` key emits no `saturate(...)` term in
+the `filter:` shorthand at all, rather than emitting `saturate(100%)`. Writing the
+default explicitly and omitting the key are only equivalent for the *rendered CSS
+output* in the specific case where the browser's own initial value for that filter
+function matches Divi's control default (true for all 8 numeric filter functions here).
+
+| Path | Value shape | VB control default | Notes |
 |---|---|---|---|
 | `module.decoration.filters__blur` | length, e.g. `"4px"` | `"0px"` | CSS `blur()` — length unit (`px`), NOT a percentage. |
 | `module.decoration.filters__brightness` | percentage, e.g. `"120%"` | `"100%"` | `100%` = unchanged; below dims, above brightens. |
@@ -156,16 +184,19 @@ excluded from the `filter:` value-building loop and added via its own
 | `module.decoration.filters__opacity` | percentage, e.g. `"80%"` | `"100%"` | This is the CSS *filter* `opacity()` function (part of the `filter:` shorthand), not the module's own opacity/background-opacity setting. |
 | `module.decoration.filters__saturate` | percentage, e.g. `"150%"` | `"100%"` | `100%` = unchanged; `0%` = grayscale. |
 | `module.decoration.filters__sepia` | percentage, e.g. `"60%"` | `"0%"` | `100%` = full sepia tone. |
-| `module.decoration.filters__blendMode` | enum (CSS `mix-blend-mode` keyword) | `"normal"` | `normal`, `multiply`, `screen`, `overlay`, `darken`, `lighten`, `color-dodge`, `color-burn`, `hard-light`, `soft-light`, `difference`, `exclusion`, `hue`, `saturation`, `color`, `luminosity`. Divi passes this value straight through to the `mix-blend-mode` CSS property with no intermediate validation, so the valid set is exactly the CSS spec's `mix-blend-mode` keyword list (confirmed present verbatim as a CSS-value reference table inside Divi's own compiled `visual-builder/build/field-library.js`; not a Divi-specific subset). |
+| `module.decoration.filters__blendMode` | enum (CSS `mix-blend-mode` keyword) | `"normal"` | `normal`, `multiply`, `screen`, `overlay`, `darken`, `lighten`, `color-dodge`, `color-burn`, `hard-light`, `soft-light`, `difference`, `exclusion`, `hue`, `saturation`, `color`, `luminosity`. This is Divi's own first-party option list for the field (a 16-entry labeled map — "Normal", "Multiply", "Screen", … — wired directly to the `blendMode` select in the Filters group definition in compiled `visual-builder/build/module.js`), not a generic CSS reference table; it happens to equal the full CSS `mix-blend-mode` keyword set. **No hover, no sticky**: the VB field config sets `features:{hover:false,sticky:false}` for this subfield specifically — the other 8 filter subfields don't carry that restriction. |
 
 **Units at a glance**: `blur` = length (`px`); `hueRotate` = angle (`deg`); everything
 else (`brightness`, `contrast`, `invert`, `opacity`, `saturate`, `sepia`) = percentage
 (`%`); `blendMode` = keyword enum, not a numeric unit at all.
 
 **Responsive + hover**: same shape as Box Shadow — `tablet`/`phone` siblings of
-`desktop`, hover under `desktop.hover`. Filters' style declaration explicitly threads
-breakpoint/state through `ModuleUtils::use_attr_value(... mode: 'getAndInheritAll')`,
-so a hover-only override of one subfield (e.g. hover-only `saturate`) correctly
+`desktop`, hover under `desktop.hover`. **Exception**: `blendMode` supports neither
+hover nor sticky (see table above); the other 8 subfields support both. Filters' style
+declaration explicitly threads breakpoint/state through
+`ModuleUtils::use_attr_value(... mode: 'getAndInheritAll')` (`Filters.php:118-126`,
+same utility and mode as Box Shadow — not `StyleDeclarations`, which has no inheritance
+logic), so a hover-only override of one subfield (e.g. hover-only `saturate`) correctly
 inherits the rest of the filter stack from `value` rather than resetting it.
 
 Minimal copy-paste `attrs` fragment (desaturate + brighten on hover):
@@ -191,13 +222,18 @@ Minimal copy-paste `attrs` fragment (desaturate + brighten on hover):
 
 **Provenance**: shared subfield vocabulary from
 `server/Packages/Module/Options/Filters/FiltersPresetAttrsMap.php` (`get_map()`); CSS
-emission (`filter:` shorthand composition, `mix-blend-mode` split-out) from
-`server/Packages/StyleLibrary/Declarations/Filters/Filters.php`; default values and
-units (`hueRotate: "0deg"`, `blur: "0px"`, all others `%`, `blendMode: "normal"`)
-confirmed against the defaults object in compiled `visual-builder/build/module.js` /
-`style-library.js`; `blendMode`'s CSS keyword enum confirmed against the `mix-blend-mode`
-value grammar in compiled `visual-builder/build/field-library.js`; `module.decoration.*`
-prefix cross-checked against `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2146-2192`.
+emission (`filter:` shorthand composition — including the isset-only iteration that
+skips omitted subfields — and the `mix-blend-mode` split-out) and the
+`ModuleUtils::use_attr_value()` inheritance call from
+`server/Packages/StyleLibrary/Declarations/Filters/Filters.php:35-72` (value-building
+loop) and `:97-146` (`style_declaration()`, the inheritance call at `:118-126`); VB
+control-default values and units (`hueRotate: "0deg"`, `blur: "0px"`, all others `%`,
+`blendMode: "normal"`) confirmed against the defaults object in compiled
+`visual-builder/build/module.js`; `blendMode`'s first-party option map (the 16-entry
+labeled list wired to its `divi/select` field, matching the CSS `mix-blend-mode`
+keyword set) and its `hover:false,sticky:false` field-feature flags both confirmed in
+the same compiled `visual-builder/build/module.js`; `module.decoration.*` prefix
+cross-checked against `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2146-2190`.
 Path list cross-verified against `php scripts/extract-decoration-paths.php <builder5> --shared`
 (see verification below).
 
