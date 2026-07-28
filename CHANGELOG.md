@@ -10,6 +10,13 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.9.1](https://github.com/rubicon/diviops/compare/v1.9.0...v1.9.1) (2026-07-28)
+
+
+### Bug Fixes
+
+* **media:** security hotfix — attach_to authz, resolver gate, URL size cap, dry_run coercion ([#78](https://github.com/rubicon/diviops/issues/78)) ([4b0e176](https://github.com/rubicon/diviops/commit/4b0e176998e63cea9c8952f3843a86b1afc1705a))
+
 ## [1.9.0](https://github.com/rubicon/diviops/compare/v1.8.0...v1.9.0) (2026-07-28)
 
 
