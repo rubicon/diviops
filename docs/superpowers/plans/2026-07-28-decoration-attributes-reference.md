@@ -17,11 +17,37 @@
 - **Scope = the shared cross-module decoration families only:** boxShadow, filters, transform, sticky, transition, scroll, animation. NOT per-module element maps (#63), NOT $variable/Interactions (#64), NOT CSS-classes/WebGL (`design-effects.md`).
 - Signed commits; NO AI-authorship trailer. Local Divi install path: `…/colleyvillelions/app/public/wp-content/themes/Divi/includes/builder-5`.
 
-## Ground truth (confirmed 2026-07-28)
+## Ground truth (confirmed 2026-07-28, corrected after Task 1)
 
-- Canonical source: `server/Packages/ModuleLibrary/<Module>/<Module>PresetAttrsMap.php` — contains `'module.decoration.<family>__<sub>' => [...]` entries. Confirmed families/subfields on `Text`: `boxShadow__{style,horizontal,vertical,blur,spread,color,position}`, `filters__{blur,brightness,contrast,hueRotate,invert,opacity,saturate,sepia,blendMode}`, `animation__{style,direction,duration,delay,intensity.{slide,zoom,flip,fold,roll},repeat,speedCurve,startingOpacity}`, `scroll__{blur,fade,horizontalMotion,...}(.enable)`, plus `transform`/`transition`/`sticky`.
-- Value shapes live in `server/Packages/StyleLibrary/Declarations/<Group>/` (e.g. `Transform/`) and `server/Packages/Module/Options/<Group>/`.
-- `module.json` `attributes.module.settings.decoration` enumerates which families a module supports.
+Divi splits the decoration system into a **shared subfield vocabulary** and a
+**per-element prefix**. This is the key structural fact the reference must convey:
+
+- **AUTHORITATIVE source (shared vocabulary):**
+  `server/Packages/Module/Options/<Group>/<Group>PresetAttrsMap.php`, each with
+  `public static function get_map( string $attr_name )` returning
+  `"{$attr_name}__<subField>"` entries. All seven in-scope families have one:
+  BoxShadow (71 lines), Filters (81), Transform (61), Sticky (71),
+  Transition (51), Scroll (107), Animation (96). Confirmed BoxShadow subfields:
+  `__style, __horizontal, __vertical, __blur, __spread, __color, __position`.
+  **Tasks 2–4 author from the extractor's `--shared` output, which reads these.**
+- **Prefix:** the module supplies `$attr_name`. `module.decoration.<family>` is
+  the module-wrapper prefix (universal, and the subject of #62). Module-specific
+  element prefixes (`imageIcon.decoration.<family>`, `content.decoration.<family>`)
+  are #63's territory, not this reference's.
+- **Per-module maps vary and are only a cross-check:**
+  `server/Packages/ModuleLibrary/<Module>/<Module>PresetAttrsMap.php`. `Text` is a
+  3627-line full enumeration containing `module.decoration.*`; `Blurb` is a
+  75-line override (`get_map($map,$module_name)` + `array_merge`) carrying only
+  `imageIcon.*`/`content.*` and **zero** `module.decoration.*`. Do not treat any
+  single module's map as the definition of the shared system.
+- Value shapes/enums live in `server/Packages/StyleLibrary/Declarations/<Group>/`
+  and the option group's own classes under `Module/Options/<Group>/`.
+- `module.json` `attributes.module.settings.decoration` enumerates which families
+  a given module supports (all seven present on the modules checked).
+
+**Composition rule the reference must state explicitly:**
+`<elementPath>.decoration.<family>__<subField>` — where `<elementPath>` is
+`module` for the wrapper (this doc), and per-module element paths are #63.
 
 ## File Structure
 
@@ -95,7 +121,7 @@ git commit -S -m "chore(skills): reproducible decoration dot-path extractor from
 
 - [ ] **Step 3: Author `## Filters`.** From the extracted list: `module.decoration.filters__{blur,brightness,contrast,hueRotate,invert,opacity,saturate,sepia,blendMode}`. Value shapes + units (%, deg) + blendMode enum, from `StyleLibrary/Declarations/Filters`. Minimal example. Tag `*(verified 2026-07-28)*` + provenance.
 
-- [ ] **Step 4: Verify each documented path exists in the extractor output** (no invented paths). Run: `php scripts/extract-decoration-paths.php <b5> Text | grep -E 'boxShadow|filters'` and diff against the paths you documented — every documented path must appear. Fix any mismatch.
+- [ ] **Step 4: Verify each documented path exists in the extractor output** (no invented paths). Run: `php scripts/extract-decoration-paths.php <b5> --shared | grep -E 'boxShadow|filters'` — the `--shared` mode reads the authoritative `Module/Options/<Group>/<Group>PresetAttrsMap.php` classes. Every documented path must appear in that output. Cross-check against the per-module mode (`… <b5> Text`) to confirm the `module.decoration.` prefix is real. Fix any mismatch.
 
 - [ ] **Step 5: Commit.**
 ```bash
@@ -109,7 +135,7 @@ git commit -S -m "docs(skills): advanced-attributes reference — boxShadow + fi
 
 **Files:** Modify `skills/divi-5-builder/references/advanced-attributes.md` (append `## Transform` + `## Sticky Position`).
 
-- [ ] **Step 1: Extract the transform + sticky paths.** Run the extractor for `Text` (and cross-check `Button`), capture the `transform`/`sticky` groups. Read `StyleLibrary/Declarations/Transform` + `Module/Options/Transform` for the value shapes.
+- [ ] **Step 1: Extract the transform + sticky paths.** Run `php scripts/extract-decoration-paths.php <b5> --shared` (authoritative) and capture the `transform`/`sticky` groups; cross-check with the per-module mode on `Text`. Read `StyleLibrary/Declarations/Transform` + `Module/Options/Transform` and `Module/Options/Sticky` for the value shapes/enums.
 
 - [ ] **Step 2: Author `## Transform`.** Document `module.decoration.transform__*` (translate/scale/rotate/skew/origin as the map shows), value shapes, responsive/`:hover` variants, one example. Tag `*(verified 2026-07-28)*` (promoted in Task 5) + provenance.
 
@@ -129,7 +155,7 @@ git commit -S -am "docs(skills): advanced-attributes reference — transform + s
 
 **Files:** Modify `skills/divi-5-builder/references/advanced-attributes.md` (append `## Transition`, `## Scroll Effects`, `## Entrance Animation`).
 
-- [ ] **Step 1: Extract transition/scroll/animation paths** (extractor `Text`, cross-check `Blurb`). Note `scroll__<effect>.enable` nesting and `animation__intensity.{slide,zoom,flip,fold,roll}`.
+- [ ] **Step 1: Extract transition/scroll/animation paths.** Run `php scripts/extract-decoration-paths.php <b5> --shared` (authoritative — reads `Module/Options/{Transition,Scroll,Animation}/*PresetAttrsMap.php`); cross-check with the per-module mode on `Text`. Note any nesting the extractor reports faithfully (e.g. `scroll__<effect>.enable`, `animation__intensity.{slide,zoom,flip,fold,roll}`) — document what is actually there, do not normalize.
 
 - [ ] **Step 2: Author `## Transition`.** `module.decoration.transition__{duration,delay,speedCurve}` (per the map), value shapes/units, one example. `*(verified 2026-07-28)*` (promoted in Task 5) + provenance.
 
