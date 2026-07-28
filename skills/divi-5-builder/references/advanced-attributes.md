@@ -272,3 +272,199 @@ output — none invented. Cross-checked against the per-module extractor
 (`php scripts/extract-decoration-paths.php <builder5> Text`), which additionally
 confirms the `module.decoration.` prefix is real (Text's own `TextPresetAttrsMap.php`
 declares the identical subfield set under that exact prefix).
+
+---
+
+## Transform
+
+5 subfields, from `module.decoration.transform__{origin,rotate,scale,skew,translate}`
+*(verified 2026-07-28)*.
+
+| Path | Value shape | Notes |
+|---|---|---|
+| `module.decoration.transform__scale` | object `{x, y}` percentages, e.g. `{"x":"110%","y":"110%"}` | VB control default `{x:"100%",y:"100%",linked:"on"}` — `100%`/`100%` = no scaling. The `linked` key only drives the VB's proportional x/y-lock UI convenience; `Transform::value()` reads only `x`/`y` and ignores `linked`, so it can be omitted from hand-authored attrs. |
+| `module.decoration.transform__translate` | object `{x, y}` lengths, e.g. `{"x":"20px","y":"-10px"}` | VB control default `{x:"0px",y:"0px",linked:"on"}`. Any CSS length unit is accepted, not just `px`; `linked` is VB-UI-only, same as scale. |
+| `module.decoration.transform__rotate` | object `{x, y, z}` angles, e.g. `{"z":"15deg"}` | VB control default `{x:"0deg",y:"0deg",z:"0deg"}`. Three axes: `x`/`y` are 3D flips, `z` is the familiar 2D spin. |
+| `module.decoration.transform__skew` | object `{x, y}` angles, e.g. `{"x":"8deg","y":"0deg"}` | VB control default `{x:"0deg",y:"0deg",linked:"on"}`. `linked` is VB-UI-only, same as scale/translate. |
+| `module.decoration.transform__origin` | object `{x, y}` percentages, e.g. `{"x":"50%","y":"50%"}` | VB control default `{x:"50%",y:"50%"}` (dead center). When `origin` is present but only one axis is set, `Transform::style_declaration()` merges the missing axis in from a server-side default of `{x:"50%",y:"50%"}` before emitting `transform-origin` — confirmed `TransformTraits/StyleDeclarationTrait.php:319-327`. |
+
+**Composition**: unlike Box Shadow's independent subfields, `scale`/`translate`/`rotate`/`skew`
+all compose into a single `transform:` CSS shorthand in a fixed order —
+`scaleX() scaleY() translateX() translateY() rotateX() rotateY() rotateZ() skewX() skewY()`
+— confirmed in `StyleLibrary/Declarations/Transform/TransformTraits/ValueTrait.php::value()`
+(`:98-183`). Percentage strings for `scale` are converted to a decimal literal before being
+embedded (`"110%"` → `scaleX(1.1)`) via `render_percentage()` (`:42-48`); `translate`/`rotate`/`skew`
+values are emitted as literal strings with whatever unit was supplied, no conversion. If none
+of the four transform-function subfields are present for a given breakpoint/state, no `transform`
+property is emitted for that state at all (the caller's `Utils::style_statements` loop produces
+nothing to print).
+
+**Responsive + hover**: same tablet/phone-siblings-of-desktop responsive shape as Box Shadow and
+Filters (shared `Utils::style_statements` breakpoint machinery —
+`Module/Layout/Components/Style/Utils/UtilsTraits/GetStatementsTrait.php:323`); hover values live
+under `desktop.hover`. **Unlike Box Shadow/Filters**, Transform's CSS emission is *not* built via
+`ModuleUtils::use_attr_value(... 'mode' => 'getAndInheritAll')` — that call does not appear
+anywhere under `Module/Options/Transform` or `StyleLibrary/Declarations/Transform` (confirmed by
+grepping both directories for `getAndInheritAll`: zero matches). Hover behavior is instead
+hand-rolled in `TransformTraits/StyleDeclarationTrait.php::style_declaration()`: when the hover
+state carries no scale/translate/rotate/skew values of its own, the declaration explicitly emits
+`transform: none` (`:311-316`) rather than falling back to the non-hover value — a hover-only
+`attrs` fragment that sets nothing under `transform` therefore *resets* the transform on hover, it
+does not inherit desktop's transform. The same trait reads an `$additional['normalStateOrigin']`
+fallback for hover `origin` inheritance (`:254`), but no caller along the only call path found
+(`Module/Options/Transform/TransformStyle.php::style()`, which populates `$additional` with only
+`positionAttrs`) was found supplying it — treat automatic hover-`origin` inheritance from the
+non-hover value as `<!-- UNVERIFIED -->`; set `origin` explicitly under `hover` if it needs to
+differ from (or match) the non-hover value.
+
+Minimal copy-paste `attrs` fragment (scale + rotate, distinct hover transform):
+
+```json
+{
+  "module": {
+    "decoration": {
+      "transform": {
+        "desktop": {
+          "value": {
+            "scale": {"x": "100%", "y": "100%"},
+            "rotate": {"z": "0deg"}
+          },
+          "hover": {
+            "scale": {"x": "105%", "y": "105%"},
+            "rotate": {"z": "3deg"}
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Provenance**: shared subfield vocabulary from
+`server/Packages/Module/Options/Transform/TransformPresetAttrsMap.php` (`get_map()`); CSS
+emission (shorthand composition order, scale's percentage-to-decimal conversion,
+transform-origin default-axis merge) from
+`server/Packages/StyleLibrary/Declarations/Transform/TransformTraits/ValueTrait.php` and
+`server/Packages/StyleLibrary/Declarations/Transform/TransformTraits/StyleDeclarationTrait.php`;
+the hover-resets-to-`none` behavior and the unwired `normalStateOrigin` fallback are both
+confirmed in the latter file. VB control-default values (`{x:"100%",y:"100%",linked:"on"}` scale,
+`{x:"0px",y:"0px",linked:"on"}` translate, `{x:"0deg",y:"0deg",z:"0deg"}` rotate,
+`{x:"0deg",y:"0deg",linked:"on"}` skew, `{x:"50%",y:"50%"}` origin) and per-field labels,
+placeholders, and `defaultUnit`s (`px` for translate, `deg` for rotate/skew) confirmed against the
+`Bg` defaults object and the `divi/transform-scale` / `divi/transform-translate` /
+`divi/transform-rotate` / `divi/transform-skew` / `divi/transform-origin` field definitions in
+compiled `visual-builder/build/module.js`; `module.decoration.*` prefix and the full 5-subfield
+set cross-checked against
+`server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2191-2215`. Path list cross-verified
+against `php scripts/extract-decoration-paths.php <builder5> --shared`:
+
+```
+$ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'transform'
+## transform (5)
+  module.decoration.transform__origin
+  module.decoration.transform__rotate
+  module.decoration.transform__scale
+  module.decoration.transform__skew
+  module.decoration.transform__translate
+```
+
+---
+
+## Sticky Position
+
+7 subfields (note the nested dot-paths — this is the one shared family whose subnames are
+themselves paths, not flat identifiers), from `module.decoration.sticky__position`,
+`sticky__offset.{top,bottom,surrounding}`, `sticky__limit.{top,bottom}`, `sticky__transition`
+*(verified 2026-07-28)*.
+
+| Path | Value shape | Notes |
+|---|---|---|
+| `module.decoration.sticky__position` | enum: `"none"` \| `"top"` \| `"bottom"` \| `"topBottom"` | Default `"none"` (not sticky). VB option labels: "Do Not Stick" / "Stick to Top" / "Stick to Bottom" / "Stick to Top and Bottom" (compiled `visual-builder/build/module.js` option map). The three non-`"none"` values match `StickyUtils::get_valid_sticky_position()` exactly; `"none"` is the implicit off-state default, not part of that helper's return array. |
+| `module.decoration.sticky__offset.top` | length, e.g. `"20px"` | Default `"0px"`. `divi/range` field — vertical offset from the top edge of the viewport while stuck. |
+| `module.decoration.sticky__offset.bottom` | length, e.g. `"20px"` | Default `"0px"`. Same as above, from the bottom edge. |
+| `module.decoration.sticky__offset.surrounding` | enum: `"on"` \| `"off"` | Default `"on"`. `divi/toggle` field. Governs whether this element's own sticky offset accounts for a neighboring sticky element already stuck above/below it, so stacked sticky elements don't overlap. |
+| `module.decoration.sticky__limit.top` | enum: `"none"` \| `"body"` \| `"section"` \| `"row"` \| `"column"` | Default `"none"`. **Not a length**, despite the `"none"` default reading like an open-ended value — this is a `divi/select` of container-type keywords (confirmed option map in compiled `visual-builder/build/module.js`): the element stops sticking once the ancestor container of that type scrolls out of view. |
+| `module.decoration.sticky__limit.bottom` | enum: `"none"` \| `"body"` \| `"section"` \| `"row"` \| `"column"` | Default `"none"`. Same container-type enum, applied to the bottom edge. |
+| `module.decoration.sticky__transition` | enum: `"on"` \| `"off"` | Default `"on"`. `divi/toggle` field. Animates the element's transition between its normal and stuck styles when it becomes (or stops being) sticky. |
+
+**Dot-paths, not double-underscores**: Sticky's `offset.*`/`limit.*` sub-paths use a literal dot
+inside the `subName` (`offset.top`, never `offset__top`) — confirmed both server-side
+(`StickyPresetAttrsMap.php::get_map()` `:39-63`) and in the VB field configs' own `subName` props
+(e.g. `subName:"limit.bottom"`, compiled `visual-builder/build/module.js`). Do not flatten these
+to a double-underscore form when authoring attrs.
+
+**Mechanism — this family is not a CSS declaration at all**: there is no
+`StyleLibrary/Declarations/Sticky` directory in this Divi build (confirmed: no such path exists
+under `server/Packages/StyleLibrary/Declarations`). Instead, `module.decoration.sticky__*` values
+are read by `StickyScriptData::set()`
+(`server/Packages/Module/Options/Sticky/StickyScriptData.php:64-125`) into a runtime record
+registered via `ScriptData::add_data_item(['data_name' => 'sticky', ...])` (`:118-124`), which
+Divi's own compiled sticky JS (`visual-builder/build/script-library-sticky-elements.js`,
+`script-library-utils-sticky.js`) reads to attach scroll listeners at runtime. There is no
+`ModuleUtils::use_attr_value(... 'mode' => 'getAndInheritAll')` call anywhere under
+`Module/Options/Sticky` either (confirmed by grep) — that mechanism, used by Box Shadow/Filters,
+does not apply to this family.
+
+**Responsive + hover**: no hover variant exists for any sticky subfield — every one is declared
+with `features:{hover:false, sticky:false}` in its VB field config (confirmed for `position`,
+`offsetTop`, `offsetBottom`, `limitTop`, `limitBottom`, `offsetSurrounding`, and `transition`,
+compiled `visual-builder/build/module.js`), so there is no `desktop.hover` key to author for this
+family. Responsive (tablet/phone) values ARE part of the attrs shape —
+`StickyUtils::get_formatted_subname_values()` walks every breakpoint key present under
+`attrs.module.decoration.sticky` (`StickyUtils.php:106-130`) — but the one caller that turns this
+into actual front-end sticky behavior, `StickyScriptData::set()`, invokes
+`StickyUtils::get_sticky_setting()` with a hardcoded `'breakpoint' => 'desktop', 'state' =>
+'value'` (`StickyScriptData.php:111-113`; the file's own inline comment flags this breakpoint
+value as a `TODO` that "might not be needed", i.e. Divi's own authors flagged it as provisional).
+Treat a tablet/phone-only override of any `sticky__*` subfield as **stored in attrs but not
+currently read into the front-end sticky behavior**, rather than as a supported responsive
+variant.
+
+Minimal copy-paste `attrs` fragment (stick to top, offset by 20px, released once its section
+scrolls away):
+
+```json
+{
+  "module": {
+    "decoration": {
+      "sticky": {
+        "desktop": {
+          "value": {
+            "position": "top",
+            "offset": {"top": "20px", "bottom": "0px", "surrounding": "on"},
+            "limit": {"top": "none", "bottom": "section"},
+            "transition": "on"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Provenance**: shared subfield vocabulary, including the literal `offset.top`/`limit.bottom`
+dot-paths, from `server/Packages/Module/Options/Sticky/StickyPresetAttrsMap.php` (`get_map()`);
+default values (`position:"none"`, `offset.top`/`offset.bottom:"0px"`, `offset.surrounding:"on"`,
+`limit.top`/`limit.bottom:"none"`, `transition:"on"`) and the valid-position enum
+(`top`/`bottom`/`topBottom`) confirmed in
+`server/Packages/Module/Options/Sticky/StickyUtils.php` (`get_sticky_setting()`'s `defaultAttr`
+at `:296-313`, `get_valid_sticky_position()` at `:509-515`); the runtime-not-CSS mechanism
+confirmed in `server/Packages/Module/Options/Sticky/StickyScriptData.php`; `limit.*`'s
+container-type enum (`none`/`body`/`section`/`row`/`column`), `offset.surrounding`'s and
+`transition`'s toggle field type, the `position` enum's option labels, and every sticky
+subfield's `hover:false` field flag are all confirmed in compiled
+`visual-builder/build/module.js`. `module.decoration.*` prefix and the full 7-subfield set
+cross-checked against `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2592-2626`. Path
+list cross-verified against `php scripts/extract-decoration-paths.php <builder5> --shared`:
+
+```
+$ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'sticky'
+## sticky (7)
+  module.decoration.sticky__limit.bottom
+  module.decoration.sticky__limit.top
+  module.decoration.sticky__offset.bottom
+  module.decoration.sticky__offset.surrounding
+  module.decoration.sticky__offset.top
+  module.decoration.sticky__position
+  module.decoration.sticky__transition
+```
