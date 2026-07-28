@@ -141,11 +141,25 @@ assert_true(
 // SVG is a stored-XSS vector, so it is allowed only when Safe SVG's OWN callback is
 // verified active on the exact filter our upload path fires (wp_handle_sideload_
 // prefilter) — has_filter() alone would only prove *something* is listening, not
-// that it sanitizes, so the guard scans $wp_filter for a `safe_svg` instance.
-// Allow svg mime for these cases so the ONLY gate under test is the sanitizer.
+// that it sanitizes, so the guard scans $wp_filter for a Safe SVG instance.
+//
+// The stub below is namespaced (SafeSvg\safe_svg via class_alias), matching Safe
+// SVG 2.4.0's real class as confirmed live on the running site (safe-svg.php
+// declares `namespace SafeSvg;`, and $wp_filter carries SafeSvg\safe_svg::
+// check_for_svg as the live callback) — NOT a bare global `safe_svg` class, which
+// would silently model a class that doesn't exist in the real plugin and hide a
+// namespace mismatch, as it did in the prior pass. A second, separately-named
+// global stub models the legacy Safe SVG 1.x class, which really is global.
+
+if ( ! class_exists( 'SafeSvg\\safe_svg' ) ) {
+	class DiviOps_Test_SafeSvg_Namespaced {
+		public function check_for_svg( $f ) { return $f; }
+	}
+	class_alias( 'DiviOps_Test_SafeSvg_Namespaced', 'SafeSvg\\safe_svg' );
+}
 
 if ( ! class_exists( 'safe_svg' ) ) {
-	class safe_svg {
+	class safe_svg { // phpcs:ignore -- legacy Safe SVG 1.x's real (global) class name.
 		public function check_for_svg( $f ) { return $f; }
 	}
 }
@@ -153,13 +167,13 @@ if ( ! class_exists( 'safe_svg' ) ) {
 $GLOBALS['diviops_test_allowed_mimes']        = array( 'png' => 'image/png', 'svg' => 'image/svg+xml' );
 $GLOBALS['diviops_test_filetype']['logo.svg'] = array( 'ext' => 'svg', 'type' => 'image/svg+xml', 'proper_filename' => false );
 
-// Case 1: Safe SVG's own callback registered — accepted.
+// Case 1: Safe SVG 2.x's real namespaced callback registered — accepted.
 $GLOBALS['wp_filter']['wp_handle_sideload_prefilter'] = array(
-	10 => array( 'x' => array( 'function' => array( new safe_svg(), 'check_for_svg' ), 'accepted_args' => 1 ) ),
+	10 => array( 'x' => array( 'function' => array( new SafeSvg\safe_svg(), 'check_for_svg' ), 'accepted_args' => 1 ) ),
 );
 assert_true(
 	null === diviops_call_static( 'media_filetype_error', array( 'logo.svg', '/tmp/x' ) ),
-	'svg accepted when Safe SVG callback active'
+	'svg accepted when namespaced SafeSvg\\safe_svg callback active'
 );
 
 // Case 2: an unrelated callback on the same filter — rejected (not a sanitizer).
@@ -176,6 +190,15 @@ $GLOBALS['wp_filter']['wp_handle_sideload_prefilter'] = array();
 assert_true(
 	null !== diviops_call_static( 'media_filetype_error', array( 'logo.svg', '/tmp/x' ) ),
 	'svg rejected when no sideload sanitizer'
+);
+
+// Case 4: legacy global safe_svg (Safe SVG 1.x) callback registered — accepted.
+$GLOBALS['wp_filter']['wp_handle_sideload_prefilter'] = array(
+	10 => array( 'z' => array( 'function' => array( new safe_svg(), 'check_for_svg' ), 'accepted_args' => 1 ) ),
+);
+assert_true(
+	null === diviops_call_static( 'media_filetype_error', array( 'logo.svg', '/tmp/x' ) ),
+	'svg accepted when legacy global safe_svg callback active'
 );
 
 unset( $GLOBALS['wp_filter'], $GLOBALS['diviops_test_allowed_mimes'] );

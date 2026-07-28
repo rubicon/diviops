@@ -140,10 +140,13 @@ trait DiviOps_Agent_Media {
 	 * wp_handle_sideload_prefilter; has_filter() alone only proves *something*
 	 * is listening, not that it sanitizes — an unrelated plugin's callback on
 	 * the same hook would otherwise let an unsanitized SVG through. This scans
-	 * $wp_filter directly for a callback bound to a `safe_svg` instance. Fail
-	 * closed: if Safe SVG isn't loaded, the `safe_svg` class is undefined and
-	 * `instanceof safe_svg` is false (safe in PHP even against an undefined
-	 * class), so an unrecognized or absent callback is rejected.
+	 * $wp_filter directly for a callback bound to a Safe SVG instance, matched
+	 * by class name via is_a() rather than instanceof so both the current
+	 * namespaced class (Safe SVG 2.x: SafeSvg\safe_svg, confirmed live on the
+	 * running site by dumping $wp_filter) and the legacy global class (Safe
+	 * SVG 1.x: safe_svg) are detected without either needing to be defined at
+	 * compile time. Fail closed: if neither class matches, the callback is
+	 * rejected.
 	 */
 	private static function media_svg_sideload_sanitizer_active(): bool {
 		global $wp_filter;
@@ -155,8 +158,8 @@ trait DiviOps_Agent_Media {
 		foreach ( (array) $callbacks as $priority_group ) {
 			foreach ( (array) $priority_group as $registered ) {
 				$fn = ( is_array( $registered ) && isset( $registered['function'] ) ) ? $registered['function'] : $registered;
-				// instanceof against a possibly-undefined class is safe in PHP (returns false).
-				if ( is_array( $fn ) && isset( $fn[0] ) && is_object( $fn[0] ) && $fn[0] instanceof safe_svg ) {
+				if ( is_array( $fn ) && isset( $fn[0] ) && is_object( $fn[0] )
+					&& ( is_a( $fn[0], 'SafeSvg\\safe_svg' ) || is_a( $fn[0], 'safe_svg' ) ) ) {
 					return true;
 				}
 			}
