@@ -221,17 +221,22 @@ if ( ! function_exists( 'sanitize_text_field' ) ) {
 
 if ( ! function_exists( 'current_user_can' ) ) {
 	/**
-	 * Fixed-true stub, with one per-object seam: when the capability is
-	 * 'edit_post' and the target's id is listed in
-	 * $GLOBALS['diviops_test_uneditable_ids'], returns false. This is what
-	 * lets can_inspect_post_object()'s edit_post gate (trait-core.php) be
-	 * exercised behaviorally instead of only via source inspection (see the
-	 * comment in test-revision.php predating this seam). Every other
-	 * capability/call shape — 'upload_files', 'delete_post', etc. — is
-	 * unaffected and stays fixed-true, so existing tests keep passing.
+	 * Fixed-true stub, with two seams: a blanket capability-denial seam
+	 * (`$GLOBALS['diviops_test_denied_caps']`, an array of cap strings — e.g.
+	 * `array( 'upload_files' )` denies that cap outright regardless of any
+	 * target argument) and a per-object seam for 'edit_post' whose target id
+	 * is listed in $GLOBALS['diviops_test_uneditable_ids']. The per-object
+	 * seam is what lets can_inspect_post_object()'s edit_post gate
+	 * (trait-core.php) be exercised behaviorally instead of only via source
+	 * inspection (see the comment in test-revision.php predating this seam).
+	 * Every other capability/call shape not opted into one of these seams
+	 * stays fixed-true, so existing tests keep passing.
 	 */
 	function current_user_can( ...$args ) {
 		$cap = $args[0] ?? '';
+		if ( in_array( $cap, (array) ( $GLOBALS['diviops_test_denied_caps'] ?? array() ), true ) ) {
+			return false;
+		}
 		if ( 'edit_post' === $cap && isset( $args[1] ) ) {
 			$target = $args[1];
 			$id     = is_object( $target ) ? (int) ( $target->ID ?? 0 ) : (int) $target;
@@ -1166,6 +1171,21 @@ if ( ! function_exists( 'wp_get_attachment_url' ) ) {
 	}
 }
 
+if ( ! function_exists( 'get_attached_file' ) ) {
+	/**
+	 * Model WP core's get_attached_file(): a local filesystem path for the
+	 * attachment, built from the registry's 'filename' ('' when the
+	 * attachment isn't registered — media_list()'s fallback-to-URL-basename
+	 * path covers that case). Unlike wp_get_attachment_url(), never carries a
+	 * `?query`, which is exactly why media_list() (trait-media.php) prefers
+	 * this for deriving an item's filename.
+	 */
+	function get_attached_file( $attachment_id, $unfiltered = false ) {
+		$filename = $GLOBALS['diviops_test_attachments'][ $attachment_id ]['filename'] ?? '';
+		return '' !== $filename ? "/uploads/{$filename}" : '';
+	}
+}
+
 if ( ! function_exists( 'get_post_mime_type' ) ) {
 	function get_post_mime_type( $post = null ) {
 		$id = is_object( $post ) ? ( $post->ID ?? 0 ) : (int) $post;
@@ -1421,21 +1441,19 @@ if ( ! function_exists( 'diviops_call_static' ) ) {
 	 *
 	 * Mirrors diviops_call(), but for helpers that take plain positional args
 	 * instead of a REST request — e.g. media_ip_is_reserved(), media_url_is_safe().
-	 * Uses invokeArgs() rather than invoke(...$args) so an $args element built as
-	 * a reference (e.g. `array( $url, &$reason, $resolver )`) stays bound: PHP
-	 * preserves per-element reference status across an array copy, so invokeArgs()
-	 * with the plain (non-reference) $args parameter still passes the reference
-	 * through to the callee's by-reference parameter.
+	 * Delegates to diviops_call_ref() rather than duplicating its
+	 * ReflectionMethod::invokeArgs() logic: passing this function's local
+	 * $args into a by-reference parameter just aliases the same array, and
+	 * PHP preserves per-element reference status across that alias, so an
+	 * $args element built as a reference (e.g. `array( $url, &$reason,
+	 * $resolver )`) still binds through to the callee's by-reference
+	 * parameter exactly as it did with the duplicated implementation.
 	 *
 	 * @param string $method Method name.
 	 * @param array  $args   Positional arguments.
 	 * @return mixed
 	 */
 	function diviops_call_static( string $method, array $args = array() ) {
-		$reflection = new ReflectionMethod( 'DiviOps_Agent', $method );
-		if ( PHP_VERSION_ID < 80100 ) {
-			$reflection->setAccessible( true );
-		}
-		return $reflection->invokeArgs( null, $args );
+		return diviops_call_ref( $method, $args );
 	}
 }

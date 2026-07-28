@@ -3,7 +3,31 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 trait DiviOps_Agent_Media {
 
-	/** IPv4/IPv6 reserved-range test. Unwraps IPv4-mapped IPv6 and re-checks. */
+	/** CIDR-range reserved-address test against a 4-byte packed IPv4 address. */
+	private static function media_ipv4_packed_is_reserved( string $packed4 ): bool {
+		$n      = unpack( 'Nip', $packed4 )['ip'];
+		$ranges = array(
+			array( '0.0.0.0', 8 ), array( '10.0.0.0', 8 ), array( '100.64.0.0', 10 ),
+			array( '127.0.0.0', 8 ), array( '169.254.0.0', 16 ), array( '172.16.0.0', 12 ),
+			array( '192.0.0.0', 24 ), array( '192.0.2.0', 24 ), array( '192.168.0.0', 16 ),
+			array( '198.18.0.0', 15 ), array( '198.51.100.0', 24 ), array( '203.0.113.0', 24 ),
+			array( '224.0.0.0', 4 ), array( '240.0.0.0', 4 ),
+		);
+		foreach ( $ranges as $r ) {
+			$base = unpack( 'Nip', inet_pton( $r[0] ) )['ip'];
+			$mask = $r[1] === 0 ? 0 : ( 0xFFFFFFFF << ( 32 - $r[1] ) ) & 0xFFFFFFFF;
+			if ( ( $n & $mask ) === ( $base & $mask ) ) { return true; }
+		}
+		return false;
+	}
+
+	/**
+	 * IPv4/IPv6 reserved-range test. Unwraps IPv4-mapped IPv6 (::ffff:a.b.c.d)
+	 * and re-checks the embedded v4. Also decodes and re-checks the embedded
+	 * v4 for three other IPv6 forms that can smuggle a private/loopback v4
+	 * address past a naive IPv6-only check: IPv4-compatible (::a.b.c.d),
+	 * NAT64 (64:ff9b::/96), and 6to4 (2002::/16).
+	 */
 	private static function media_ip_is_reserved( string $ip ): bool {
 		$packed = @inet_pton( $ip );
 		if ( false === $packed ) { return true; } // unparseable => unsafe
@@ -13,20 +37,7 @@ trait DiviOps_Agent_Media {
 			$packed = inet_pton( $ip );
 		}
 		if ( 4 === strlen( $packed ) ) {
-			$n = unpack( 'Nip', $packed )['ip'];
-			$ranges = array(
-				array( '0.0.0.0', 8 ), array( '10.0.0.0', 8 ), array( '100.64.0.0', 10 ),
-				array( '127.0.0.0', 8 ), array( '169.254.0.0', 16 ), array( '172.16.0.0', 12 ),
-				array( '192.0.0.0', 24 ), array( '192.0.2.0', 24 ), array( '192.168.0.0', 16 ),
-				array( '198.18.0.0', 15 ), array( '198.51.100.0', 24 ), array( '203.0.113.0', 24 ),
-				array( '224.0.0.0', 4 ), array( '240.0.0.0', 4 ),
-			);
-			foreach ( $ranges as $r ) {
-				$base = unpack( 'Nip', inet_pton( $r[0] ) )['ip'];
-				$mask = $r[1] === 0 ? 0 : ( 0xFFFFFFFF << ( 32 - $r[1] ) ) & 0xFFFFFFFF;
-				if ( ( $n & $mask ) === ( $base & $mask ) ) { return true; }
-			}
-			return false;
+			return self::media_ipv4_packed_is_reserved( $packed );
 		}
 		// IPv6
 		$hex = bin2hex( $packed );
@@ -38,6 +49,22 @@ trait DiviOps_Agent_Media {
 			|| 'fea' === substr( $hex, 0, 3 ) || 'feb' === substr( $hex, 0, 3 ) ) { return true; } // fe80::/10
 		if ( 'ff' === substr( $hex, 0, 2 ) ) { return true; }         // ff00::/8 multicast
 		if ( '20010db8' === substr( $hex, 0, 8 ) ) { return true; }   // 2001:db8::/32 doc
+
+		// Embedded-IPv4 forms: decode the embedded octets and re-run the
+		// v4-reserved check so a PRIVATE/loopback v4 smuggled through one of
+		// these encodings is still rejected.
+		$prefix12 = substr( $packed, 0, 12 );
+		if ( "\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" === $prefix12 ) {
+			// IPv4-compatible (::a.b.c.d).
+			if ( self::media_ipv4_packed_is_reserved( substr( $packed, 12, 4 ) ) ) { return true; }
+		} elseif ( "\x00\x64\xff\x9b\x00\x00\x00\x00\x00\x00\x00\x00" === $prefix12 ) {
+			// NAT64 (64:ff9b::/96).
+			if ( self::media_ipv4_packed_is_reserved( substr( $packed, 12, 4 ) ) ) { return true; }
+		} elseif ( "\x20\x02" === substr( $packed, 0, 2 ) ) {
+			// 6to4 (2002::/16) -- embedded v4 occupies bytes[2..5].
+			if ( self::media_ipv4_packed_is_reserved( substr( $packed, 2, 4 ) ) ) { return true; }
+		}
+
 		return false;
 	}
 
@@ -236,6 +263,16 @@ trait DiviOps_Agent_Media {
 			}
 			return self::envelope_error( 'fetch_failed', $tmp->get_error_message(), 'The source could not be retrieved.', 502, array( 'source' => $source ) );
 		}
+		// media_fetch_to_temp() (the url path) returns [ 'tmp', 'final_url' ];
+		// the base64 path's tmp_getter returns a plain string. When a redirect
+		// chain was followed, the filename should reflect the FINAL url, not
+		// the one the caller originally supplied.
+		if ( is_array( $tmp ) ) {
+			if ( ! empty( $tmp['final_url'] ) ) {
+				$filename = self::media_basename_from_url( $tmp['final_url'] );
+			}
+			$tmp = $tmp['tmp'];
+		}
 
 		$type_err = self::media_filetype_error( $filename, $tmp );
 		if ( null !== $type_err ) {
@@ -305,7 +342,11 @@ trait DiviOps_Agent_Media {
 	 * in between. Accepted because this endpoint is authenticated and
 	 * admin-privileged, not attacker-reachable.
 	 *
-	 * @return string|WP_Error Temp file path on success, WP_Error otherwise.
+	 * @return array|WP_Error Array shaped `[ 'tmp' => string, 'final_url' =>
+	 *                        string ]` on success (final_url is the URL of
+	 *                        the hop that actually served the body, equal to
+	 *                        $url when no redirect was followed), WP_Error
+	 *                        otherwise.
 	 */
 	private static function media_fetch_to_temp( string $url, ?string &$reason = null, ?callable $resolver = null ) {
 		$max_hops = 5;
@@ -325,7 +366,17 @@ trait DiviOps_Agent_Media {
 					$reason = 'Redirect with no Location header.';
 					return new WP_Error( 'fetch_failed', $reason );
 				}
-				$url = self::media_absolutize_url( $loc, $url );
+				$absolute  = self::media_absolutize_url( $loc, $url );
+				$abs_parts = wp_parse_url( $absolute );
+				$abs_parts = is_array( $abs_parts ) ? $abs_parts : array();
+				if ( empty( $abs_parts['scheme'] ) || empty( $abs_parts['host'] ) ) {
+					// Fail closed: an unresolvable/garbage Location ends the
+					// loop here rather than being silently followed or left
+					// to fall through to a less-specific rejection path.
+					$reason = 'Redirect target could not be resolved to an absolute URL.';
+					return new WP_Error( 'fetch_failed', $reason );
+				}
+				$url = $absolute;
 				continue; // revalidate the new target on the next loop iteration
 			}
 			if ( $code < 200 || $code >= 300 ) {
@@ -335,10 +386,11 @@ trait DiviOps_Agent_Media {
 			$body = wp_remote_retrieve_body( $resp );
 			$tmp  = wp_tempnam();
 			if ( false === file_put_contents( $tmp, $body ) ) {
+				@unlink( $tmp );
 				$reason = 'Could not write temp file.';
 				return new WP_Error( 'fetch_failed', $reason );
 			}
-			return $tmp;
+			return array( 'tmp' => $tmp, 'final_url' => $url );
 		}
 		$reason = 'Too many redirects.';
 		return new WP_Error( 'fetch_failed', $reason );
@@ -426,13 +478,21 @@ trait DiviOps_Agent_Media {
 			if ( ! $post ) {
 				continue;
 			}
-			$url     = (string) wp_get_attachment_url( $post->ID );
+			$url      = (string) wp_get_attachment_url( $post->ID );
+			// get_attached_file() returns the local filesystem path, which
+			// never carries a `?query` the way an attachment URL sometimes
+			// does in production; fall back to the URL's basename on the
+			// rare attachment with no local file on record.
+			$filename = wp_basename( (string) get_attached_file( $post->ID ) );
+			if ( '' === $filename ) {
+				$filename = wp_basename( $url );
+			}
 			$items[] = array(
 				'attachment_id' => (int) $post->ID,
 				'url'           => $url,
 				'mime'          => (string) get_post_mime_type( $post->ID ),
 				'title'         => (string) $post->post_title,
-				'filename'      => wp_basename( $url ),
+				'filename'      => $filename,
 			);
 		}
 
@@ -461,17 +521,11 @@ trait DiviOps_Agent_Media {
 		$url           = trim( (string) ( $request->get_param( 'url' ) ?? '' ) );
 		$dry_run       = (bool) $request->get_param( 'dry_run' );
 
-		$has_attachment_id = null !== $attachment_id && '' !== $attachment_id;
-		$has_url           = '' !== $url;
-		if ( $has_attachment_id === $has_url ) {
-			return self::envelope_error(
-				'invalid_input',
-				'Provide exactly one of attachment_id or url.',
-				'attachment_id sets from an existing attachment; url uploads a new one first.',
-				400
-			);
-		}
-
+		// Cap-first ordering, matching media_upload(): post-existence and
+		// edit_post permission are checked before the attachment_id/url
+		// xor-shape validation, so a caller without rights to the post learns
+		// that before anything about their input shape. not_found still
+		// precedes forbidden.
 		$post = get_post( $post_id );
 		if ( ! $post ) {
 			return self::envelope_error(
@@ -489,6 +543,17 @@ trait DiviOps_Agent_Media {
 				'Authenticate as a user with edit rights to this post.',
 				403,
 				array( 'post_id' => $post_id )
+			);
+		}
+
+		$has_attachment_id = null !== $attachment_id && '' !== $attachment_id;
+		$has_url           = '' !== $url;
+		if ( $has_attachment_id === $has_url ) {
+			return self::envelope_error(
+				'invalid_input',
+				'Provide exactly one of attachment_id or url.',
+				'attachment_id sets from an existing attachment; url uploads a new one first.',
+				400
 			);
 		}
 
@@ -632,28 +697,71 @@ trait DiviOps_Agent_Media {
 
 	/**
 	 * Resolve a redirect's Location header against the URL it was returned
-	 * from. An already-absolute target (has both scheme and host) passes
-	 * through unchanged; a root-relative target (`/path`) inherits the base
-	 * URL's scheme/host/port. Anything else is returned as-is — the next
-	 * hop's media_url_is_safe() call will reject it via the scheme/host check
-	 * if it isn't a valid absolute http(s) URL, which is the correct
-	 * rejection path for a malformed or unsupported Location value.
+	 * from. Handles: an already-absolute target (has both scheme and host,
+	 * passes through unchanged); protocol-relative (`//host/path`, inherits
+	 * only the base's scheme); root-relative (`/path`, inherits scheme/host/
+	 * port); and bare/document-relative (`file.png`, `../x.png`, resolved
+	 * against the base URL's directory with `.`/`..` segments collapsed).
+	 * Anything that still can't be resolved to an absolute URL is returned
+	 * as-is — the caller (media_fetch_to_temp()) checks for that and fails
+	 * closed with `fetch_failed` rather than looping on a broken target. The
+	 * result is NOT trusted here: the next hop's media_url_is_safe() call
+	 * still fully revalidates it (scheme/host/resolved-address), exactly
+	 * like every other redirect target.
 	 */
 	private static function media_absolutize_url( string $location, string $base ): string {
 		$loc_parts = wp_parse_url( $location );
+		$loc_parts = is_array( $loc_parts ) ? $loc_parts : array();
 		if ( ! empty( $loc_parts['scheme'] ) && ! empty( $loc_parts['host'] ) ) {
 			return $location;
 		}
 		$base_parts = wp_parse_url( $base );
+		$base_parts = is_array( $base_parts ) ? $base_parts : array();
 		$host       = $base_parts['host'] ?? '';
 		if ( '' === $host ) {
 			return $location;
 		}
 		$scheme = $base_parts['scheme'] ?? 'https';
 		$port   = isset( $base_parts['port'] ) ? ':' . $base_parts['port'] : '';
+
+		// Protocol-relative (//host/path): inherit only the base's scheme.
+		if ( 0 === strpos( $location, '//' ) ) {
+			return "{$scheme}:{$location}";
+		}
+
+		// Root-relative (/path): inherit scheme/host/port.
 		if ( 0 === strpos( $location, '/' ) ) {
 			return "{$scheme}://{$host}{$port}{$location}";
 		}
-		return $location;
+
+		// Bare/document-relative (file.png, ../x.png, ./x.png): resolve
+		// against the base URL's directory, then collapse ./.. segments.
+		$base_path = $base_parts['path'] ?? '/';
+		$slash_pos = strrpos( $base_path, '/' );
+		$base_dir  = false !== $slash_pos ? substr( $base_path, 0, $slash_pos + 1 ) : '/';
+		$combined  = self::media_collapse_relative_path( $base_dir . $location );
+
+		return "{$scheme}://{$host}{$port}{$combined}";
+	}
+
+	/**
+	 * Collapse `.`/`..` segments out of a URL path, e.g.
+	 * `/a/b/../c.png` -> `/a/c.png`. Used by media_absolutize_url() when
+	 * resolving a document-relative redirect Location.
+	 */
+	private static function media_collapse_relative_path( string $path ): string {
+		$segments = explode( '/', $path );
+		$stack    = array();
+		foreach ( $segments as $segment ) {
+			if ( '' === $segment || '.' === $segment ) {
+				continue;
+			}
+			if ( '..' === $segment ) {
+				array_pop( $stack );
+				continue;
+			}
+			$stack[] = $segment;
+		}
+		return '/' . implode( '/', $stack );
 	}
 }

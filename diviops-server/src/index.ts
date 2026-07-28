@@ -3319,7 +3319,7 @@ registerPluginTool(
     inputSchema: {
       attachment_id: z.number().int().describe("WordPress attachment (media) post ID"),
     },
-    annotations: { readOnlyHint: true },
+    annotations: { readOnlyHint: true, idempotentHint: true },
     _meta: { idempotent: "true" },
   },
   async ({ attachment_id }) => {
@@ -3348,7 +3348,7 @@ registerPluginTool(
       mime: z.string().optional().describe('Filter by mime type prefix, e.g. "image/"'),
       search: z.string().optional().describe("Filter by attachment title search term"),
     },
-    annotations: { readOnlyHint: true },
+    annotations: { readOnlyHint: true, idempotentHint: true },
     _meta: { idempotent: "true" },
   },
   async ({ page, per_page, mime, search }) => {

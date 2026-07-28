@@ -60,6 +60,36 @@ foreach (
 	assert_true( ! diviops_call_static( 'media_ip_is_reserved', array( $ip ) ), "public: $ip" );
 }
 
+// ── media_ip_is_reserved(): embedded-IPv4 hardening (#28 fix-wave item D) ─
+// The IPv4-mapped unwrap above only covers ::ffff:a.b.c.d. These three other
+// IPv6 forms also carry a literal embedded v4 address and must be decoded +
+// re-checked the same way, so a PRIVATE/loopback v4 smuggled through one of
+// them is still rejected.
+
+// 6to4 (2002::/16): embedded v4 is bytes[2..5]. 2002:0a00:0001:: -> 10.0.0.1.
+assert_true(
+	diviops_call_static( 'media_ip_is_reserved', array( '2002:0a00:0001::' ) ),
+	'6to4 embedding a private v4 (10.0.0.1) is reserved'
+);
+
+// NAT64 (64:ff9b::/96): embedded v4 is the last 32 bits. 64:ff9b::c0a8:0001 -> 192.168.0.1.
+assert_true(
+	diviops_call_static( 'media_ip_is_reserved', array( '64:ff9b::c0a8:0001' ) ),
+	'NAT64 embedding a private v4 (192.168.0.1) is reserved'
+);
+
+// IPv4-compatible (::a.b.c.d): 12 zero bytes then the v4. ::7f00:0001 -> 127.0.0.1.
+assert_true(
+	diviops_call_static( 'media_ip_is_reserved', array( '::7f00:0001' ) ),
+	'IPv4-compatible embedding loopback (127.0.0.1) is reserved'
+);
+
+// 6to4 embedding a PUBLIC v4 must still pass. 2002:0808:0808:: -> 8.8.8.8.
+assert_true(
+	! diviops_call_static( 'media_ip_is_reserved', array( '2002:0808:0808::' ) ),
+	'6to4 embedding a public v4 (8.8.8.8) is NOT reserved'
+);
+
 // ── media_url_is_safe(): scheme, resolution, and reserved-target checks ───
 // $resolver is injected so these never touch real DNS.
 
@@ -231,6 +261,18 @@ $r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'ht
 assert_true( false === $r->get_data()['ok'], 'both sources rejected' );
 assert_true( 'invalid_input' === $r->get_data()['error']['code'], 'both sources: invalid_input code' );
 
+// ── upload_files denial (#28 fix-wave item B) ──────────────────────────────
+// media_upload()'s very first check is current_user_can( 'upload_files' ).
+// diviops_test_denied_caps is the harness seam (wp-shim.php) that lets this
+// be exercised behaviorally rather than only via source inspection.
+$GLOBALS['diviops_test_denied_caps'] = array( 'upload_files' );
+$r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png' ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'], 'upload_files denied: not ok' );
+assert_true( 'forbidden' === $d['error']['code'], 'upload_files denied: forbidden code' );
+assert_true( 403 === $r->get_status(), 'upload_files denied: 403' );
+unset( $GLOBALS['diviops_test_denied_caps'] );
+
 // SSRF
 diviops_media_set_resolver(
 	function ( $h ) {
@@ -272,7 +314,15 @@ assert_true(
 );
 
 // A public origin 302s to another public origin, which serves the file: the
-// chain is followed and the upload succeeds.
+// chain is followed and the upload succeeds. The final url's basename
+// ('final.png') differs from the initial url's ('pic.png') — the resulting
+// attachment filename must reflect the FINAL url (#28 fix-wave item F), not
+// the one the caller originally supplied.
+$GLOBALS['diviops_test_filetype']['final.png'] = array(
+	'ext'             => 'png',
+	'type'            => 'image/png',
+	'proper_filename' => false,
+);
 diviops_media_set_resolver( 'diviops_media_resolver_ip_literal_or_public' );
 $GLOBALS['diviops_test_http_responses']    = array(
 	diviops_media_http_redirect( 'https://cdn2.example.com/final.png' ),
@@ -284,6 +334,10 @@ $d = $r->get_data();
 assert_true(
 	true === $d['ok'] && ! empty( $d['data']['attachment_id'] ),
 	'a public-to-public redirect chain is followed and succeeds'
+);
+assert_true(
+	'final.png' === ( $d['data']['filename'] ?? null ),
+	'redirect chain: attachment filename reflects the FINAL url basename, not the initial url'
 );
 // Guards against a regression that re-enables WP's own redirect-following
 // (which would silently bypass the per-hop revalidation this fix exists
@@ -308,6 +362,71 @@ $d = $r->get_data();
 assert_true(
 	false === $d['ok'] && 'fetch_failed' === $d['error']['code'],
 	'a redirect chain exceeding the bounded hop count is rejected'
+);
+
+// ── Relative-redirect resolution (#28 fix-wave item E) ─────────────────────
+// media_absolutize_url() must resolve protocol-relative (//host/path) and
+// bare document-relative (file.png) Location headers, not just absolute and
+// root-relative ones — and the resolved target is STILL fully revalidated by
+// media_url_is_safe() on the next hop, same as any other redirect target.
+
+// Protocol-relative Location to a PUBLIC host: followed, upload succeeds.
+$GLOBALS['diviops_test_filetype']['proto-relative.png'] = array(
+	'ext'             => 'png',
+	'type'            => 'image/png',
+	'proper_filename' => false,
+);
+diviops_media_set_resolver( 'diviops_media_resolver_ip_literal_or_public' );
+$GLOBALS['diviops_test_http_responses'] = array(
+	diviops_media_http_redirect( '//cdn2.example.com/proto-relative.png' ),
+	diviops_media_http_200(),
+);
+$r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png' ) ) ) );
+$d = $r->get_data();
+assert_true(
+	true === $d['ok'] && ! empty( $d['data']['attachment_id'] ),
+	'protocol-relative redirect to a public host is followed and succeeds'
+);
+assert_true(
+	'proto-relative.png' === ( $d['data']['filename'] ?? null ),
+	'protocol-relative redirect: attachment filename reflects the resolved final url'
+);
+
+// Protocol-relative Location to an INTERNAL host (a literal link-local IP):
+// resolved to an absolute URL, then blocked by the per-hop SSRF revalidation
+// — not silently followed.
+diviops_media_set_resolver( 'diviops_media_resolver_ip_literal_or_public' );
+$GLOBALS['diviops_test_http_responses'] = array(
+	diviops_media_http_redirect( '//169.254.169.254/latest/meta-data/' ),
+);
+$r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png' ) ) ) );
+$d = $r->get_data();
+assert_true(
+	false === $d['ok'] && 'forbidden_target' === $d['error']['code'],
+	'protocol-relative redirect to an internal host is blocked, not silently followed'
+);
+
+// Bare document-relative Location on a public host: resolved against the
+// base url's directory, followed, upload succeeds.
+$GLOBALS['diviops_test_filetype']['renamed.png'] = array(
+	'ext'             => 'png',
+	'type'            => 'image/png',
+	'proper_filename' => false,
+);
+diviops_media_set_resolver( 'diviops_media_resolver_ip_literal_or_public' );
+$GLOBALS['diviops_test_http_responses'] = array(
+	diviops_media_http_redirect( 'renamed.png' ),
+	diviops_media_http_200(),
+);
+$r = diviops_call( 'media_upload', array( diviops_media_req( array( 'url' => 'https://cdn.example.com/pic.png' ) ) ) );
+$d = $r->get_data();
+assert_true(
+	true === $d['ok'] && ! empty( $d['data']['attachment_id'] ),
+	'bare document-relative redirect on a public host is resolved and followed'
+);
+assert_true(
+	'renamed.png' === ( $d['data']['filename'] ?? null ),
+	'bare document-relative redirect: attachment filename reflects the resolved final url'
 );
 
 // base64 happy path
