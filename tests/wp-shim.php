@@ -23,6 +23,14 @@ if ( ! defined( 'ABSPATH' ) ) {
 	define( 'ABSPATH', __DIR__ . '/' );
 }
 
+// Marks this process as the test harness, NOT production. media_upload()
+// (trait-media.php) consults this to gate the diviops_media_host_resolver
+// filter to test-only — in production the filter is never consulted, so a
+// hooked callback cannot bypass the real-DNS SSRF address guard.
+if ( ! defined( 'DIVIOPS_TESTING' ) ) {
+	define( 'DIVIOPS_TESTING', true );
+}
+
 if ( ! function_exists( 'add_action' ) ) {
 	function add_action( $hook, $callback, $priority = 10, $accepted_args = 1 ) {
 		return true;

@@ -168,6 +168,23 @@ trait DiviOps_Agent_Media {
 	}
 
 	/**
+	 * Robustly coerce a request param to bool. A plain `(bool)` cast is truthy
+	 * for ANY non-empty string, including the string "false" and "0" — exactly
+	 * the values a REST caller sends (query params, form-encoded bodies) to
+	 * mean "do not do this". filter_var()/FILTER_VALIDATE_BOOLEAN maps the
+	 * common false-ish strings ("false", "0", "no", "off", "") to false and the
+	 * common true-ish strings ("true", "1", "yes", "on") to true, leaving a
+	 * native bool untouched.
+	 *
+	 * @param mixed  $request REST request-like object (get_param()).
+	 * @param string $key     Param name.
+	 * @return bool
+	 */
+	private static function media_bool_param( $request, string $key ): bool {
+		return filter_var( $request->get_param( $key ), FILTER_VALIDATE_BOOLEAN );
+	}
+
+	/**
 	 * Upload an image into the media library from either a public URL (server
 	 * fetches it, SSRF-guarded via media_url_is_safe()) or base64-encoded bytes.
 	 * Exactly one of `url`/`data_base64` must be supplied. Supports dry-run.
@@ -181,8 +198,18 @@ trait DiviOps_Agent_Media {
 		}
 		$url       = trim( (string) ( $request->get_param( 'url' ) ?? '' ) );
 		$b64       = (string) ( $request->get_param( 'data_base64' ) ?? '' );
-		$dry_run   = (bool) $request->get_param( 'dry_run' );
+		$dry_run   = self::media_bool_param( $request, 'dry_run' );
 		$attach_to = absint( $request->get_param( 'attach_to' ) );
+
+		if ( $attach_to > 0 && ! current_user_can( 'edit_post', $attach_to ) ) {
+			return self::envelope_error(
+				'forbidden',
+				"You are not allowed to attach media to post #{$attach_to}.",
+				'Authenticate as a user who can edit the target post.',
+				403,
+				array( 'attach_to' => $attach_to )
+			);
+		}
 
 		if ( ( '' === $url ) === ( '' === $b64 ) ) {
 			return self::envelope_error( 'invalid_input', 'Provide exactly one of url or data_base64.', 'url fetches remotely; data_base64 uploads local bytes.', 400 );
@@ -198,8 +225,13 @@ trait DiviOps_Agent_Media {
 		}
 
 		if ( '' !== $url ) {
-			// Extensibility seam: hosts may override host resolution (also how tests inject a fake resolver).
-			$resolver = apply_filters( 'diviops_media_host_resolver', null );
+			// Extensibility seam, TEST-ONLY: in production (DIVIOPS_TESTING undefined)
+			// this filter is never consulted, so a hooked callback cannot replace the
+			// real-DNS SSRF address guard. The test harness defines DIVIOPS_TESTING
+			// (tests/wp-shim.php) so it can inject a fake resolver without touching DNS.
+			$resolver = ( defined( 'DIVIOPS_TESTING' ) && DIVIOPS_TESTING )
+				? apply_filters( 'diviops_media_host_resolver', null )
+				: null;
 			$resolver = is_callable( $resolver ) ? $resolver : null;
 			$reason   = null;
 			if ( ! self::media_url_is_safe( $url, $reason, $resolver ) ) {
@@ -263,6 +295,9 @@ trait DiviOps_Agent_Media {
 			// applies per hop, not just to the URL the caller supplied.
 			if ( 'forbidden_target' === $tmp->get_error_code() ) {
 				return self::envelope_error( 'forbidden_target', $tmp->get_error_message(), 'Only public http/https image URLs are allowed.', 403, array( 'url' => $url ) );
+			}
+			if ( 'payload_too_large' === $tmp->get_error_code() ) {
+				return self::envelope_error( 'payload_too_large', $tmp->get_error_message(), 'Fetch a smaller file, or raise the site upload size limit.', 413, array( 'source' => $source ) );
 			}
 			return self::envelope_error( 'fetch_failed', $tmp->get_error_message(), 'The source could not be retrieved.', 502, array( 'source' => $source ) );
 		}
@@ -357,7 +392,14 @@ trait DiviOps_Agent_Media {
 			if ( ! self::media_url_is_safe( $url, $reason, $resolver ) ) {
 				return new WP_Error( 'forbidden_target', $reason );
 			}
-			$resp = wp_remote_get( $url, array( 'timeout' => 20, 'redirection' => 0 ) ); // do NOT auto-follow
+			$resp = wp_remote_get(
+				$url,
+				array(
+					'timeout'             => 20,
+					'redirection'         => 0, // do NOT auto-follow
+					'limit_response_size' => (int) wp_max_upload_size(),
+				)
+			);
 			if ( is_wp_error( $resp ) ) {
 				$reason = $resp->get_error_message();
 				return $resp;
@@ -387,6 +429,10 @@ trait DiviOps_Agent_Media {
 				return new WP_Error( 'fetch_failed', $reason );
 			}
 			$body = wp_remote_retrieve_body( $resp );
+			if ( strlen( $body ) > (int) wp_max_upload_size() ) {
+				$reason = 'Fetched response exceeds the upload size limit.';
+				return new WP_Error( 'payload_too_large', $reason );
+			}
 			$tmp  = wp_tempnam();
 			if ( false === file_put_contents( $tmp, $body ) ) {
 				@unlink( $tmp );
@@ -522,7 +568,7 @@ trait DiviOps_Agent_Media {
 		$post_id       = absint( $request->get_param( 'post_id' ) );
 		$attachment_id = $request->get_param( 'attachment_id' );
 		$url           = trim( (string) ( $request->get_param( 'url' ) ?? '' ) );
-		$dry_run       = (bool) $request->get_param( 'dry_run' );
+		$dry_run       = self::media_bool_param( $request, 'dry_run' );
 
 		// Cap-first ordering, matching media_upload(): post-existence and
 		// edit_post permission are checked before the attachment_id/url
