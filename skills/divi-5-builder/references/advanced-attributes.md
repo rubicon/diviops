@@ -583,10 +583,15 @@ Like Sticky, this family is **not a CSS declaration at all** — there is no
 path exists under `server/Packages/StyleLibrary/Declarations`). Instead,
 `ScrollEffectsScriptData::set()` reads `module.decoration.scroll__*` into a runtime
 record registered via `ScriptData::add_data_item(['data_name' => 'scroll', ...])`,
-which Divi's own compiled scroll-effects JS
-(`visual-builder/build/script-library-scroll-effects.js`,
-`script-library-utils-scroll-effects.js`) reads to attach scroll listeners and
-interpolate each effect's live value.
+which Divi's own compiled scroll-effects JS reads to attach scroll listeners and
+interpolate each effect's live value. On the front end this is
+`visual-builder/build/script-library-motion-effects.js`, the one script the theme
+actually enqueues for this purpose
+(`DynamicAssetsUtils::enqueue_scroll_script()`, `:1037-1051`); its
+interpolation/resolver logic is authored in the source modules
+`script-library-utils-scroll-effects.js` (`getEffectValue()`) and this same
+`script-library-motion-effects.js` (the resolver map below), bundled together by the
+build.
 
 | Path | Value shape | Notes |
 |---|---|---|
@@ -604,7 +609,7 @@ are sorted and clamped server-side by `ScrollEffectsUtils::get_sorted_range()`
 `offset.{start,mid,end}` are the effect's value at each of those three checkpoints,
 linearly interpolated at render time by the front-end's `getEffectValue()`
 (`script-library-utils-scroll-effects.js`) into a plain, unitless number — the unit
-(and, for two of the six resolvers, an additional scaling multiplier) is applied
+(and, for four of the six resolvers, an additional scaling multiplier) is applied
 afterward, per resolver, by the map shipped in compiled
 `visual-builder/build/script-library-motion-effects.js` (confirmed, ≈byte 2150):
 
@@ -626,11 +631,16 @@ translateY: (t,e) => ({ transform: `translateY(${Math.round(100*t)}px)` }),
 `offset.start: "70"` becomes `scale3d(0.700, 0.700, 0.700)`, **not** `70%`. `rotate`
 passes the number straight through as degrees with no multiplier at all
 (`rotating`'s default `offset.start: "90"` → `rotate3d(0,0,1,90.000deg)`). `blur`
-rounds the number and appends whichever unit suffix `offset.start` itself carries
-(via `getUnit()`, same bundle), falling back to `px` for a plain numeric string like
-the shipped default `"10"` → `blur(10px)`. The unit is never something you encode in
-the attrs value — it, and in two cases the ×100/×0.01 rescale, is applied entirely by
-this resolver map at render time.
+rounds the number and appends a unit via `getUnit(e.startValue||"","px")` — but on
+the PHP-rendered front end that call always falls back to `"px"`: `startValue`
+originates from `ScrollEffectsUtils::get_start_value()`, which returns
+`(float) $value['offset']['start']` (`ScrollEffectsUtils.php:641-644`), and the float
+cast strips any unit suffix before `getUnit()` ever sees it, so `blur` is `px` on the
+front end regardless of what's authored in `offset.start` — the shipped default
+`"10"` → `blur(10px)`. The unit is never something you encode in the attrs value —
+it, and for four of the six resolvers (`translateX`/`translateY` ×100,
+`opacity`/`scale` ×0.01) the rescale as well, is applied entirely by this resolver
+map at render time.
 
 Per-effect defaults (identical in `ScrollEffectsUtils::$scroll_effect_default_group_attr`
 and the VB's own default map — note `blur`'s viewport default genuinely differs from
@@ -702,11 +712,19 @@ from the same file's `get_scroll_setting()` (`:213-426`, esp. `:290-307` and
 `:309-398`); viewport sort/clamp from `get_sorted_range()` (`:686-734`); the
 runtime-not-CSS mechanism from
 `server/Packages/Module/Options/Scroll/ScrollEffectsScriptData.php` (confirmed no
-`StyleLibrary/Declarations/Scroll` directory exists in this Divi build); the
-unitless interpolation from compiled `visual-builder/build/script-library-utils-scroll-effects.js`'s
-`getEffectValue()`; the per-resolver unit/multiplier map (`blur`/`opacity`/`rotate`/
-`scale`/`translateX`/`translateY`) and `getUnit()`'s unit-suffix extraction from
-compiled `visual-builder/build/script-library-motion-effects.js`; VB field configs
+`StyleLibrary/Declarations/Scroll` directory exists in this Divi build); the actual
+front-end enqueue target
+(`server/FrontEnd/Assets/DynamicAssetsUtils.php::enqueue_scroll_script()`,
+`:1037-1051`, confirming `script-library-motion-effects.js` — not the two
+`*scroll-effects*.js` source-module filenames — is the one script the theme
+registers); the unitless interpolation from compiled
+`visual-builder/build/script-library-utils-scroll-effects.js`'s `getEffectValue()`;
+the per-resolver unit/multiplier map (`blur`/`opacity`/`rotate`/`scale`/`translateX`/
+`translateY`) and `getUnit()`'s unit-suffix extraction from compiled
+`visual-builder/build/script-library-motion-effects.js`; the float cast that strips
+any unit suffix from `blur`'s own `startValue` on the PHP-rendered front end from
+`server/Packages/Module/Options/Scroll/ScrollEffectsUtils.php::get_start_value()`
+(`:641-644`); VB field configs
 (`features:{hover:false,sticky:false}`, `motionTriggerStart` enum, per-effect default
 viewport/offset objects — including `blur`'s distinct `60/40` viewport default)
 confirmed in compiled `visual-builder/build/module.js`. `module.decoration.*` prefix
