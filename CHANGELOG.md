@@ -10,6 +10,13 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.9.2](https://github.com/rubicon/diviops/compare/v1.9.1...v1.9.2) (2026-07-28)
+
+
+### Bug Fixes
+
+* **skills:** ignore commented-out source and guard per-family in decoration extractor ([#62](https://github.com/rubicon/diviops/issues/62)) ([1f8ca83](https://github.com/rubicon/diviops/commit/1f8ca832ae855b8ffd832f9022c1fc806b066b58))
+
 ## [1.9.1](https://github.com/rubicon/diviops/compare/v1.9.0...v1.9.1) (2026-07-28)
 
 
