@@ -468,3 +468,335 @@ $ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'sticky
   module.decoration.sticky__position
   module.decoration.sticky__transition
 ```
+
+---
+
+## Transition
+
+3 subfields, from `module.decoration.transition__{duration,delay,speedCurve}`
+*(verified 2026-07-28)*.
+
+Unlike every other family in this document, Transition doesn't apply a visual style to
+the module itself — it configures **how other families' hover/sticky/focus/active/checked
+state changes animate**. `TransitionUtils::get_transition_states()` defines five
+trigger states (`hover`, `sticky`, `focus`, `active`, `checked`), not just the
+hover/sticky pair used elsewhere in this document. Divi auto-detects which CSS
+properties actually have a state-specific value set across the module's other
+decoration families and only then emits a `transition-property` /
+`transition-duration` / `transition-timing-function` / `transition-delay` block for
+those properties — confirmed in `TransitionStyle::style()`: it bails immediately if
+`attrs` and `advancedStyles` are both empty (`:135-137`), and each candidate prop is
+skipped unless `has_multi_state_attr()` finds a `hover`/`sticky`/`focus`/`active`/`checked`
+key on it (`:218-220`). Setting `module.decoration.transition__*` alone, with no other
+family carrying a state-specific value, emits no CSS at all.
+
+| Path | Value shape | Notes |
+|---|---|---|
+| `module.decoration.transition__duration` | length (ms), e.g. `"500ms"` | VB `divi/range` field, `defaultUnit:"ms"`, `min:0`, `max:2000` (2s ceiling). Default `"300ms"` — confirmed both in the VB `defaultAttr` and in `TransitionStyle.php`'s `$duration_default_value` (`:143`), which is substituted whenever the key is absent or an empty string. |
+| `module.decoration.transition__delay` | length (ms), e.g. `"0ms"` | VB `divi/range` field, `defaultUnit:"ms"`, `min:0`, `max:300` — **an order of magnitude lower ceiling than `duration`'s 2000ms**; don't assume the two range fields share limits. Default `"0ms"` (`TransitionStyle.php:144`). |
+| `module.decoration.transition__speedCurve` | enum, **camelCase**: `"ease"` \| `"easeIn"` \| `"easeOut"` \| `"easeInOut"` \| `"linear"` | VB `divi/select` with these exact camelCase option keys (labels "Ease" / "Ease-In" / "Ease-Out" / "Ease-In-Out" / "Auto"). `Transition::style_declaration()` maps each camelCase value to the kebab-case CSS `transition-timing-function` keyword via an explicit switch (`easeInOut`→`ease-in-out`, `easeIn`→`ease-in`, `easeOut`→`ease-out`, `ease`/`linear` pass through); any unrecognized value — including an absent key — falls back to CSS `ease` (`TransitionStyleDeclarationTrait.php` → `StyleDeclarationTrait.php:80-98`). Default stored value is `"ease"` (`TransitionStyle.php:145`), which is coincidentally already valid, unmapped CSS. **Do not confuse with Animation's `speedCurve`, which is stored directly in kebab-case** — see the Entrance Animation section below. |
+
+**Responsive, no hover**: `duration`/`delay`/`speedCurve` all declare `features:{hover:false,sticky:false}` in their VB field configs (compiled `visual-builder/build/module.js`) — meaningless to give the timing controls their own hover value, since they *drive* other properties' hover transitions. None of the three declares `responsive:false`, so tablet/phone breakpoint overrides are supported: `TransitionStyle::style()` builds `$transition_attr` from `array_keys($attr)` (`:157-169`), i.e. whatever breakpoints are actually present in the attrs.
+
+Minimal copy-paste `attrs` fragment (paired with some other family's own hover value elsewhere on the module — Transition alone renders no CSS):
+
+```json
+{
+  "module": {
+    "decoration": {
+      "transition": {
+        "desktop": {
+          "value": {
+            "duration": "500ms",
+            "delay": "0ms",
+            "speedCurve": "easeInOut"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Provenance**: shared subfield vocabulary from
+`server/Packages/Module/Options/Transition/TransitionPresetAttrsMap.php` (`get_map()`);
+defaults, breakpoint handling, and the empty-attrs bail-out from
+`server/Packages/Module/Options/Transition/TransitionStyle.php` (defaults `:143-145`,
+per-breakpoint loop `:157-169`, bail-early `:135-137`); the five transition states from
+`server/Packages/StyleLibrary/Declarations/Transition/TransitionUtils.php::get_transition_states()`
+(`:30-32`) and the animatable-CSS-property allowlist from the same file
+(`get_animatable_options_array()`, `:135-212`); the camelCase→kebab `speedCurve` mapping
+and its `ease` fallback from
+`server/Packages/StyleLibrary/Declarations/Transition/TransitionTraits/StyleDeclarationTrait.php:80-98`;
+per-subfield `hover:false,sticky:false` feature flags, VB range `min`/`max`/`defaultUnit`,
+and the camelCase `speedCurve` option-label map (`easeInOut`/`ease`/`easeIn`/`easeOut`/`linear`)
+confirmed in compiled `visual-builder/build/module.js`; `module.decoration.*` prefix and
+the full 3-subfield set cross-checked against
+`server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2478-2493`. Path list
+cross-verified against `php scripts/extract-decoration-paths.php <builder5> --shared`:
+
+```
+$ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'transition'
+## transition (3)
+  module.decoration.transition__delay
+  module.decoration.transition__duration
+  module.decoration.transition__speedCurve
+```
+
+---
+
+## Scroll Effects
+
+13 subfields — six motion effects (`verticalMotion`, `horizontalMotion`, `fade`,
+`scaling`, `rotating`, `blur`), each exposing both a value and an `.enable` sibling,
+plus one shared trigger field — from
+`module.decoration.scroll__{verticalMotion,horizontalMotion,fade,scaling,rotating,blur}`
+(each ALSO with a `.enable` sibling, e.g. `scroll__verticalMotion.enable`) and
+`module.decoration.scroll__motionTriggerStart` *(verified 2026-07-28)*.
+
+Like Sticky, this family is **not a CSS declaration at all** — there is no
+`StyleLibrary/Declarations/Scroll` directory in this Divi build (confirmed: no such
+path exists under `server/Packages/StyleLibrary/Declarations`). Instead,
+`ScrollEffectsScriptData::set()` reads `module.decoration.scroll__*` into a runtime
+record registered via `ScriptData::add_data_item(['data_name' => 'scroll', ...])`,
+which Divi's own compiled scroll-effects JS
+(`visual-builder/build/script-library-scroll-effects.js`,
+`script-library-scroll-effects-utils.js`) reads to attach scroll listeners and
+interpolate each effect's live value.
+
+| Path | Value shape | Notes |
+|---|---|---|
+| `module.decoration.scroll__motionTriggerStart` | enum: `"top"` \| `"middle"` \| `"bottom"` | Default `"middle"`. VB `divi/select`, labels "Top of Element" / "Middle of Element" / "Bottom of Element". Confirmed identical in `ScrollEffectsUtils::$scroll_effect_default_group_attr` and the VB's own enum map. |
+| `module.decoration.scroll__verticalMotion.enable` / `__horizontalMotion.enable` / `__fade.enable` / `__scaling.enable` / `__rotating.enable` / `__blur.enable` | enum: `"on"` \| `"off"` | Default `"off"` for all six. VB `divi/toggle`. |
+| `module.decoration.scroll__verticalMotion` / `__horizontalMotion` / `__fade` / `__scaling` / `__rotating` / `__blur` | object `{viewport: {top, bottom, start, end}, offset: {start, mid, end}}`, all six values plain numeric strings (no unit suffix in the attrs value itself) | See per-effect table below for the shape and defaults. VB custom `divi/scroll-effect` field. |
+
+**Each effect resolves to one specific CSS-affecting property** — confirmed identical
+in `ScrollEffectsUtils::$scroll_effect_resolver_map` (PHP) and the VB's own resolver map:
+`verticalMotion`→`translateY`, `horizontalMotion`→`translateX`, `fade`→`opacity`,
+`scaling`→`scale`, `rotating`→`rotate`, `blur`→`blur`. `viewport.{top,bottom,start,end}`
+are integers on a 0–100 scale representing scroll-progress trigger points; they are
+sorted and clamped server-side by `ScrollEffectsUtils::get_sorted_range()`
+(start ≥ 0, end ≤ 100, midpoints clamped between start/end, `:686-734`).
+`offset.{start,mid,end}` are the effect's value at each of those three checkpoints,
+linearly interpolated at render time by the front-end's `getEffectValue()`
+(`script-library-scroll-effects-utils.js`) — a pure `Number.parseFloat`-based
+interpolation with no unit attached. <!-- UNVERIFIED --> exactly which CSS unit
+(`px` for the two motion axes, `deg` for rotate, `%` for scale/opacity/blur) the
+front-end applies when composing the final `transform`/`filter` value was not
+located in this session's source read; treat the unit as effect-implied, not
+something to encode in the attrs value itself.
+
+Per-effect defaults (identical in `ScrollEffectsUtils::$scroll_effect_default_group_attr`
+and the VB's own default map — note `blur`'s viewport default genuinely differs from
+the other five, it is not a typo):
+
+| Effect | viewport default | offset default |
+|---|---|---|
+| verticalMotion | `top:100, start:50, end:50, bottom:0` | `start:4, mid:0, end:-4` |
+| horizontalMotion | `top:100, start:50, end:50, bottom:0` | `start:4, mid:0, end:-4` |
+| fade | `top:100, start:50, end:50, bottom:0` | `start:0, mid:100, end:100` |
+| scaling | `top:100, start:50, end:50, bottom:0` | `start:70, mid:100, end:100` |
+| rotating | `top:100, start:50, end:50, bottom:0` | `start:90, mid:0, end:0` |
+| blur | `top:100, start:60, end:40, bottom:0` | `start:10, mid:0, end:0` |
+
+**`.enable` is a tri-state inheritance signal, not a plain boolean**: at each
+breakpoint, `ScrollEffectsUtils::get_scroll_setting()` distinguishes "key absent"
+(inherit the enable status from the next-larger breakpoint) from "explicit `"off"`"
+(intentionally cancel an inherited `"on"`, emitted as an id-only stub entry so the
+front end knows to stop the effect rather than silently falling through) — confirmed
+`:309-398`. Setting `.enable` to `"off"` at `tablet` when `desktop` is `"on"` is
+meaningfully different from simply omitting the `tablet` key.
+
+**Responsive, no hover/sticky**: the `set` (per-effect value), `enable`, and
+`motionTriggerStart` VB fields all declare `features:{hover:false,sticky:false}` with
+no `responsive:false` override, and — unlike Sticky — the responsive values are
+genuinely read into front-end behavior: `get_scroll_setting()` loops
+`Breakpoint::get_enabled_breakpoint_names()` and produces a separate settings array
+per breakpoint (`:290-297`), each resolved through
+`ModuleUtils::use_attr_value(... 'mode' => 'getAndInheritAll')` (`:299-307`). There is
+no hover or sticky-state variant for any scroll subfield — an on-scroll effect has no
+discrete state to key a hover value off of.
+
+Minimal copy-paste `attrs` fragment (vertical motion + fade, both at their own
+defaults, middle-of-element trigger):
+
+```json
+{
+  "module": {
+    "decoration": {
+      "scroll": {
+        "desktop": {
+          "value": {
+            "motionTriggerStart": "middle",
+            "verticalMotion": {
+              "enable": "on",
+              "viewport": {"top": "100", "start": "50", "end": "50", "bottom": "0"},
+              "offset": {"start": "4", "mid": "0", "end": "-4"}
+            },
+            "fade": {
+              "enable": "on",
+              "viewport": {"top": "100", "start": "50", "end": "50", "bottom": "0"},
+              "offset": {"start": "0", "mid": "100", "end": "100"}
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Provenance**: shared subfield vocabulary from
+`server/Packages/Module/Options/Scroll/ScrollPresetAttrsMap.php::get_map()` (`:32-107`);
+per-effect defaults and resolver map from
+`server/Packages/Module/Options/Scroll/ScrollEffectsUtils.php`
+(`$scroll_effect_default_group_attr` `:36-126`, `$scroll_effect_resolver_map`
+`:135-142`); the enable/inherit/intentional-disable mechanism and per-breakpoint loop
+from the same file's `get_scroll_setting()` (`:213-426`, esp. `:290-307` and
+`:309-398`); viewport sort/clamp from `get_sorted_range()` (`:686-734`); the
+runtime-not-CSS mechanism from
+`server/Packages/Module/Options/Scroll/ScrollEffectsScriptData.php` (confirmed no
+`StyleLibrary/Declarations/Scroll` directory exists in this Divi build); the
+unitless interpolation from compiled `visual-builder/build/script-library-scroll-effects-utils.js`'s
+`getEffectValue()`; VB field configs (`features:{hover:false,sticky:false}`,
+`motionTriggerStart` enum, per-effect default viewport/offset objects — including
+`blur`'s distinct `60/40` viewport default) confirmed in compiled
+`visual-builder/build/module.js`. `module.decoration.*` prefix and the full 13-path
+set cross-checked against
+`server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2527-2591`. Path list
+cross-verified against `php scripts/extract-decoration-paths.php <builder5> --shared`:
+
+```
+$ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'scroll'
+## scroll (13)
+  module.decoration.scroll__blur
+  module.decoration.scroll__blur.enable
+  module.decoration.scroll__fade
+  module.decoration.scroll__fade.enable
+  module.decoration.scroll__horizontalMotion
+  module.decoration.scroll__horizontalMotion.enable
+  module.decoration.scroll__motionTriggerStart
+  module.decoration.scroll__rotating
+  module.decoration.scroll__rotating.enable
+  module.decoration.scroll__scaling
+  module.decoration.scroll__scaling.enable
+  module.decoration.scroll__verticalMotion
+  module.decoration.scroll__verticalMotion.enable
+```
+
+All 13 paths documented above appear in that output — none invented.
+
+---
+
+## Entrance Animation
+
+12 subfields, from
+`module.decoration.animation__{style,direction,duration,delay,repeat,speedCurve,startingOpacity}`
+plus `animation__intensity.{slide,zoom,flip,fold,roll}` *(verified 2026-07-28)*.
+
+Like Sticky and Scroll, this family is **not a CSS declaration** — no
+`StyleLibrary/Declarations/Animation` directory exists in this Divi build (confirmed
+via directory listing). `AnimationScriptData::set()` reads
+`module.decoration.animation__*` (gated on `AnimationUtils::is_enabled()` and the
+`anim` feature flag) into a runtime record consumed by Divi's own compiled
+entrance-animation JS, which also toggles the `et_animated` CSS class via
+`AnimationUtils::classnames()`.
+
+| Path | Value shape | Notes |
+|---|---|---|
+| `module.decoration.animation__style` | enum: `"none"` \| `"fade"` \| `"slide"` \| `"bounce"` \| `"zoom"` \| `"flip"` \| `"fold"` \| `"roll"` | Default `"none"`. VB `divi/button-options` (icon grid, 4-column). **The only animation subfield with `features:{responsive:false}` explicitly set** (compiled `visual-builder/build/module.js`) — every other subfield below is responsive; `style` cannot vary per breakpoint in the VB. |
+| `module.decoration.animation__direction` | enum: `"center"` \| `"left"` \| `"right"` \| `"top"` \| `"bottom"` | Default `"center"` (`AnimationUtils::_get_presets()`'s `direction` validator falls back to `"center"` for anything outside this five-value list). VB `divi/select`. **The displayed labels are inverted from the stored keys**: the VB option map (confirmed in compiled `visual-builder/build/module.js`) shows key `left` labeled "Right", key `right` labeled "Left", key `bottom` labeled "Top", key `top` labeled "Bottom" — the key you write to attrs is not the word shown in the dropdown. |
+| `module.decoration.animation__duration` | length (ms), e.g. `"1000ms"` | Default `"1000ms"` — **differs from Transition's 300ms default**; don't assume the two families share timing defaults. VB `divi/range`, `defaultUnit:"ms"`, `min:0`, `max:2000`. |
+| `module.decoration.animation__delay` | length (ms), e.g. `"0ms"` | Default `"0ms"`. VB `divi/range`, `defaultUnit:"ms"`, `min:0`, `max:3000` — **a 3000ms ceiling, an order of magnitude above Transition's own `delay` max of 300ms.** |
+| `module.decoration.animation__intensity.slide` / `.zoom` / `.flip` / `.fold` / `.roll` | percentage, e.g. `"50%"` | Default `"50%"` each. VB `divi/range`, `allowedUnits:["%"]`. Rendered only while `style` is set to that same value — one intensity field is visible at a time. **`fade` and `bounce` have no corresponding `intensity.*` path at all**: `AnimationUtils::_get_presets()`'s `intensity` filter hard-codes `"50%"` for those two styles regardless of any attrs value (`styles_without_intensity = ['fade','bounce']`), so there is nothing to author for them — 5 `intensity.*` paths, not 7, and that is correct, not an omission. |
+| `module.decoration.animation__startingOpacity` | percentage, e.g. `"0%"` | Default `"0%"`. VB `divi/range`, `cssProperty:"filter:opacity"`, `max:100`, `minLimit:0`, `maxLimit:100`. Raising it reduces or removes the fade-in that otherwise accompanies every style. |
+| `module.decoration.animation__speedCurve` | enum, **kebab-case**: `"ease-in-out"` \| `"ease"` \| `"ease-in"` \| `"ease-out"` \| `"linear"` | Default `"ease-in-out"`. VB `divi/select`. **Do not confuse with Transition's `speedCurve`**, which stores camelCase (`easeInOut`) and is server-side mapped to this same kebab-case CSS form — Animation's value is already kebab-case and is used as-is by the front-end animation runtime; no PHP mapping switch exists for it (confirmed: no such switch anywhere under `Module/Options/Animation`, and no `StyleLibrary/Declarations/Animation` directory exists to hold one). |
+| `module.decoration.animation__repeat` | enum: `"once"` \| `"loop"` | Default `"once"`. VB `divi/select`. |
+
+**Responsive is read into front-end behavior for every subfield except `style`**:
+`AnimationUtils::generate_data()` loops every breakpoint present in the attrs
+(`foreach (array_keys($args['attr']) as $breakpoint)`), resolves each through
+`ModuleUtils::use_attr_value(... 'mode' => 'getAndInheritAll')`, and emits
+breakpoint-suffixed data keys (e.g. `duration_tablet`) — unlike Sticky, there is no
+hardcoded-desktop shortcut here. `style` is the one exception, gated off at the VB
+field level as noted above.
+
+**Implicit interaction with Transform** (derived, not authorable): for the five
+"directional" styles (`slide`/`zoom`/`flip`/`fold`/`roll`), if the same breakpoint's
+`module.decoration.transform` carries any value, or `module.decoration.position.origin`
+is set to a non-`"center"` origin under a non-`"default"` position mode,
+`AnimationUtils::has_transformed_animation_for_breakpoint()` swaps the generated
+`style` data value to `'transformAnim'` so the animation composes with the module's
+own transform instead of fighting it (`AnimationUtils.php:130-134`, `:606-676`). This
+is computed automatically from the module's other attrs at render time — there is no
+`module.decoration.animation__*` key to set it directly.
+
+**Cross-link**: this family is Divi's native, JS-driven **entrance** animation — an
+element fades/slides/zooms in once (or on `loop`) when it mounts or first scrolls into
+view, gated by the `anim` feature flag. It is a completely different mechanism from
+the CSS-class-based, scroll-progress-driven animations documented in
+[design-effects.md](design-effects.md) (Divi Design Library effect classes). Use
+`module.decoration.animation__*` for the builder's built-in "Animation" settings
+panel; use the DDL classes in `design-effects.md` for its effects catalog.
+
+Minimal copy-paste `attrs` fragment (slide in, moderate intensity, once):
+
+```json
+{
+  "module": {
+    "decoration": {
+      "animation": {
+        "desktop": {
+          "value": {
+            "style": "slide",
+            "direction": "left",
+            "duration": "800ms",
+            "delay": "100ms",
+            "intensity": {"slide": "60%"},
+            "startingOpacity": "0%",
+            "speedCurve": "ease-in-out",
+            "repeat": "once"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Provenance**: shared subfield vocabulary from
+`server/Packages/Module/Options/Animation/AnimationPresetAttrsMap.php::get_map()`
+(`:32-96`, confirming the 12-path set with 5, not 7, `intensity.*` entries); style/
+direction/timing defaults, validation fallbacks, and the fade/bounce intensity
+hard-code from
+`server/Packages/Module/Options/Animation/AnimationUtils.php::_get_presets()`
+(`:316-522`) and `::_get_options()` (`:239-284`); enablement check from `is_enabled()`
+(`:571-574`); the Transform-interaction swap from
+`has_transformed_animation_for_breakpoint()` / `_is_transformable_animation_style()` /
+`_has_default_transform_values()` (`:586-676`); the runtime-not-CSS mechanism from
+`server/Packages/Module/Options/Animation/AnimationScriptData.php` (confirmed no
+`StyleLibrary/Declarations/Animation` directory exists); VB field configs — the
+explicit `style` `responsive:false` flag, every other subfield's absence of that
+flag, the 8-value style option map (including `bounce`), the direction option map's
+key/label inversion, and the kebab-case `speedCurve` option-label map — all confirmed
+in compiled `visual-builder/build/module.js`. `module.decoration.*` prefix and the
+12-path set cross-checked against
+`server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2216-2276`. Path list
+cross-verified against `php scripts/extract-decoration-paths.php <builder5> --shared`:
+
+```
+$ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'animation'
+## animation (12)
+  module.decoration.animation__delay
+  module.decoration.animation__direction
+  module.decoration.animation__duration
+  module.decoration.animation__intensity.flip
+  module.decoration.animation__intensity.fold
+  module.decoration.animation__intensity.roll
+  module.decoration.animation__intensity.slide
+  module.decoration.animation__intensity.zoom
+  module.decoration.animation__repeat
+  module.decoration.animation__speedCurve
+  module.decoration.animation__startingOpacity
+  module.decoration.animation__style
+```
