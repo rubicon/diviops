@@ -3,6 +3,23 @@
 //   or: php scripts/extract-decoration-paths.php <builder5-path> --shared
 // Clean-room provenance helper: prints canonical module.decoration.* dot-paths
 // from Divi's own PresetAttrsMap.php. Reads Divi source only; never Pro.
+
+function strip_comments($src) {
+    $tokens = token_get_all($src);
+    $result = '';
+    foreach ($tokens as $token) {
+        if (is_array($token)) {
+            if ($token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT) {
+                continue;
+            }
+            $result .= $token[1];
+        } else {
+            $result .= $token;
+        }
+    }
+    return $result;
+}
+
 list(, $b5, $moduleOrFlag) = array_pad($argv, 3, null);
 if (!$b5 || !$moduleOrFlag) { fwrite(STDERR, "usage: <builder5-path> <ModuleName>\n   or: <builder5-path> --shared\n"); exit(2); }
 
@@ -16,19 +33,21 @@ if ($moduleOrFlag === '--shared') {
         $dir = $familyDirs[$i];
         $file = rtrim($b5,'/')."/server/Packages/Module/Options/$dir/{$dir}PresetAttrsMap.php";
         if (!is_file($file)) { fwrite(STDERR, "not found: $file\n"); exit(2); }
-        $src = file_get_contents($file);
+        $src = strip_comments(file_get_contents($file));
         if (preg_match_all('/"\\{\\$attr_name\\}__([A-Za-z0-9_.]+)"/', $src, $m)) {
             foreach (array_unique($m[1]) as $subField) {
                 $byFam[$fam][] = "module.decoration.$fam"."__$subField";
             }
         }
+        // Per-family guard: fail if this family yielded zero subfields
+        if (count($byFam[$fam]) === 0) { fwrite(STDERR, "ERROR: family $fam yielded zero subfields in $file — refusing silent empty result\n"); exit(1); }
     }
 } else {
     // Extract from ModuleLibrary/<Module>/<Module>PresetAttrsMap.php (per-module mode)
     $module = $moduleOrFlag;
     $file = rtrim($b5,'/')."/server/Packages/ModuleLibrary/$module/{$module}PresetAttrsMap.php";
     if (!is_file($file)) { fwrite(STDERR, "not found: $file\n"); exit(2); }
-    $src = file_get_contents($file);
+    $src = strip_comments(file_get_contents($file));
     if (preg_match_all("/'(module\\.decoration\\.[A-Za-z0-9_.]+)'/", $src, $m)) {
         foreach (array_unique($m[1]) as $path) {
             foreach ($families as $f) {
