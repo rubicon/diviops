@@ -247,13 +247,22 @@ Path list cross-verified against `php scripts/extract-decoration-paths.php <buil
 
 ## Path verification
 
-Every path documented above was checked against the authoritative extractor output
-(`php scripts/extract-decoration-paths.php <builder5> --shared`, which reads the
-`Module/Options/<Group>/<Group>PresetAttrsMap.php` classes directly):
+Every path documented in all seven family sections below was checked against the
+authoritative extractor output (`php scripts/extract-decoration-paths.php <builder5>
+--shared`, which reads the `Module/Options/<Group>/<Group>PresetAttrsMap.php` classes
+directly). This is the single consolidated verification for the whole document — each
+family section's own Provenance paragraph points back here rather than repeating the
+extractor output inline.
+
+The extractor's own raw output groups each family under a `## <family> (N)` markdown
+header (that's its native output format, meant for pasting straight into a doc). Inside
+this document those header lines are reformatted to `<family> (N):` below so they don't
+themselves read as `##` document headings; the family name, path count, and every path
+are otherwise reproduced verbatim:
 
 ```
-$ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'boxShadow|filters|transform|sticky'
-## boxShadow (7)
+$ php scripts/extract-decoration-paths.php <builder5> --shared
+boxShadow (7):
   module.decoration.boxShadow__blur
   module.decoration.boxShadow__color
   module.decoration.boxShadow__horizontal
@@ -261,7 +270,7 @@ $ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'boxSha
   module.decoration.boxShadow__spread
   module.decoration.boxShadow__style
   module.decoration.boxShadow__vertical
-## filters (9)
+filters (9):
   module.decoration.filters__blendMode
   module.decoration.filters__blur
   module.decoration.filters__brightness
@@ -271,13 +280,13 @@ $ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'boxSha
   module.decoration.filters__opacity
   module.decoration.filters__saturate
   module.decoration.filters__sepia
-## transform (5)
+transform (5):
   module.decoration.transform__origin
   module.decoration.transform__rotate
   module.decoration.transform__scale
   module.decoration.transform__skew
   module.decoration.transform__translate
-## sticky (7)
+sticky (7):
   module.decoration.sticky__limit.bottom
   module.decoration.sticky__limit.top
   module.decoration.sticky__offset.bottom
@@ -285,15 +294,48 @@ $ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'boxSha
   module.decoration.sticky__offset.top
   module.decoration.sticky__position
   module.decoration.sticky__transition
+transition (3):
+  module.decoration.transition__delay
+  module.decoration.transition__duration
+  module.decoration.transition__speedCurve
+scroll (13):
+  module.decoration.scroll__blur
+  module.decoration.scroll__blur.enable
+  module.decoration.scroll__fade
+  module.decoration.scroll__fade.enable
+  module.decoration.scroll__horizontalMotion
+  module.decoration.scroll__horizontalMotion.enable
+  module.decoration.scroll__motionTriggerStart
+  module.decoration.scroll__rotating
+  module.decoration.scroll__rotating.enable
+  module.decoration.scroll__scaling
+  module.decoration.scroll__scaling.enable
+  module.decoration.scroll__verticalMotion
+  module.decoration.scroll__verticalMotion.enable
+animation (12):
+  module.decoration.animation__delay
+  module.decoration.animation__direction
+  module.decoration.animation__duration
+  module.decoration.animation__intensity.flip
+  module.decoration.animation__intensity.fold
+  module.decoration.animation__intensity.roll
+  module.decoration.animation__intensity.slide
+  module.decoration.animation__intensity.zoom
+  module.decoration.animation__repeat
+  module.decoration.animation__speedCurve
+  module.decoration.animation__startingOpacity
+  module.decoration.animation__style
 ```
 
-All 7 boxShadow paths, all 9 filters paths, all 5 transform paths, and all 7 sticky
-paths documented in this file appear in that output — none invented. Cross-checked
-against the per-module extractor (`php scripts/extract-decoration-paths.php
-<builder5> Text`), which additionally confirms the `module.decoration.` prefix is
-real for every one of these four families (Text's own `TextPresetAttrsMap.php`
-declares the identical subfield sets under that exact prefix — boxShadow/filters at
-`:2096-2190`, transform at `:2191-2215`, sticky at `:2592-2626`).
+All 7 boxShadow, 9 filters, 5 transform, 7 sticky, 3 transition, 13 scroll, and 12
+animation paths documented in this file — 56 total — appear in that output, none
+invented. Cross-checked against the per-module extractor (`php
+scripts/extract-decoration-paths.php <builder5> Text`), which additionally confirms
+the `module.decoration.` prefix is real for every one of these seven families (Text's
+own `TextPresetAttrsMap.php` declares the identical subfield sets under that exact
+prefix — boxShadow/filters at `:2096-2190`, transform at `:2191-2215`, animation at
+`:2216-2276`, transition at `:2478-2493`, scroll at `:2527-2591`, sticky at
+`:2592-2626`).
 
 ---
 
@@ -462,11 +504,23 @@ sticky JS resolves the correct breakpoint's value itself: the sticky store's `ge
 (`visual-builder/build/script-library-sticky-elements.js`) implements the literal cascade —
 `case"phone":return n?.phone??n?.tablet??n?.desktop??e;case"tablet":return n?.tablet??n?.desktop??e;default:return n?.desktop??e`
 — gated on a `responsiveOptions` list (`["position","topOffset","bottomOffset","topLimit","bottomLimit","offsetSurrounding","transition","topOffsetModules","bottomOffsetModules"]`,
-`visual-builder/build/script-library-stores-sticky.js`) that names exactly the settings
-`StickyUtils::get_sticky_setting()` produces. That same sticky store's own `getProp()`
-(also `visual-builder/build/script-library-stores-sticky.js`) performs the equivalent
-breakpoint-keyed lookup for its internal props. Author tablet/phone sticky overrides with
-confidence — they are read and resolved, not inert.
+`visual-builder/build/script-library-stores-sticky.js`) that mostly, but not exactly,
+overlaps the settings `StickyUtils::get_sticky_setting()` produces: 7 of the 9 entries
+(`position`/`topOffset`/`bottomOffset`/`topLimit`/`bottomLimit`/`offsetSurrounding`/`transition`)
+match that PHP method's own output keys one-for-one, but the remaining two,
+`topOffsetModules`/`bottomOffsetModules`, are never produced by `get_sticky_setting()` at
+all — they're computed entirely client-side by this same store's own
+`generateOffsetModules()` (confirmed in `script-library-stores-sticky.js`), which measures
+sibling sticky modules' rendered positions in the browser rather than reading anything
+out of server-side attrs. That same sticky store's own `getProp()` (also
+`visual-builder/build/script-library-stores-sticky.js`) is **not** an equivalent
+breakpoint-keyed lookup: for a `responsiveOptions` entry it does a direct single-breakpoint
+read — `_.get(o, currentBreakpoint, default)` — with no phone→tablet→desktop fallback
+chain at all; a breakpoint with no explicit value returns the caller's plain default
+straight away rather than inheriting from a larger breakpoint the way `getSetting()`'s
+`??` chain does. Only `getSetting()` implements the cascade. Author tablet/phone sticky
+overrides with confidence regardless — `getSetting()` is what the runtime actually calls
+to resolve them, and they are read and resolved there, not inert.
 
 Minimal copy-paste `attrs` fragment (stick to top, offset by 20px, re-anchored to its section's
 bottom edge instead of the browser window):
@@ -577,15 +631,8 @@ and the camelCase `speedCurve` option-label map (`easeInOut`/`ease`/`easeIn`/`ea
 confirmed in compiled `visual-builder/build/module.js`; `module.decoration.*` prefix and
 the full 3-subfield set cross-checked against
 `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2478-2493`. Path list
-cross-verified against `php scripts/extract-decoration-paths.php <builder5> --shared`:
-
-```
-$ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'transition'
-## transition (3)
-  module.decoration.transition__delay
-  module.decoration.transition__duration
-  module.decoration.transition__speedCurve
-```
+cross-verified against `php scripts/extract-decoration-paths.php <builder5> --shared` (see
+the "Path verification" section).
 
 **VB round-trip** (2026-07-28): all 3 subfields (`duration`, `delay`, `speedCurve`) written via
 `diviops_module_update` to the same scratch Text module (page 900587, trashed after) at the exact
@@ -756,27 +803,8 @@ viewport/offset objects — including `blur`'s distinct `60/40` viewport default
 confirmed in compiled `visual-builder/build/module.js`. `module.decoration.*` prefix
 and the full 13-path set cross-checked against
 `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2527-2591`. Path list
-cross-verified against `php scripts/extract-decoration-paths.php <builder5> --shared`:
-
-```
-$ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'scroll'
-## scroll (13)
-  module.decoration.scroll__blur
-  module.decoration.scroll__blur.enable
-  module.decoration.scroll__fade
-  module.decoration.scroll__fade.enable
-  module.decoration.scroll__horizontalMotion
-  module.decoration.scroll__horizontalMotion.enable
-  module.decoration.scroll__motionTriggerStart
-  module.decoration.scroll__rotating
-  module.decoration.scroll__rotating.enable
-  module.decoration.scroll__scaling
-  module.decoration.scroll__scaling.enable
-  module.decoration.scroll__verticalMotion
-  module.decoration.scroll__verticalMotion.enable
-```
-
-All 13 paths documented above appear in that output — none invented.
+cross-verified against `php scripts/extract-decoration-paths.php <builder5> --shared` (see
+the "Path verification" section).
 
 ---
 
@@ -881,21 +909,5 @@ key/label inversion, and the kebab-case `speedCurve` option-label map — all co
 in compiled `visual-builder/build/module.js`. `module.decoration.*` prefix and the
 12-path set cross-checked against
 `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2216-2276`. Path list
-cross-verified against `php scripts/extract-decoration-paths.php <builder5> --shared`:
-
-```
-$ php scripts/extract-decoration-paths.php <builder5> --shared | grep -E 'animation'
-## animation (12)
-  module.decoration.animation__delay
-  module.decoration.animation__direction
-  module.decoration.animation__duration
-  module.decoration.animation__intensity.flip
-  module.decoration.animation__intensity.fold
-  module.decoration.animation__intensity.roll
-  module.decoration.animation__intensity.slide
-  module.decoration.animation__intensity.zoom
-  module.decoration.animation__repeat
-  module.decoration.animation__speedCurve
-  module.decoration.animation__startingOpacity
-  module.decoration.animation__style
-```
+cross-verified against `php scripts/extract-decoration-paths.php <builder5> --shared` (see
+the "Path verification" section).
