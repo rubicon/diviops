@@ -397,7 +397,14 @@ trait DiviOps_Agent_Media {
 				array(
 					'timeout'             => 20,
 					'redirection'         => 0, // do NOT auto-follow
-					'limit_response_size' => (int) wp_max_upload_size(),
+					// One byte ABOVE the cap: WP's HTTP transport truncates the body
+					// to this limit, so setting it to the cap exactly would make the
+					// strlen() > cap check below unreachable in production (a
+					// truncated body always lands at strlen === cap). Setting it to
+					// cap+1 lets an over-cap body reach cap+1 bytes, so the check
+					// still fires and rejects it instead of silently sideloading a
+					// truncated file.
+					'limit_response_size' => (int) wp_max_upload_size() + 1,
 				)
 			);
 			if ( is_wp_error( $resp ) ) {
