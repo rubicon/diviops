@@ -29,8 +29,40 @@ if ( ! function_exists( 'add_action' ) ) {
 	}
 }
 
+if ( ! isset( $GLOBALS['diviops_test_hooks'] ) ) {
+	$GLOBALS['diviops_test_hooks'] = array();
+}
+
 if ( ! function_exists( 'add_filter' ) ) {
+	/**
+	 * Real filter registration, keyed by hook then priority, mirroring core's
+	 * add_filter()/apply_filters() contract closely enough for the extensibility
+	 * seams this harness exercises (e.g. diviops_media_host_resolver): tests
+	 * register a callback here and apply_filters() below actually invokes it,
+	 * rather than the harness silently no-op'ing every filter hook.
+	 */
 	function add_filter( $hook, $callback, $priority = 10, $accepted_args = 1 ) {
+		$GLOBALS['diviops_test_hooks'][ $hook ][ $priority ][] = array(
+			'function'      => $callback,
+			'accepted_args' => $accepted_args,
+		);
+		return true;
+	}
+}
+
+if ( ! function_exists( 'remove_all_filters' ) ) {
+	/**
+	 * Remove every callback registered on a hook (or just one priority when
+	 * given). Mirrors core's remove_all_filters() contract; the test harness
+	 * uses this to reset an extensibility seam (e.g. diviops_media_host_resolver)
+	 * between cases instead of accumulating stale callbacks across assertions.
+	 */
+	function remove_all_filters( $hook, $priority = false ) {
+		if ( false === $priority ) {
+			unset( $GLOBALS['diviops_test_hooks'][ $hook ] );
+		} else {
+			unset( $GLOBALS['diviops_test_hooks'][ $hook ][ $priority ] );
+		}
 		return true;
 	}
 }
@@ -44,6 +76,24 @@ if ( ! function_exists( 'wp_strip_all_tags' ) ) {
 			$string = preg_replace( '/[\r\n\t ]+/', ' ', $string );
 		}
 		return trim( $string );
+	}
+}
+
+if ( ! function_exists( 'wp_parse_url' ) ) {
+	/**
+	 * Thin passthrough over parse_url() for the test harness.
+	 *
+	 * WordPress's real wp_parse_url() additionally handles scheme-less URLs
+	 * (e.g. "//example.com/a.png") by faking a scheme before delegating to
+	 * parse_url() and stripping it back out. None of media_url_is_safe()'s
+	 * test cases are scheme-less, so a plain passthrough is sufficient here.
+	 *
+	 * @param string $url       URL to parse.
+	 * @param int    $component Optional PHP_URL_* component constant.
+	 * @return mixed
+	 */
+	function wp_parse_url( $url, $component = -1 ) {
+		return parse_url( $url, $component );
 	}
 }
 
@@ -170,19 +220,56 @@ if ( ! function_exists( 'sanitize_text_field' ) ) {
 }
 
 if ( ! function_exists( 'current_user_can' ) ) {
+	/**
+	 * Fixed-true stub, with two seams: a blanket capability-denial seam
+	 * (`$GLOBALS['diviops_test_denied_caps']`, an array of cap strings — e.g.
+	 * `array( 'upload_files' )` denies that cap outright regardless of any
+	 * target argument) and a per-object seam for 'edit_post' whose target id
+	 * is listed in $GLOBALS['diviops_test_uneditable_ids']. The per-object
+	 * seam is what lets can_inspect_post_object()'s edit_post gate
+	 * (trait-core.php) be exercised behaviorally instead of only via source
+	 * inspection (see the comment in test-revision.php predating this seam).
+	 * Every other capability/call shape not opted into one of these seams
+	 * stays fixed-true, so existing tests keep passing.
+	 */
 	function current_user_can( ...$args ) {
+		$cap = $args[0] ?? '';
+		if ( in_array( $cap, (array) ( $GLOBALS['diviops_test_denied_caps'] ?? array() ), true ) ) {
+			return false;
+		}
+		if ( 'edit_post' === $cap && isset( $args[1] ) ) {
+			$target = $args[1];
+			$id     = is_object( $target ) ? (int) ( $target->ID ?? 0 ) : (int) $target;
+			if ( in_array( $id, (array) ( $GLOBALS['diviops_test_uneditable_ids'] ?? array() ), true ) ) {
+				return false;
+			}
+		}
 		return true;
 	}
 }
 
 if ( ! function_exists( 'apply_filters' ) ) {
 	/**
-	 * No-op filter runner: add_filter() above never registers a callback, so
-	 * there is nothing to run here. Returns $value unchanged, which is the
-	 * correct behavior for a harness with zero registered filters, not a
-	 * shortcut around one.
+	 * Real filter runner over the registry add_filter() above builds: runs every
+	 * callback registered on $tag in priority order, each receiving $value plus
+	 * as many of $args as its accepted_args declared, threading the return value
+	 * through. A hook with no registered callbacks returns $value unchanged —
+	 * the correct behavior for both an untouched hook and one reset via
+	 * remove_all_filters().
 	 */
 	function apply_filters( $tag, $value, ...$args ) {
+		if ( empty( $GLOBALS['diviops_test_hooks'][ $tag ] ) ) {
+			return $value;
+		}
+		$by_priority = $GLOBALS['diviops_test_hooks'][ $tag ];
+		ksort( $by_priority );
+		foreach ( $by_priority as $callbacks ) {
+			foreach ( $callbacks as $registered ) {
+				$accepted   = max( 1, (int) $registered['accepted_args'] );
+				$call_args  = array_slice( array_merge( array( $value ), $args ), 0, $accepted );
+				$value      = call_user_func_array( $registered['function'], $call_args );
+			}
+		}
 		return $value;
 	}
 }
@@ -906,6 +993,402 @@ if ( ! function_exists( 'diviops_test_register_nav_menu_item' ) ) {
 	}
 }
 
+if ( ! function_exists( 'get_allowed_mime_types' ) ) {
+	/**
+	 * Model WP core's get_allowed_mime_types(): the site's ext-pattern => mime
+	 * map. Tests drive this via $GLOBALS['diviops_test_allowed_mimes']; absent
+	 * that, falls back to a representative default set of image types.
+	 */
+	function get_allowed_mime_types( $user = null ) {
+		return $GLOBALS['diviops_test_allowed_mimes'] ?? array(
+			'jpg|jpeg|jpe' => 'image/jpeg',
+			'png'          => 'image/png',
+			'gif'          => 'image/gif',
+			'webp'         => 'image/webp',
+		);
+	}
+}
+
+if ( ! function_exists( 'wp_check_filetype_and_ext' ) ) {
+	/**
+	 * Model WP core's wp_check_filetype_and_ext(): real-byte type detection
+	 * against a declared filename. Test seam: $GLOBALS['diviops_test_filetype']
+	 * maps filename => [ext,type,proper_filename], or the string 'mismatch' to
+	 * model core's byte/extension-mismatch result (all three fields false).
+	 * An unmapped filename also returns the all-false shape, matching core's
+	 * behavior for a file it cannot identify.
+	 */
+	function wp_check_filetype_and_ext( $file, $filename, $mimes = null ) {
+		$map = $GLOBALS['diviops_test_filetype'] ?? array();
+		if ( isset( $map[ $filename ] ) && 'mismatch' === $map[ $filename ] ) {
+			return array(
+				'ext'             => false,
+				'type'            => false,
+				'proper_filename' => false,
+			);
+		}
+		if ( isset( $map[ $filename ] ) ) {
+			return $map[ $filename ];
+		}
+		return array(
+			'ext'             => false,
+			'type'            => false,
+			'proper_filename' => false,
+		);
+	}
+}
+
+// ── media_upload() harness: sideload/fetch primitives + attachment registry ──
+//
+// download_url() is deliberately NOT stubbed here: media_fetch_to_temp()
+// (trait-media.php) does not call it — WP core's download_url() auto-follows
+// redirects with no per-hop SSRF revalidation, which is exactly the bypass
+// the redirect-hop guard exists to close (#28). The fetch path uses
+// wp_remote_get() with redirection disabled instead, stubbed below.
+
+if ( ! function_exists( 'wp_max_upload_size' ) ) {
+	function wp_max_upload_size() {
+		return $GLOBALS['diviops_test_max_upload'] ?? 8388608;
+	}
+}
+
+if ( ! isset( $GLOBALS['diviops_test_attachments'] ) ) {
+	$GLOBALS['diviops_test_attachments'] = array();
+}
+
+if ( ! function_exists( 'media_handle_sideload' ) ) {
+	/**
+	 * Model WP core's media_handle_sideload(): register an attachment record
+	 * from a local file and return its id. Test seam: $GLOBALS
+	 * ['diviops_test_sideload_mime'] controls the recorded mime (defaults to
+	 * image/png); the attachment registry backs wp_get_attachment_url() and
+	 * get_post_mime_type() below. Deletes the sideloaded temp file, matching
+	 * core's behavior of consuming the source file.
+	 */
+	function media_handle_sideload( $file, $post_id = 0, $desc = null, $post_data = array() ) {
+		$id = $GLOBALS['diviops_test_next_attach_id'] = ( $GLOBALS['diviops_test_next_attach_id'] ?? 100 ) + 1;
+		$GLOBALS['diviops_test_attachments'][ $id ] = array(
+			'id'       => $id,
+			'filename' => $file['name'],
+			'parent'   => $post_id,
+			'url'      => "https://site/wp-content/uploads/{$file['name']}",
+			'mime'     => $GLOBALS['diviops_test_sideload_mime'] ?? 'image/png',
+		);
+		if ( file_exists( $file['tmp_name'] ) ) {
+			@unlink( $file['tmp_name'] );
+		}
+		return $id;
+	}
+}
+
+if ( ! isset( $GLOBALS['diviops_test_http_responses'] ) ) {
+	$GLOBALS['diviops_test_http_responses'] = array();
+}
+if ( ! isset( $GLOBALS['diviops_test_remote_get_calls'] ) ) {
+	$GLOBALS['diviops_test_remote_get_calls'] = array();
+}
+
+if ( ! function_exists( 'wp_remote_get' ) ) {
+	/**
+	 * Model WP core's wp_remote_get() called with redirection disabled (the
+	 * caller — media_fetch_to_temp() — always passes 'redirection' => 0 so it
+	 * can revalidate each hop itself rather than letting the HTTP layer
+	 * auto-follow redirects past the SSRF guard). Pops the next scripted
+	 * response off $GLOBALS['diviops_test_http_responses'], a FIFO queue
+	 * tests script one entry per hop of a redirect chain. Each entry is
+	 * either a WP_Error (network failure) or an array shaped like core's
+	 * response: [ 'response' => [ 'code' => int ], 'headers' => [...],
+	 * 'body' => string ]. An empty queue means a call went unscripted — this
+	 * returns a WP_Error rather than a silent default, so a test that forgets
+	 * to script a hop fails loudly instead of quietly passing.
+	 */
+	function wp_remote_get( $url, $args = array() ) {
+		$GLOBALS['diviops_test_remote_get_calls'][] = array(
+			'url'  => $url,
+			'args' => $args,
+		);
+		if ( empty( $GLOBALS['diviops_test_http_responses'] ) ) {
+			return new WP_Error( 'http_request_failed', "diviops test harness: no scripted response for {$url}." );
+		}
+		return array_shift( $GLOBALS['diviops_test_http_responses'] );
+	}
+}
+
+if ( ! function_exists( 'wp_remote_retrieve_response_code' ) ) {
+	function wp_remote_retrieve_response_code( $response ) {
+		return (int) ( $response['response']['code'] ?? 0 );
+	}
+}
+
+if ( ! function_exists( 'wp_remote_retrieve_header' ) ) {
+	function wp_remote_retrieve_header( $response, $header ) {
+		$headers = $response['headers'] ?? array();
+		$header  = strtolower( (string) $header );
+		foreach ( $headers as $key => $value ) {
+			if ( strtolower( (string) $key ) === $header ) {
+				return $value;
+			}
+		}
+		return '';
+	}
+}
+
+if ( ! function_exists( 'wp_remote_retrieve_body' ) ) {
+	function wp_remote_retrieve_body( $response ) {
+		return (string) ( $response['body'] ?? '' );
+	}
+}
+
+if ( ! function_exists( 'wp_tempnam' ) ) {
+	function wp_tempnam( $filename = '', $dir = '' ) {
+		return tempnam( '' !== $dir ? $dir : sys_get_temp_dir(), 'divi' );
+	}
+}
+
+if ( ! function_exists( 'sanitize_file_name' ) ) {
+	/**
+	 * Reimplementation of the parts of WP core's sanitize_file_name() this
+	 * harness needs: strip special characters, collapse whitespace to dashes.
+	 */
+	function sanitize_file_name( $filename ) {
+		$special_chars = array( '?', '[', ']', '/', '\\', '=', '<', '>', ':', ';', ',', "'", '"', '&', '$', '#', '*', '(', ')', '|', '~', '`', '!', '{', '}', '%', '+', chr( 0 ) );
+		$filename      = str_replace( $special_chars, '', (string) $filename );
+		$filename      = preg_replace( '/[\r\n\t ]+/', ' ', $filename );
+		$filename      = trim( str_replace( ' ', '-', $filename ), '.-_' );
+		return $filename;
+	}
+}
+
+if ( ! function_exists( 'esc_url_raw' ) ) {
+	function esc_url_raw( $url, $protocols = null ) {
+		return (string) $url;
+	}
+}
+
+if ( ! function_exists( 'wp_get_attachment_url' ) ) {
+	function wp_get_attachment_url( $attachment_id ) {
+		return $GLOBALS['diviops_test_attachments'][ $attachment_id ]['url'] ?? false;
+	}
+}
+
+if ( ! function_exists( 'get_attached_file' ) ) {
+	/**
+	 * Model WP core's get_attached_file(): a local filesystem path for the
+	 * attachment, built from the registry's 'filename' ('' when the
+	 * attachment isn't registered — media_list()'s fallback-to-URL-basename
+	 * path covers that case). Unlike wp_get_attachment_url(), never carries a
+	 * `?query`, which is exactly why media_list() (trait-media.php) prefers
+	 * this for deriving an item's filename.
+	 */
+	function get_attached_file( $attachment_id, $unfiltered = false ) {
+		$filename = $GLOBALS['diviops_test_attachments'][ $attachment_id ]['filename'] ?? '';
+		return '' !== $filename ? "/uploads/{$filename}" : '';
+	}
+}
+
+if ( ! function_exists( 'get_post_mime_type' ) ) {
+	function get_post_mime_type( $post = null ) {
+		$id = is_object( $post ) ? ( $post->ID ?? 0 ) : (int) $post;
+		return $GLOBALS['diviops_test_attachments'][ $id ]['mime'] ?? false;
+	}
+}
+
+if ( ! function_exists( 'get_post_field' ) ) {
+	/**
+	 * Model WP core's get_post_field(): read a single field off the post object
+	 * the shared registry holds for $post_id, '' when the post or field is
+	 * unset. Same primitive-stub category as get_post() — media_get() uses this
+	 * for post_excerpt (WordPress's storage for an attachment's caption).
+	 */
+	function get_post_field( $field, $post = null, $context = 'display' ) {
+		$p = get_post( $post );
+		if ( ! $p || ! isset( $p->$field ) ) {
+			return '';
+		}
+		return $p->$field;
+	}
+}
+
+if ( ! isset( $GLOBALS['diviops_test_attachment_metadata'] ) ) {
+	$GLOBALS['diviops_test_attachment_metadata'] = array();
+}
+
+if ( ! function_exists( 'wp_get_attachment_metadata' ) ) {
+	/**
+	 * Model WP core's wp_get_attachment_metadata(): return the array a test
+	 * scripted for this attachment id (mirroring the 'sizes' sub-array a real
+	 * image attachment carries), empty array when nothing was scripted.
+	 */
+	function wp_get_attachment_metadata( $attachment_id, $unfiltered = false ) {
+		return $GLOBALS['diviops_test_attachment_metadata'][ $attachment_id ] ?? array();
+	}
+}
+
+if ( ! function_exists( 'wp_basename' ) ) {
+	function wp_basename( $path, $suffix = '' ) {
+		return basename( (string) $path, $suffix );
+	}
+}
+
+if ( ! class_exists( 'WP_Query' ) ) {
+	/**
+	 * Minimal WP_Query stub modeling only what media_list() (trait-media.php)
+	 * needs: post_type / post_status filtering, an 's' substring search against
+	 * post_title, a 'post_mime_type' prefix filter (WP core lets a bare group
+	 * like 'image' match any 'image/*' — this stub's prefix match subsumes
+	 * that), and posts_per_page/paged pagination — run against the same
+	 * $GLOBALS['diviops_test_posts'] registry get_post()/
+	 * diviops_test_register_post() use, so a fixture registered there is what
+	 * this class scans. NOT a general WP_Query reimplementation: no
+	 * tax_query/meta_query/orderby, because no handler under test needs them.
+	 */
+	class WP_Query {
+		public $posts         = array();
+		public $found_posts   = 0;
+		public $max_num_pages = 0;
+
+		public function __construct( array $args = array() ) {
+			$post_type   = $args['post_type'] ?? 'post';
+			$post_status = $args['post_status'] ?? 'publish';
+			$search      = isset( $args['s'] ) ? strtolower( (string) $args['s'] ) : '';
+			$mime_prefix = isset( $args['post_mime_type'] ) ? (string) $args['post_mime_type'] : '';
+			$fields      = $args['fields'] ?? '';
+			$per_page    = isset( $args['posts_per_page'] ) ? (int) $args['posts_per_page'] : 10;
+			$paged       = isset( $args['paged'] ) ? max( 1, (int) $args['paged'] ) : 1;
+
+			$matches = array();
+			foreach ( (array) ( $GLOBALS['diviops_test_posts'] ?? array() ) as $post ) {
+				if ( $post_type !== $post->post_type ) {
+					continue;
+				}
+				$status = isset( $post->post_status ) ? $post->post_status : 'publish';
+				if ( $post_status !== $status ) {
+					continue;
+				}
+				if ( '' !== $search && false === strpos( strtolower( (string) $post->post_title ), $search ) ) {
+					continue;
+				}
+				if ( '' !== $mime_prefix ) {
+					$post_mime = isset( $post->post_mime_type ) ? (string) $post->post_mime_type : '';
+					if ( 0 !== strpos( $post_mime, $mime_prefix ) ) {
+						continue;
+					}
+				}
+				$matches[] = $post;
+			}
+
+			$this->found_posts   = count( $matches );
+			$this->max_num_pages = $per_page > 0 ? (int) ceil( $this->found_posts / $per_page ) : 0;
+
+			$offset     = ( $paged - 1 ) * $per_page;
+			$page_posts = array_slice( $matches, $offset, $per_page );
+
+			$this->posts = ( 'ids' === $fields )
+				? array_map(
+					function ( $p ) {
+						return (int) $p->ID;
+					},
+					$page_posts
+				)
+				: $page_posts;
+		}
+	}
+}
+
+// ── media_set_featured_image() harness: thumbnail store + internal-request shim ──
+
+if ( ! isset( $GLOBALS['diviops_test_thumbnails'] ) ) {
+	$GLOBALS['diviops_test_thumbnails'] = array();
+}
+if ( ! isset( $GLOBALS['diviops_test_set_thumbnail_calls'] ) ) {
+	$GLOBALS['diviops_test_set_thumbnail_calls'] = array();
+}
+
+if ( ! function_exists( 'get_post_thumbnail_id' ) ) {
+	/**
+	 * Model WP core's get_post_thumbnail_id(): the post's featured-image
+	 * attachment id from the harness thumbnail map, 0 when unset (mirroring
+	 * core's cast of the unset `_thumbnail_id` meta through absint()). Test
+	 * seam: $GLOBALS['diviops_test_thumbnails'][ post_id ] = attachment_id.
+	 */
+	function get_post_thumbnail_id( $post = null ) {
+		$id = is_object( $post ) ? (int) ( $post->ID ?? 0 ) : (int) $post;
+		return (int) ( $GLOBALS['diviops_test_thumbnails'][ $id ] ?? 0 );
+	}
+}
+
+if ( ! function_exists( 'set_post_thumbnail' ) ) {
+	/**
+	 * Model WP core's set_post_thumbnail(): record the attachment id as the
+	 * post's featured image in the harness thumbnail map. Every call is also
+	 * appended to diviops_test_set_thumbnail_calls, so a test can assert an
+	 * idempotent no-op path never called this (not just that the end state
+	 * happens to match). Returns true, as core does on success.
+	 */
+	function set_post_thumbnail( $post, $thumbnail_id ) {
+		$id = is_object( $post ) ? (int) ( $post->ID ?? 0 ) : (int) $post;
+		$GLOBALS['diviops_test_thumbnails'][ $id ]     = (int) $thumbnail_id;
+		$GLOBALS['diviops_test_set_thumbnail_calls'][] = array(
+			'post_id'      => $id,
+			'thumbnail_id' => (int) $thumbnail_id,
+		);
+		return true;
+	}
+}
+
+if ( ! function_exists( 'has_post_thumbnail' ) ) {
+	function has_post_thumbnail( $post = null ) {
+		return get_post_thumbnail_id( $post ) > 0;
+	}
+}
+
+if ( ! class_exists( 'WP_REST_Request' ) ) {
+	/**
+	 * Minimal stand-in for WordPress core's WP_REST_Request, covering only
+	 * what media_set_featured_image()'s internal call to media_upload()
+	 * needs: construct, set_param(), then get_param(). Real WP_REST_Request
+	 * ships with the WordPress runtime in production; this shim exists so the
+	 * harness can load and exercise the SAME production code path rather than
+	 * a test-only substitute of it.
+	 */
+	class WP_REST_Request implements ArrayAccess {
+
+		private $method;
+		private $route;
+		private $params = array();
+
+		public function __construct( $method = '', $route = '' ) {
+			$this->method = $method;
+			$this->route  = $route;
+		}
+
+		public function set_param( $key, $value ) {
+			$this->params[ $key ] = $value;
+			return true;
+		}
+
+		public function get_param( $key ) {
+			return $this->params[ $key ] ?? null;
+		}
+
+		public function offsetExists( $offset ): bool {
+			return isset( $this->params[ $offset ] );
+		}
+
+		public function offsetGet( $offset ): mixed {
+			return $this->params[ $offset ] ?? null;
+		}
+
+		public function offsetSet( $offset, $value ): void {
+			$this->params[ $offset ] = $value;
+		}
+
+		public function offsetUnset( $offset ): void {
+			unset( $this->params[ $offset ] );
+		}
+	}
+}
+
 if ( ! class_exists( 'DiviOps_Agent' ) ) {
 	require_once dirname( __DIR__ ) . '/plugins/diviops-agent/diviops-agent.php';
 }
@@ -949,5 +1432,28 @@ if ( ! function_exists( 'diviops_call_ref' ) ) {
 			$reflection->setAccessible( true );
 		}
 		return $reflection->invokeArgs( null, $args );
+	}
+}
+
+if ( ! function_exists( 'diviops_call_static' ) ) {
+	/**
+	 * Call a private static method on DiviOps_Agent, with no request object.
+	 *
+	 * Mirrors diviops_call(), but for helpers that take plain positional args
+	 * instead of a REST request — e.g. media_ip_is_reserved(), media_url_is_safe().
+	 * Delegates to diviops_call_ref() rather than duplicating its
+	 * ReflectionMethod::invokeArgs() logic: passing this function's local
+	 * $args into a by-reference parameter just aliases the same array, and
+	 * PHP preserves per-element reference status across that alias, so an
+	 * $args element built as a reference (e.g. `array( $url, &$reason,
+	 * $resolver )`) still binds through to the callee's by-reference
+	 * parameter exactly as it did with the duplicated implementation.
+	 *
+	 * @param string $method Method name.
+	 * @param array  $args   Positional arguments.
+	 * @return mixed
+	 */
+	function diviops_call_static( string $method, array $args = array() ) {
+		return diviops_call_ref( $method, $args );
 	}
 }

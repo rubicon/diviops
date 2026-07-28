@@ -3283,6 +3283,128 @@ registerPluginTool(
   },
 );
 
+// ── Media Tools ──────────────────────────────────────────────────────
+
+registerPluginTool(
+  "diviops_media_upload",
+  {
+    description:
+      "Upload an image into the WordPress media library from a public URL (server fetches, SSRF-guarded) or from base64 bytes. Provide exactly one of `url` or (`data_base64` + `filename`). Optional attach_to/title/alt/caption. Pass dry_run=true to preview. Returns the standard envelope; blocked internal targets return 'forbidden_target' (403), disallowed/spoofed types return 'unsupported_media_type' (415), SVG without an active sideload sanitizer returns 'svg_sanitizer_required' (415).",
+    inputSchema: {
+      url: z.string().url().optional().describe("Public http/https image URL to fetch."),
+      data_base64: z.string().optional().describe("Base64-encoded file bytes (use with filename)."),
+      filename: z.string().optional().describe("Filename for the base64 path (extension must match bytes)."),
+      attach_to: z.number().int().optional().describe("Post ID to set as the attachment parent."),
+      title: z.string().optional(),
+      alt: z.string().optional(),
+      caption: z.string().optional(),
+      dry_run: z.boolean().optional().default(false),
+    },
+    _meta: { idempotent: "false" },
+  },
+  async ({ url, data_base64, filename, attach_to, title, alt, caption, dry_run }) => {
+    const result = await wp.requestEnveloped(`/media/upload`, {
+      method: "POST",
+      body: { url, data_base64, filename, attach_to, title, alt, caption, dry_run: dry_run ?? false },
+    });
+    return { content: [ { type: "text" as const, text: serializeEnvelope(result, "diviops_media_upload") } ] };
+  },
+);
+
+registerPluginTool(
+  "diviops_media_get",
+  {
+    description:
+      "Get a single media library attachment's details: URL, mime type, title, alt text, caption, and available image sizes. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; missing attachment_id returns ok:false with code 'not_found' (HTTP 404) and a hint pointing to diviops_media_list.",
+    inputSchema: {
+      attachment_id: z.number().int().describe("WordPress attachment (media) post ID"),
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ attachment_id }) => {
+    const result = await wp.requestEnveloped(`/media/get/${attachment_id}`);
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_media_get") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
+  "diviops_media_list",
+  {
+    description:
+      "List/paginate media library attachments, optionally filtered by a mime type prefix (e.g. \"image/\") and/or a title search term. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.",
+    inputSchema: {
+      page: z.number().int().optional().default(1).describe("Page number"),
+      per_page: z
+        .number()
+        .int()
+        .optional()
+        .default(20)
+        .describe("Number of results per page (max 100)"),
+      mime: z.string().optional().describe('Filter by mime type prefix, e.g. "image/"'),
+      search: z.string().optional().describe("Filter by attachment title search term"),
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ page, per_page, mime, search }) => {
+    const params: Record<string, string> = {};
+    if (page) params.page = String(page);
+    if (per_page) params.per_page = String(per_page);
+    if (mime) params.mime = mime;
+    if (search) params.search = search;
+    const result = await wp.requestEnveloped("/media/list", { params });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_media_list") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
+  "diviops_media_set_featured_image",
+  {
+    description:
+      "Set a post's featured image (thumbnail) from either an existing media attachment (attachment_id) or by uploading a new image from a public URL (url) — provide exactly one. Idempotent on the attachment_id path: setting a post's already-current thumbnail is a no-op. NOT idempotent on the url path — each call uploads a fresh attachment via diviops_media_upload before setting it. Known limitation: on the url path, dry_run=true previews the plan without fetching the URL, so it cannot report the future attachment id (the previewed change shows 'uploaded-from-url' rather than a concrete id) — only the attachment_id path can preview the exact before/after ids. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; missing post_id returns 'not_found' (HTTP 404), edit-permission failures return 'forbidden' (HTTP 403), providing zero or both of attachment_id/url returns 'invalid_input' (HTTP 400).",
+    inputSchema: {
+      post_id: z.number().int().describe("WordPress post/page ID to set the featured image on."),
+      attachment_id: z
+        .number()
+        .int()
+        .optional()
+        .describe("Existing media attachment ID to use as the featured image. Provide exactly one of attachment_id or url."),
+      url: z
+        .string()
+        .url()
+        .optional()
+        .describe("Public image URL to upload and use as the featured image. Provide exactly one of attachment_id or url."),
+      dry_run: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("When true, return the change plan without mutating state."),
+    },
+    annotations: { idempotentHint: false },
+    _meta: { idempotent: "conditional" },
+  },
+  async ({ post_id, attachment_id, url, dry_run }) => {
+    const result = await wp.requestEnveloped(`/media/set-featured-image`, {
+      method: "POST",
+      body: { post_id, attachment_id, url, dry_run: dry_run ?? false },
+    });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_media_set_featured_image") },
+      ],
+    };
+  },
+);
+
 // ── Theme Builder Tools ─────────────────────────────────────────────
 
 registerPluginTool(
