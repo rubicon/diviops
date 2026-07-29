@@ -508,6 +508,15 @@ if ( ! function_exists( 'diviops_test_register_post' ) ) {
 			'post_content' => $content,
 			'post_type'    => $post_type,
 			'post_title'   => $post_title,
+			// Defaulted so a caller reading these WP_Post columns (e.g.
+			// page_duplicate()'s byte-copy, which carries post_excerpt/
+			// post_parent/menu_order straight into wp_insert_post()) never
+			// hits an undefined-property warning on a fixture that didn't
+			// set them explicitly. Tests that care can still overwrite these
+			// on the returned object before calling the handler under test.
+			'post_excerpt' => '',
+			'post_parent'  => 0,
+			'menu_order'   => 0,
 		);
 		$GLOBALS['diviops_test_posts'][ $post_id ] = $post;
 		return $post;
@@ -687,6 +696,9 @@ if ( ! function_exists( 'wp_insert_post' ) ) {
 			'post_type'    => $postarr['post_type'] ?? 'post',
 			'post_title'   => $postarr['post_title'] ?? '',
 			'post_status'  => $postarr['post_status'] ?? 'draft',
+			'post_excerpt' => $postarr['post_excerpt'] ?? '',
+			'post_parent'  => (int) ( $postarr['post_parent'] ?? 0 ),
+			'menu_order'   => (int) ( $postarr['menu_order'] ?? 0 ),
 		);
 		return $id;
 	}
@@ -1300,6 +1312,124 @@ if ( ! class_exists( 'WP_Query' ) ) {
 				)
 				: $page_posts;
 		}
+	}
+}
+
+// ── Taxonomy term-relationship primitives ─────────────────────────────────
+//
+// WordPress models taxonomy registration as taxonomy => (post types it
+// applies to) and term assignment as a per-object, per-taxonomy list of
+// term ids (the wp_term_relationships table). These shims model that
+// WP-core contract, not any Divi-specific behavior — the same category of
+// primitive stub as the nav-menu/revision registries above. Used by
+// page_duplicate()'s term-copy step (#35).
+
+if ( ! isset( $GLOBALS['diviops_test_taxonomies'] ) ) {
+	// taxonomy => list of post types it is registered against. Mirrors
+	// WordPress's own defaults (category/post_tag on 'post', none on
+	// 'page'); tests register more via diviops_test_register_taxonomy().
+	$GLOBALS['diviops_test_taxonomies'] = array(
+		'category' => array( 'post' ),
+		'post_tag' => array( 'post' ),
+	);
+}
+
+if ( ! function_exists( 'diviops_test_register_taxonomy' ) ) {
+	/**
+	 * Register a taxonomy against one or more post types, mirroring what
+	 * WordPress core's register_taxonomy() records for get_object_taxonomies()
+	 * to read back.
+	 *
+	 * @param string $taxonomy   Taxonomy name.
+	 * @param array  $post_types Post types this taxonomy applies to.
+	 */
+	function diviops_test_register_taxonomy( string $taxonomy, array $post_types ) {
+		$GLOBALS['diviops_test_taxonomies'][ $taxonomy ] = $post_types;
+	}
+}
+
+if ( ! function_exists( 'get_object_taxonomies' ) ) {
+	/**
+	 * Model WP core's get_object_taxonomies(): the taxonomy names registered
+	 * against a post type (accepts a post type string or a post-like object).
+	 */
+	function get_object_taxonomies( $object, $output = 'names' ) {
+		$post_type = is_object( $object ) ? (string) ( $object->post_type ?? '' ) : (string) $object;
+		$names     = array();
+		foreach ( $GLOBALS['diviops_test_taxonomies'] as $taxonomy => $post_types ) {
+			if ( in_array( $post_type, $post_types, true ) ) {
+				$names[] = $taxonomy;
+			}
+		}
+		return $names;
+	}
+}
+
+if ( ! isset( $GLOBALS['diviops_test_object_terms'] ) ) {
+	// [object_id][taxonomy] => array of term ids.
+	$GLOBALS['diviops_test_object_terms'] = array();
+}
+
+if ( ! function_exists( 'diviops_test_register_object_terms' ) ) {
+	/**
+	 * Attach term ids to an object under a taxonomy, for wp_get_object_terms()
+	 * to read back. The registration-time equivalent of wp_set_object_terms(),
+	 * kept separate so a test's fixture setup and the handler's own writes
+	 * (also via wp_set_object_terms()) are visibly distinct in a test file.
+	 */
+	function diviops_test_register_object_terms( int $post_id, string $taxonomy, array $term_ids ) {
+		$GLOBALS['diviops_test_object_terms'][ $post_id ][ $taxonomy ] = array_map( 'intval', $term_ids );
+	}
+}
+
+if ( ! function_exists( 'wp_get_object_terms' ) ) {
+	/**
+	 * Model WP core's wp_get_object_terms(): term ids (or minimal term
+	 * objects) assigned to the given object id(s) under the given
+	 * taxonomy/taxonomies. Only the 'fields' => 'ids' shape and the plain
+	 * WP_Term-shaped default are modeled — the two shapes this codebase
+	 * actually consumes.
+	 */
+	function wp_get_object_terms( $object_ids, $taxonomies, $args = array() ) {
+		$object_ids = (array) $object_ids;
+		$taxonomies = (array) $taxonomies;
+		$ids        = array();
+		foreach ( $object_ids as $object_id ) {
+			foreach ( $taxonomies as $taxonomy ) {
+				$ids = array_merge( $ids, $GLOBALS['diviops_test_object_terms'][ (int) $object_id ][ $taxonomy ] ?? array() );
+			}
+		}
+		$ids = array_values( array_unique( array_map( 'intval', $ids ) ) );
+
+		if ( isset( $args['fields'] ) && 'ids' === $args['fields'] ) {
+			return $ids;
+		}
+
+		return array_map(
+			static function ( $id ) {
+				return (object) array( 'term_id' => $id );
+			},
+			$ids
+		);
+	}
+}
+
+if ( ! function_exists( 'wp_set_object_terms' ) ) {
+	/**
+	 * Model WP core's wp_set_object_terms(): replace (or, with $append,
+	 * merge into) an object's term list under one taxonomy. Returns the
+	 * resulting term id list, mirroring core's success return of
+	 * term_taxonomy_ids closely enough for callers here, which don't
+	 * inspect the return value's shape.
+	 */
+	function wp_set_object_terms( $object_id, $terms, $taxonomy, $append = false ) {
+		$object_id = (int) $object_id;
+		$terms     = array_map( 'intval', (array) $terms );
+		if ( $append && isset( $GLOBALS['diviops_test_object_terms'][ $object_id ][ $taxonomy ] ) ) {
+			$terms = array_values( array_unique( array_merge( $GLOBALS['diviops_test_object_terms'][ $object_id ][ $taxonomy ], $terms ) ) );
+		}
+		$GLOBALS['diviops_test_object_terms'][ $object_id ][ $taxonomy ] = $terms;
+		return $terms;
 	}
 }
 

@@ -705,23 +705,59 @@ trait DiviOps_Agent_Page {
 	 * page_get_layout's; the created-post response fields (page_id/url/
 	 * edit_url) mirror page_create's.
 	 *
-	 * Being a parse/serialize round trip on the source page's block markup —
-	 * the write path reads the source's raw post_content and writes it,
-	 * unchanged, into a new post — this routes through the same discipline
-	 * page_block_insert (#32) uses for the identical reason: parse via
-	 * parse_blocks_for_write() (NOT bare parse_blocks()), then write via
-	 * update_post_content_with_integrity_guard() with
-	 * $check_global_layout_drift = true, so a source page carrying a
-	 * divi/global-layout wrapper cannot have that wrapper materialized into
-	 * the new page by the copy (#11).
+	 * BYTE COPY, NOT A PARSE/SERIALIZE ROUND TRIP. The first version of this
+	 * handler treated duplication as a parse/serialize round trip and routed
+	 * it through the same parse_blocks_for_write() + update_post_content_
+	 * with_integrity_guard( ..., true ) discipline page_block_insert() (#32)
+	 * uses. Live verification against a real Divi page (900390: 62KB, 23
+	 * block types, a genuine divi/global-layout wrapper) found that wrong two
+	 * ways: (1) the write-safety validator that guarded path runs
+	 * (normalize_divi_full_content_for_write(), via
+	 * normalize_and_validate_divi_markup_before_write()) false-positived on a
+	 * `u003c`-shaped escape Divi itself legitimately emits — that validator
+	 * exists to catch unsafe patterns in a CALLER's freshly supplied content,
+	 * not to gate re-storing a page's own already-live markup, and it
+	 * refused to duplicate a page that parses and renders fine; (2) even
+	 * when the round trip succeeded, it was lossy —
+	 * serialize_blocks(parse_blocks($c)) shifted that same page's content
+	 * 62,167 -> 61,855 bytes, unacceptable for an operation whose only job is
+	 * to produce an exact copy. page_block_insert's guard is the right tool
+	 * for page_block_insert because that handler MUTATES a block tree and so
+	 * has to parse one — the guard exists to stop Divi's own parser from
+	 * materializing a divi/global-layout wrapper mid-mutation. Duplication
+	 * never mutates; it copies. If this handler never calls parse_blocks()
+	 * or parse_blocks_for_write() at all, the #11 hazard is not merely
+	 * guarded against, it is structurally impossible — there is no parser in
+	 * the path that could expand a wrapper. This is exactly what
+	 * canvas_duplicate() (trait-canvas.php) already does — byte-copies
+	 * post_content via `wp_slash( $source->post_content )` — the repo's
+	 * established precedent for a same-site content DUPLICATE as opposed to
+	 * a content MUTATION.
 	 *
-	 * dry_run deliberately does NOT perform that round trip — it previews
-	 * from the source's raw post_content only (byte length, resolved
-	 * title/status/post_type, and the source_uses_divi disclosure), matching
-	 * page_create's simpler dry-run convention rather than page_block_insert's
-	 * (which mutates an existing page and so needs the parsed tree to report
-	 * a target). This keeps dry_run cheap and side-effect-free without ever
-	 * touching Divi's parser.
+	 * A single wp_insert_post() call carries content, status, and the
+	 * copied-over metadata below all at once, so there is no second write
+	 * and therefore no empty-shell-page window between creating the post and
+	 * giving it real content (the earlier version's cleanup-on-refused-write
+	 * path is gone because there is nothing left for it to clean up).
+	 *
+	 * Also copies what makes the result an actual duplicate, not just a new
+	 * page with the same body: post_excerpt/post_parent/menu_order (WP_Post
+	 * columns, carried in the same wp_insert_post() call), the
+	 * `_wp_page_template` meta, the featured image
+	 * (get_post_thumbnail_id()/set_post_thumbnail() — the canonical WP API,
+	 * not a raw `_thumbnail_id` meta write, so any bookkeeping WordPress's
+	 * own functions do still happens), and taxonomy term assignments
+	 * (wp_get_object_terms() -> wp_set_object_terms() per taxonomy
+	 * registered on the source's post type — relevant once post_type is
+	 * overridden to e.g. 'post'). Internal/session meta (`_edit_lock`,
+	 * `_edit_last`) is deliberately NOT copied: it names who was last
+	 * mid-edit on the SOURCE, which is stale and meaningless attached to a
+	 * brand-new post nobody has opened yet.
+	 *
+	 * dry_run previews from the source's raw post_content and post fields
+	 * only (byte length, resolved title/status/post_type, and the
+	 * source_uses_divi disclosure) — cheap and side-effect-free, and
+	 * unaffected by this redesign since it never touched the write path.
 	 */
 	public static function page_duplicate( $request ) {
 		$source_id = absint( $request['id'] );
@@ -812,60 +848,56 @@ trait DiviOps_Agent_Page {
 			);
 		}
 
-		// Parse/serialize round trip (#11, same discipline as page_block_insert
-		// #32): parse_blocks_for_write() routes through Divi's own save-context
-		// parser when available so a divi/global-layout wrapper is never
-		// expanded during this read, then serialize_blocks() rebuilds the
-		// markup unchanged. Not shimmed in tests/wp-shim.php (parse_blocks()
-		// deliberately unshimmed, see #17) — covered live, not in the unit
-		// suite; see tests/test-page-duplicate.php's docblock.
-		$blocks      = self::enrich_blocks_with_empty_object_paths( self::parse_blocks_for_write( $source_content ), $source_content );
-		$new_content = serialize_blocks( self::restore_blocks_empty_objects( $blocks ) );
-
-		$normalized = self::normalize_and_validate_divi_markup_before_write( $new_content, 'source_content' );
-		if ( is_wp_error( $normalized ) ) {
-			return self::envelope_from_wp_error( $normalized );
-		}
-		$new_content = $normalized['content'];
-
+		// Byte copy (#35 redesign — see the method docblock for why): the
+		// source's raw post_content goes straight into wp_insert_post(), the
+		// same wp_slash()-escaped shape canvas_duplicate() already uses.
+		// post_excerpt/post_parent/menu_order ride along in the same call so
+		// content, status, and these fields land in a single atomic write —
+		// no second content write, so no empty-shell-page window.
 		$new_post_id = wp_insert_post( [
 			'post_title'   => $new_title,
-			'post_content' => '',
+			'post_content' => wp_slash( $source_content ),
 			'post_status'  => $status,
 			'post_type'    => $post_type,
+			'post_excerpt' => (string) $source->post_excerpt,
+			'post_parent'  => (int) $source->post_parent,
+			'menu_order'   => (int) $source->menu_order,
 		], true );
 
 		if ( is_wp_error( $new_post_id ) ) {
 			return self::envelope_from_wp_error( $new_post_id );
 		}
 
-		// $source_content (pre-round-trip) is the drift-comparison baseline:
-		// update_post_content_with_integrity_guard() checks that every
-		// divi/global-layout wrapper identity present there is still present
-		// in $new_content. It is also the corruption-fallback revert target —
-		// acceptable here since it is the same content, only without the
-		// round-trip's re-serialization.
-		$result = self::update_post_content_with_integrity_guard(
-			$new_post_id,
-			$new_content,
-			'page_duplicate',
-			"page #{$new_post_id} duplicated from page #{$source_id}",
-			$source_content,
-			true
-		);
+		// _wp_page_template — the only page-identity meta key duplicating a
+		// page needs to carry over that page_set_meta() also manages.
+		$template = get_post_meta( $source_id, '_wp_page_template', true );
+		if ( is_string( $template ) && '' !== $template ) {
+			update_post_meta( $new_post_id, '_wp_page_template', $template );
+		}
 
-		if ( is_wp_error( $result ) ) {
-			// Refused or failed content write — don't leave an empty shell
-			// page behind from a duplication that didn't actually happen.
-			wp_delete_post( $new_post_id, true );
-			return self::envelope_from_content_write_error( $result );
+		// Featured image, via the canonical WP API rather than a raw
+		// `_thumbnail_id` meta write.
+		$thumbnail_id = get_post_thumbnail_id( $source_id );
+		if ( $thumbnail_id ) {
+			set_post_thumbnail( $new_post_id, $thumbnail_id );
+		}
+
+		// Taxonomy term assignments, per taxonomy actually registered on the
+		// source's own post type (relevant once post_type is overridden to
+		// e.g. 'post', which carries category/post_tag terms).
+		foreach ( get_object_taxonomies( $source->post_type ) as $taxonomy ) {
+			$term_ids = wp_get_object_terms( $source_id, $taxonomy, [ 'fields' => 'ids' ] );
+			if ( is_wp_error( $term_ids ) || empty( $term_ids ) ) {
+				continue;
+			}
+			wp_set_object_terms( $new_post_id, $term_ids, $taxonomy );
 		}
 
 		// Mirror page_update_content: only stamp Divi builder meta when the
 		// copied content is actually Divi content, so duplicating a non-Divi
 		// source page does not turn the copy into a Divi page (#45's
 		// should_init_divi_page_meta_on_write reasoning applies here too).
-		if ( self::should_init_divi_page_meta_on_write( $new_post_id, $new_content ) ) {
+		if ( self::should_init_divi_page_meta_on_write( $new_post_id, $source_content ) ) {
 			self::initialize_divi_page_meta( $new_post_id, $post_type );
 		}
 
