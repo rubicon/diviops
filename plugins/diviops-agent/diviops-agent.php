@@ -108,7 +108,7 @@ class DiviOps_Agent {
 		// media
 		'media_upload', 'media_get', 'media_list', 'media_set_featured_image', 'media_update_meta',
 		// meta
-		'meta_find_icon', 'meta_flush_cache',
+		'meta_find_icon', 'meta_flush_cache', 'theme_options_update',
 		// menu
 		'menu_create', 'menu_delete', 'menu_get', 'menu_item_add_custom', 'menu_item_add_page', 'menu_item_remove', 'menu_item_reorder', 'menu_list', 'menu_location_assign', 'menu_location_unassign',
 		// module
