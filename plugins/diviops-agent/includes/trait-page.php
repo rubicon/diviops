@@ -1628,6 +1628,36 @@ trait DiviOps_Agent_Page {
 			);
 		}
 
+		// Dynamic-content guard (#36): only values that actually LOOK like a
+		// $variable(...)$ or legacy @ET-DC@...@ token are inspected at all, so
+		// an ordinary plain string is never rejected. The guard is deliberately
+		// lenient, not "reject anything suspicious": $variable(...)$ is Divi's
+		// SHARED variable wrapper (global colors, global variables, gradients
+		// all use it too, outside the dynamic-content registry), so it rejects
+		// ONLY a well-formed type:"content" token whose option name is
+		// definitively absent from a non-empty registry AND is not a
+		// gcid-/gvid-/gfid- global-variable id. Everything else is allowed
+		// through on purpose: a malformed token, a string that merely contains
+		// "@ET-DC@" without being one, a gcid-/gvid-/gfid- reference, and an
+		// empty/unavailable registry (D4-only site, older/deactivated Divi, a
+		// non-REST invocation) — see dynamic_content_write_path_rejection()
+		// (trait-dynamic-content.php) for the full policy and why over-
+		// rejection here would break legitimate design-token writes.
+		//
+		// Accepted coverage limit: because malformed tokens and the
+		// token-plus-text / adjacent-tokens shapes must ALL fail open (the
+		// anchored parser can't tell "hand-corrupted" apart from "legitimate
+		// global-variable/gradient token" — see above), a HAND-CORRUPTED
+		// otherwise-real dynamic-content token, or one with a typo'd settings
+		// KEY, now writes silently instead of being rejected here. That's a
+		// deliberate trade against the higher cost of blocking real design-
+		// token writes; diviops_dynamic_content_validate is the tool for a
+		// caller that wants that stricter check before writing.
+		$dynamic_content_error = self::dynamic_content_validate_module_update_attrs( $attrs, $post_id );
+		if ( null !== $dynamic_content_error ) {
+			return $dynamic_content_error;
+		}
+
 		// Map helper output back to the local variables the rest of this
 		// handler uses. Kept rather than rewriting downstream to minimize
 		// risk; the inline parsing block is replaced, not the walk.
