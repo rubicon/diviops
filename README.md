@@ -135,19 +135,63 @@ The skill enforces the Divi block format, the design system, and the response co
 
 ## Tools at a glance
 
-The suite exposes **74 tools** across the categories below. Per-tool descriptions, request shapes, and response payloads live in the server [README](diviops-server/README.md).
+The suite exposes **109 always-on tools** across the categories below, plus a further set of conditionally-registered Pro tools that only appear on sites with the Pro plugin and a supported target plugin active (see [Free vs Pro](#free-vs-pro)). Per-tool descriptions, request shapes, and response payloads live in the server [README](diviops-server/README.md).
 
 | Category | Use case | Tool prefixes |
 |---|---|---|
 | Page authoring | Create, edit, restructure pages | `page_*`, `section_*`, `module_*` |
 | Design system | Manage colors, fonts, variables, presets | `variable_*`, `global_color_*`, `global_font_*`, `preset_*` |
 | Library + templates | Reusable layouts + Theme Builder | `library_*`, `template_*`, `tb_*` |
-| Schema introspection | Module attribute discovery | `schema_*` |
+| Media | Upload, list, and inspect attachments; alt text/caption; set featured image | `media_*` |
+| Revisions | Native WordPress post-revision list/get/diff/restore | `revision_*` |
+| WordPress menus | Create/edit/delete nav menus and theme-location assignments | `menu_*` |
+| Schema introspection | Module attribute discovery, incl. native Divi 5 core modules | `schema_*` |
 | Canvas / off-canvas | Popups, modals, menus | `canvas_*` |
 | SCF integration | Secure Custom Fields sync | `scf_*` |
 | Render + validate | Preview HTML, validate block markup | `render_preview`, `validate_blocks` |
 | WP-CLI passthrough | Escape hatch for site ops | `meta_wp_cli` |
 | Cache + meta | Connection probe, identity, icons, cache flush | `meta_*` |
+
+### Media domain
+
+`media_upload` creates a new attachment from exactly one of a public `url` **or**
+`data_base64`+`filename`; `media_get` and `media_list` (page/per_page/mime/search)
+read the media library; `media_set_featured_image` sets a post's featured image
+from an existing attachment id or by uploading from a URL first;
+`media_update_meta` sets and/or clears an attachment's alt text and caption — an
+omitted field is left untouched, an explicit empty string clears it, the call is
+idempotent (a no-op when the resulting values already match), and `dry_run` is
+supported. All five follow the standard envelope and permission model (`upload_files`
+for uploads, per-object `edit_post` for reads/writes on an existing attachment).
+
+**Security.** URL uploads are SSRF-guarded: only `http`/`https` URLs are fetched, and
+a host that resolves to a reserved or private IP range is rejected — this covers
+plain IPv4/IPv6 ranges plus IPv4-mapped, NAT64, and 6to4/IPv4-compatible embedded-v4
+addresses, so a private address can't be smuggled through an IPv6 wrapper. Redirects
+are followed with the same check re-run on every hop, not just the caller's original
+URL. The accepted residual risk is DNS rebinding between the check and the fetch;
+the endpoint is authenticated/admin-only, which is the accepted mitigation. Every
+upload — URL or base64 — is validated against its real bytes and the site's own
+`get_allowed_mime_types()` via `wp_check_filetype_and_ext()`, rejecting an
+extension/content mismatch independent of the declared filename.
+
+**SVG uploads require an active SVG sanitizer.** An SVG file (`image/svg+xml`) is
+only accepted when [Safe SVG](https://wordpress.org/plugins/safe-svg/) (10up) is
+installed and active, and specifically has its own sanitizing callback bound to
+WordPress's `wp_handle_sideload_prefilter` hook — the plugin checks for Safe SVG's
+own class identity on that hook (`SafeSvg\safe_svg` for Safe SVG 2.x, the legacy
+global `safe_svg` for 1.x), not merely that *something* is listening, since a mime
+allowlist alone (e.g. from another plugin) doesn't sanitize the file. Without a
+detected sanitizer, an SVG upload fails closed with `svg_sanitizer_required` (HTTP
+415) rather than accepting an unsanitized file. If you need SVG support, install and
+activate Safe SVG; merely allowing the SVG mime type elsewhere is not sufficient.
+
+If you enable SVG uploads, also harden the deployment itself (server/site
+configuration, not something the plugin can do for you): disable PHP execution
+inside `wp-content/uploads`, serve uploads with the `X-Content-Type-Options: nosniff`
+response header, and consider a restrictive Content-Security-Policy for SVG
+responses. A stricter, admin-configurable SVG capability gate is tracked separately
+(see [rubicon/diviops#73](https://github.com/rubicon/diviops/issues/73)).
 
 ## Response contract
 
@@ -168,7 +212,9 @@ Every write tool accepts `dry_run: boolean` (default `false`). When `true`, the 
 
 DiviOps is a harness. The Free distribution carries the core Divi authoring surface; the Pro distribution adds deeper skill knowledge, the Pro plugin, license/update gating, and paid coverage slices for target plugins.
 
-> **On this fork:** we maintain full **Pro compatibility** — `diviops-agent-pro` (oaris.de's separate commercial add-on, not part of this fork) attaches to our plugin unchanged, through `class_exists('DiviOps_Agent')` and the `diviops_agent_handshake_extensions` filter. Independently, this fork is building its **own** advanced skill knowledge for the free tier — authored clean-room from the Divi modules themselves and public documentation, never derived from Pro — so more of the advanced authoring capability lands in Free over time. The table below describes the upstream Free/Pro split as it stands today.
+> **On this fork:** we maintain full **Pro compatibility** — `diviops-agent-pro` (oaris.de's separate commercial add-on, not part of this fork) attaches to our plugin unchanged, through `class_exists('DiviOps_Agent')` and the `diviops_agent_handshake_extensions` filter. Independently, this fork is building its **own** advanced skill knowledge for the free tier — authored clean-room from Divi's own source and public documentation, never derived from Pro — so more of the advanced authoring capability lands in Free over time. The table below describes the upstream Free/Pro split as it stands today; where this fork has already shipped its own free-tier equivalent of a Pro-only row, that row is footnoted.
+>
+> Versioning on this fork follows [Conventional Commits](https://www.conventionalcommits.org/) + [release-please](https://github.com/googleapis/release-please) automation — every merged PR that ships a user-facing change is reflected in [CHANGELOG.md](CHANGELOG.md), and release-please computes the next `vX.Y.Z` from commit history rather than a hand-picked version. Signed release tags are cut from `main`.
 
 ### What ships in Free (v1.x today)
 
@@ -193,7 +239,7 @@ The Pro distribution adds the Pro plugin, license/update gating, target coverage
 | Skill: **Tier 1** attribute reference — universal decoration, innerContent variants, attribute tree layout, design tokens, exceptions quick reference | ✓ | ✓ |
 | Skill: **Tier 2** — shared pattern families (font, icon, container cascade, module link) | — | ✓ |
 | Skill: **Tier 3** — per-module element maps for 20+ verified modules | — | ✓ |
-| Skill: Advanced attributes (boxShadow, filters, transform, sticky, transition, scroll, animation) | — | ✓ |
+| Skill: Advanced attributes (boxShadow, filters, transform, sticky, transition, scroll, animation) | — (upstream) / ✓¹ (this fork) | ✓ |
 | Skill: `$variable()$` per-module binding examples and Interactions reference | — | ✓ |
 | Skill: `diviops-fluentcart` coverage guide | — | ✓ |
 | Skill: `diviops-scf` deeper SCF guide | — | ✓ |
@@ -201,6 +247,8 @@ The Pro distribution adds the Pro plugin, license/update gating, target coverage
 | FluentCart Pro coverage handlers | — | ✓ |
 
 **Practical difference today.** The Free skill is enough to generate pages using universal decoration patterns plus runtime lookups via `diviops_schema_get_module`. Pro adds verified per-module maps, which cuts schema-lookup round-trips and reduces silent-fail risk on quirks only documented in the full maps — e.g., Toggle's `closedTitle.decoration.font.*` (closed-state title styling; without it you'd target the open state only) or Video's `overlay.decoration.background` (the correct background target — not `module.decoration.background`).
+
+¹ This fork ships its own advanced-attributes reference at [`skills/divi-5-builder/references/advanced-attributes.md`](skills/divi-5-builder/references/advanced-attributes.md), authored clean-room from Divi's own source and this fork's own site — `diviops-agent-pro` was never opened while writing it. It covers the same seven decoration families as the upstream Pro row (boxShadow, filters, transform, sticky, transition, scroll, animation) but is not the same document as Pro's own advanced-attributes content, which we have not seen and cannot compare against.
 
 Pro also includes `diviops-agent-pro`. When the Pro plugin and a supported target plugin are active, the MCP handshake exposes conditional Pro tools. For example, a site with FluentCart + FluentCart Pro + DiviOps Agent Pro can expose `diviops_fc_*` product, gateway, order, license, and activation tools. If those gates are not satisfied, those tools are intentionally omitted from the MCP tool list.
 
