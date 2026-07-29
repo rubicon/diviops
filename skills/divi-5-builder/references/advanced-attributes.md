@@ -161,7 +161,7 @@ serialized shape — no rewrite, no dropped keys. Matches the documented path ex
 ## Filters
 
 9 subfields, from `module.decoration.filters__{blur,brightness,contrast,hueRotate,invert,opacity,saturate,sepia,blendMode}`
-*(verified 2026-07-28)*.
+*(VB-verified 2026-07-29)*.
 
 `blur`/`brightness`/`contrast`/`hueRotate`/`invert`/`opacity`/`saturate`/`sepia` compose
 into a single CSS `filter` shorthand; `blendMode` is emitted as the separate CSS
@@ -242,6 +242,14 @@ the same compiled `visual-builder/build/module.js`; `module.decoration.*` prefix
 cross-checked against `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2146-2190`.
 Path list cross-verified against `php scripts/extract-decoration-paths.php <builder5> --shared`
 (see verification below).
+**VB round-trip** (2026-07-29, via the MCP write path, not a literal browser Visual
+Builder session): all 9 `desktop.value.*` subfields (`blur`, `brightness`, `contrast`,
+`hueRotate`, `invert`, `opacity`, `saturate`, `sepia`, `blendMode`) plus a
+`desktop.hover.{saturate,brightness}` override written via `diviops_module_update` to
+a scratch Text module (page 900592, trashed after); `diviops_module_get` and an
+independent raw `wp post get --field=post_content` read both returned the identical
+serialized shape — no rewrite, no dropped keys, no renamed keys. Matches every
+documented path exactly.
 
 ---
 
@@ -649,7 +657,7 @@ the identical serialized shape. Matches the documented path exactly.
 plus one shared trigger field — from
 `module.decoration.scroll__{verticalMotion,horizontalMotion,fade,scaling,rotating,blur}`
 (each ALSO with a `.enable` sibling, e.g. `scroll__verticalMotion.enable`) and
-`module.decoration.scroll__motionTriggerStart` *(verified 2026-07-28)*.
+`module.decoration.scroll__motionTriggerStart` *(VB-verified 2026-07-29)*.
 
 Like Sticky, this family is **not a CSS declaration at all** — there is no
 `StyleLibrary/Declarations/Scroll` directory in this Divi build (confirmed: no such
@@ -805,6 +813,14 @@ and the full 13-path set cross-checked against
 `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2527-2591`. Path list
 cross-verified against `php scripts/extract-decoration-paths.php <builder5> --shared` (see
 the "Path verification" section).
+**VB round-trip** (2026-07-29, via the MCP write path, not a literal browser Visual
+Builder session): `motionTriggerStart` plus all six effects' `.enable` and full
+`{viewport:{top,start,end,bottom}, offset:{start,mid,end}}` objects (representative
+values, not necessarily each effect's own documented default) written via
+`diviops_module_update` to a scratch Text module (page 900592, trashed after); all 13
+paths round-tripped identically through `diviops_module_get` and an independent raw
+`wp post get --field=post_content` read — no rewrite, no dropped keys, no renamed
+keys. Matches every documented path exactly.
 
 ---
 
@@ -812,7 +828,7 @@ the "Path verification" section).
 
 12 subfields, from
 `module.decoration.animation__{style,direction,duration,delay,repeat,speedCurve,startingOpacity}`
-plus `animation__intensity.{slide,zoom,flip,fold,roll}` *(verified 2026-07-28)*.
+plus `animation__intensity.{slide,zoom,flip,fold,roll}` *(VB-verified 2026-07-29)*.
 
 Like Sticky and Scroll, this family is **not a CSS declaration** — no
 `StyleLibrary/Declarations/Animation` directory exists in this Divi build (confirmed
@@ -911,3 +927,11 @@ in compiled `visual-builder/build/module.js`. `module.decoration.*` prefix and t
 `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php:2216-2276`. Path list
 cross-verified against `php scripts/extract-decoration-paths.php <builder5> --shared` (see
 the "Path verification" section).
+**VB round-trip** (2026-07-29, via the MCP write path, not a literal browser Visual
+Builder session): all 7 named `desktop.value.*` subfields (`style`, `direction`,
+`duration`, `delay`, `startingOpacity`, `speedCurve`, `repeat`) plus all 5
+`intensity.{slide,zoom,flip,fold,roll}` entries written via `diviops_module_update`
+to a scratch Text module (page 900592, trashed after); all 12 paths round-tripped
+identically through `diviops_module_get` and an independent raw
+`wp post get --field=post_content` read — no rewrite, no dropped keys, no renamed
+keys. Matches every documented path exactly.
