@@ -10,6 +10,13 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.11.0](https://github.com/rubicon/diviops/compare/v1.10.0...v1.11.0) (2026-07-29)
+
+
+### Features
+
+* **dynamic-content:** introspection, builder, and validation ([#36](https://github.com/rubicon/diviops/issues/36)) ([#91](https://github.com/rubicon/diviops/issues/91)) ([4ed5d5b](https://github.com/rubicon/diviops/commit/4ed5d5b8aa2f0c51a4bb805aec70ee721da8b5f0))
+
 ## [1.10.0](https://github.com/rubicon/diviops/compare/v1.9.2...v1.10.0) (2026-07-29)
 
 
