@@ -65,7 +65,7 @@ Then ask your AI client: **"List the pages on my site."** It calls `diviops_page
 
 For Claude Desktop JSON, use `"command": "npx"` with args `["-y", "--package", "@diviops/mcp-server", "diviops-mcp"]`. The package also ships `diviops-preset`, so the explicit package/bin form is required; shorthand package invocation cannot reliably infer which bin to run.
 
-For a deeper walkthrough (containerized environments, WP-CLI configuration, troubleshooting installation), see [setup-guide.md](../docs/setup-guide.md).
+For a deeper walkthrough (containerized environments, WP-CLI configuration, troubleshooting installation), see the [Setup Guide](../SETUP.md#step-1-install-the-wordpress-plugin).
 
 ## Example workflow
 
@@ -83,7 +83,7 @@ The skill enforces the Divi block format, the design system, and the response co
 
 ## Tools at a glance
 
-The server exposes **109 always-on tools** across the categories below. Each category links to representative tools; the full table lives in [server-reference.md](../docs/server-reference.md).
+The server exposes **114 always-on tools** across the categories below. Each category links to representative tools; a full per-tool reference table is tracked as a follow-up ([#93](https://github.com/rubicon/diviops/issues/93)) — see the note in [Learn more](#learn-more).
 
 | Category | Use case | Tool prefixes |
 |----------|----------|---------------|
@@ -132,7 +132,7 @@ Additional **conditionally-registered Pro tools** appear only on sites that have
 
 When the gates are not satisfied, the tools simply don't appear on the MCP surface — no error envelope, no missing-capability hint. See the `diviops-fluentcart` skill bundle for the operator-side guide.
 
-See [server-reference.md](../docs/server-reference.md) for per-tool descriptions.
+Per-tool descriptions currently live in each tool's own MCP schema (`description` field), not in a standalone document — a generated per-tool reference table is tracked as a follow-up ([#93](https://github.com/rubicon/diviops/issues/93)).
 
 ## Bundled CLI — `diviops-preset`
 
@@ -320,7 +320,7 @@ Every write tool accepts `dry_run: boolean` (default `false`). When `true`, the 
 }
 ```
 
-`meta_wp_cli` and `scf_import` do not accept `dry_run` (raw passthrough / upstream gap respectively). `scf_sync` passes `dry_run` through to upstream `wp scf json sync --dry-run`, so its preview is the upstream plain-text summary rather than a plugin-built `data.plan`. For bulk preview-then-commit flows (preset reassign, preset cleanup), see [safety-patterns.md](../docs/safety-patterns.md).
+`meta_wp_cli` and `scf_import` do not accept `dry_run` (raw passthrough / upstream gap respectively). `scf_sync` passes `dry_run` through to upstream `wp scf json sync --dry-run`, so its preview is the upstream plain-text summary rather than a plugin-built `data.plan`. For bulk preview-then-commit flows (preset reassign, preset cleanup), the pattern is the same universal `dry_run` shape documented above — there is no separate safety-patterns document.
 
 Selected guarded post-content write tools also accept `backup: true`. In apply
 mode the Free plugin stores an option-backed rollback snapshot before writing
@@ -343,7 +343,7 @@ provider output is verified through a follow-up get request.
 
 ### `_meta.idempotent` markers
 
-Every tool's `_meta.idempotent` field documents how it behaves under repeat calls with identical inputs. Some tools are silent-success idempotent (e.g. `page_trash` on an already-trashed post returns `ok: true` with `data.already_trashed = true`); others are side-effect-equivalent (re-running produces the same final state via different intermediate effects). See [idempotency-audit.md](../docs/idempotency-audit.md) for the per-tool record.
+Every tool's `_meta.idempotent` field documents how it behaves under repeat calls with identical inputs. Some tools are silent-success idempotent (e.g. `page_trash` on an already-trashed post returns `ok: true` with `data.already_trashed = true`); others are side-effect-equivalent (re-running produces the same final state via different intermediate effects). The per-tool `_meta.idempotent` value itself is the per-tool record — read it from the tool's response; there is no separate idempotency-audit document.
 
 ## Configuration
 
@@ -357,17 +357,17 @@ Every tool's `_meta.idempotent` field documents how it behaves under repeat call
 | `WP_PATH` | No | WordPress filesystem path for Local by Flywheel, or wrapper working directory when `WP_CLI_CMD` needs project context |
 | `WP_CLI_CMD` | No | Custom WP-CLI command prefix for containerized environments (e.g. `ddev wp`, `npx wp-env run cli wp`) |
 | `LOCAL_SITE_ID` | No | Override auto-detection of Local by Flywheel site ID |
-| `DIVIOPS_WP_CLI_ALLOW` | No | Opt-in extended WP-CLI commands — see [wp-cli-security.md](../docs/wp-cli-security.md) |
+| `DIVIOPS_WP_CLI_ALLOW` | No | Opt-in extended WP-CLI commands — see [SETUP.md#wp-cli-security](../SETUP.md#wp-cli-security) |
 | `DIVIOPS_WP_CLI_SAFE_FS_ROOT` | No | Path to constrain filesystem-touching wp-cli commands. **Required** in `WP_CLI_CMD` wrapper mode |
 | `DIVIOPS_WP_CLI_UNSAFE_FS` | No | Set to `1` to disable filesystem flag validation entirely |
 
 ### Containerized environments
 
-The server connects via standard WordPress REST API and works with any environment that exposes WordPress over HTTP with Application Password support — Local by Flywheel, DDEV, wp-env, WordPress Studio, DevKinsta, custom hosts. See [setup-guide.md](../docs/setup-guide.md) for environment-specific `WP_CLI_CMD` examples and HTTPS / `WP_ENVIRONMENT_TYPE` notes.
+The server connects via standard WordPress REST API and works with any environment that exposes WordPress over HTTP with Application Password support — Local by Flywheel, DDEV, wp-env, WordPress Studio, DevKinsta, custom hosts. See the [Setup Guide's Local Development Environments section](../SETUP.md#local-development-environments) for environment-specific `WP_CLI_CMD` examples and HTTPS / `WP_ENVIRONMENT_TYPE` notes.
 
 ## Troubleshooting
 
-Common quick fixes — full reference in [troubleshooting.md](../docs/troubleshooting.md).
+Common quick fixes — full reference in [SETUP.md#troubleshooting](../SETUP.md#troubleshooting).
 
 - **"Missing required environment variable(s)"** — ensure `WP_URL`, `WP_USER`, `WP_APP_PASSWORD` are all set on `claude mcp add`.
 - **`npx` fails with "could not determine executable to run"** — use `npx -y --package @diviops/mcp-server diviops-mcp`; this explicitly selects the MCP server bin.
@@ -377,12 +377,12 @@ Common quick fixes — full reference in [troubleshooting.md](../docs/troublesho
 
 ## Learn more
 
-- [setup-guide.md](../docs/setup-guide.md) — full onboarding walkthrough (containerized envs, HTTPS, Application Passwords)
-- [server-reference.md](../docs/server-reference.md) — full per-tool reference table
-- [wp-cli-security.md](../docs/wp-cli-security.md) — allowlist, extended commands, FS validation
-- [safety-patterns.md](../docs/safety-patterns.md) — Pattern A (refuse-with-override) + Pattern B (preview-then-commit) + universal `dry_run`
-- [troubleshooting.md](../docs/troubleshooting.md) — common errors and resolutions
-- [idempotency-audit.md](../docs/idempotency-audit.md) — repeat-call semantics per tool
+- [SETUP.md](../SETUP.md) — full onboarding walkthrough (containerized envs, HTTPS, Application Passwords)
+- A generated per-tool reference table (one row per tool: description, request shape, response payload) does not exist yet. Today the [Tools at a glance](#tools-at-a-glance) table above documents category-level coverage only. Tracked as a follow-up: [#93](https://github.com/rubicon/diviops/issues/93).
+- [SETUP.md#wp-cli-security](../SETUP.md#wp-cli-security) — allowlist, extended commands, FS validation
+- Pattern A (refuse-with-override) + Pattern B (preview-then-commit) + universal `dry_run` are documented inline above, in [`dry_run` plan shape](#dry_run-plan-shape); there is no separate safety-patterns document.
+- [SETUP.md#troubleshooting](../SETUP.md#troubleshooting) — common errors and resolutions
+- Per-tool repeat-call semantics are documented inline above, in [`_meta.idempotent` markers](#_metaidempotent-markers); there is no separate idempotency-audit document.
 - **`divi-5-builder` skill** — block format rules, design patterns, workflow guidance (ships in the dist repo)
 
 ## Requirements
