@@ -1635,6 +1635,138 @@ registerPluginTool(
 
 // ── Write Tools ──────────────────────────────────────────────────────
 
+// Keys `update_theme_options` actually applies (trait-meta.php:89-93). This
+// list is intentionally NOT the same as the 10-key read allowlist
+// `filter_public_theme_options()` exposes via diviops_schema_get_settings
+// (trait-meta.php:53-64) — the read side additionally includes
+// `body_header_size`, which the write route silently ignores. Reproduced
+// here (rather than reused from the read side) because the two allowlists
+// diverge and dry_run must mirror the write route's silent-drop behavior,
+// not the read route's.
+const THEME_OPTIONS_WRITE_ALLOWLIST = [
+  "heading_font",
+  "body_font",
+  "accent_color",
+  "secondary_accent_color",
+  "font_color",
+  "header_color",
+  "link_color",
+  "heading_font_size",
+  "body_font_size",
+] as const;
+const THEME_OPTIONS_WRITE_ALLOWSET: ReadonlySet<string> = new Set(
+  THEME_OPTIONS_WRITE_ALLOWLIST,
+);
+
+registerPluginTool(
+  "diviops_theme_options_update",
+  {
+    description:
+      "Update Divi theme options (fonts, colors, sizes) — the WP customizer-backed `et_divi` values Divi's own Theme Options panel edits, written via `et_update_option`. Requires manage_options. Writes only these 9 allowlisted keys: heading_font, body_font, accent_color, secondary_accent_color, font_color, header_color, link_color, heading_font_size, body_font_size — any other key present in `options` is silently dropped server-side (matches the plugin route's own allowlist; this write allowlist is NOT identical to diviops_schema_get_settings's 10-key read allowlist, which also includes body_header_size). Values are sanitized with sanitize_text_field and stored as strings. dry_run is computed entirely client-side by this tool: it calls diviops_schema_get_settings's underlying route to read current values and diffs them against the requested options restricted to the 9-key write allowlist — it NEVER calls the write route when dry_run is true, so the preview cannot mutate state but also cannot reflect any server-side sanitization beyond a plain string comparison. Unrecognized keys in `options` are reported as a dry_run warning instead of a change. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }." +
+      DRY_RUN_DESC_SUFFIX,
+    inputSchema: {
+      options: z
+        .record(z.string(), z.string())
+        .describe(
+          "Key-value map of theme options to update. Only these 9 keys are applied: heading_font, body_font, accent_color, secondary_accent_color, font_color, header_color, link_color, heading_font_size, body_font_size. Any other key is silently dropped.",
+        ),
+      dry_run: DRY_RUN_FIELD,
+    },
+    annotations: { idempotentHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ options, dry_run }) => {
+    if (dry_run) {
+      const settingsResult = await wp.requestEnveloped<{
+        theme_options?: Record<string, unknown>;
+      }>("/schema/settings");
+      if (!settingsResult.ok) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: serializeEnvelope(settingsResult, "diviops_theme_options_update"),
+            },
+          ],
+        };
+      }
+
+      const current = settingsResult.data.theme_options ?? {};
+      const changes: Array<{
+        kind: string;
+        target: string;
+        before: unknown;
+        after: unknown;
+      }> = [];
+      const warnings: string[] = [];
+      const droppedKeys: string[] = [];
+
+      for (const [key, value] of Object.entries(options)) {
+        if (!THEME_OPTIONS_WRITE_ALLOWSET.has(key)) {
+          droppedKeys.push(key);
+          continue;
+        }
+        const before = (current as Record<string, unknown>)[key];
+        if (before === value) continue;
+        changes.push({
+          kind: `theme_options.update.${key}`,
+          target: "theme_options",
+          before: before ?? null,
+          after: value,
+        });
+      }
+
+      if (droppedKeys.length > 0) {
+        warnings.push(
+          `Key(s) not in the write allowlist and would be dropped: ${droppedKeys.join(", ")}.`,
+        );
+      }
+
+      const summary =
+        changes.length === 0
+          ? "Theme options already match requested values — no-op."
+          : `Would update theme option(s): ${changes.map((c) => c.kind.replace("theme_options.update.", "")).join(", ")}.`;
+
+      const response: DiviopsResponse<{
+        dry_run: true;
+        plan: {
+          summary: string;
+          changes: typeof changes;
+          warnings?: string[];
+        };
+      }> = {
+        ok: true,
+        data: {
+          dry_run: true,
+          plan: {
+            summary,
+            changes,
+            ...(warnings.length > 0 ? { warnings } : {}),
+          },
+        },
+      };
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: serializeEnvelope(response, "diviops_theme_options_update"),
+          },
+        ],
+      };
+    }
+
+    const result = await wp.requestEnveloped("/theme-options", {
+      method: "POST",
+      body: { options },
+    });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_theme_options_update") },
+      ],
+    };
+  },
+);
+
 registerPluginTool(
   "diviops_seo_metadata_update",
   {
