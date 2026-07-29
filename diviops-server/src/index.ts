@@ -3367,6 +3367,43 @@ registerPluginTool(
 );
 
 registerPluginTool(
+  "diviops_media_update_meta",
+  {
+    description:
+      "Update an existing media attachment's alt text and/or caption. Provide at least one of `alt`/`caption` — an OMITTED field is left untouched, while an EXPLICIT empty string clears it (alt is deleted from postmeta so it reads back identical to an attachment that never had alt set; caption is stored as an empty excerpt, which WordPress allows). Idempotent: if the resulting values already match the current alt/caption, the call is a no-op (noop:true) and nothing is written. Pass dry_run=true to preview the before/after without mutating state. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; success data is { attachment_id, alt, caption, noop }. Missing/non-attachment attachment_id returns 'not_found' (HTTP 404), edit-permission failures return 'forbidden' (HTTP 403), providing neither alt nor caption returns 'invalid_input' (HTTP 400).",
+    inputSchema: {
+      attachment_id: z.number().int().describe("WordPress attachment (media) post ID to update."),
+      alt: z
+        .string()
+        .optional()
+        .describe("New alt text. Omit to leave alt untouched; pass '' to clear it."),
+      caption: z
+        .string()
+        .optional()
+        .describe("New caption. Omit to leave caption untouched; pass '' to clear it."),
+      dry_run: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("When true, return the change plan without mutating state."),
+    },
+    annotations: { idempotentHint: false },
+    _meta: { idempotent: "conditional" },
+  },
+  async ({ attachment_id, alt, caption, dry_run }) => {
+    const result = await wp.requestEnveloped(`/media/update/${attachment_id}`, {
+      method: "POST",
+      body: { alt, caption, dry_run: dry_run ?? false },
+    });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_media_update_meta") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
   "diviops_media_set_featured_image",
   {
     description:
