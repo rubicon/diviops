@@ -25,6 +25,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 // ABSPATH guard, so direct loading is rejected.
 require_once __DIR__ . '/includes/trait-canvas.php';
 require_once __DIR__ . '/includes/trait-core.php';
+require_once __DIR__ . '/includes/trait-dynamic-content.php';
 require_once __DIR__ . '/includes/trait-global-color.php';
 require_once __DIR__ . '/includes/trait-global-font.php';
 require_once __DIR__ . '/includes/trait-library.php';
@@ -51,6 +52,7 @@ class DiviOps_Agent {
 	// trait are mixed into this class.
 	use DiviOps_Agent_Canvas;
 	use DiviOps_Agent_Core;
+	use DiviOps_Agent_DynamicContent;
 	use DiviOps_Agent_GlobalColor;
 	use DiviOps_Agent_GlobalFont;
 	use DiviOps_Agent_Library;
@@ -100,6 +102,8 @@ class DiviOps_Agent {
 	const CAPABILITIES = [
 		// canvas
 		'canvas_create', 'canvas_delete', 'canvas_duplicate', 'canvas_get', 'canvas_list', 'canvas_orphan_audit', 'canvas_update',
+		// dynamic content
+		'dynamic_content_list', 'dynamic_content_build', 'dynamic_content_validate',
 		// global colors / fonts
 		'global_color_audit_storage', 'global_color_create', 'global_color_delete', 'global_color_list', 'global_color_update',
 		'global_font_audit_storage', 'global_font_create', 'global_font_delete', 'global_font_list', 'global_font_update',
@@ -1032,6 +1036,44 @@ class DiviOps_Agent {
 				'alt'     => [ 'required' => false, 'type' => 'string' ],
 				'caption' => [ 'required' => false, 'type' => 'string' ],
 				'dry_run' => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
+			],
+		] );
+
+		// ── Dynamic Content Operations ───────────────────────────────
+
+		register_rest_route( self::REST_NAMESPACE, '/dynamic-content/list', [
+			'methods'             => 'GET',
+			'callback'            => [ __CLASS__, 'dynamic_content_list' ],
+			'permission_callback' => [ __CLASS__, 'check_read_permission' ],
+			'args'                => [
+				'post_id' => [ 'required' => false, 'type' => 'integer' ],
+				'context' => [ 'required' => false, 'type' => 'string', 'default' => 'edit' ],
+			],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/dynamic-content/build', [
+			'methods'             => 'POST',
+			'callback'            => [ __CLASS__, 'dynamic_content_build' ],
+			'permission_callback' => [ __CLASS__, 'check_read_permission' ],
+			'args'                => [
+				'name'     => [ 'required' => true, 'type' => 'string' ],
+				'settings' => [ 'required' => false, 'type' => 'object' ],
+				'type'     => [ 'required' => false, 'type' => 'string', 'default' => 'content' ],
+				'post_id'  => [ 'required' => false, 'type' => 'integer' ],
+				'context'  => [ 'required' => false, 'type' => 'string', 'default' => 'edit' ],
+			],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/dynamic-content/validate', [
+			'methods'             => 'POST',
+			'callback'            => [ __CLASS__, 'dynamic_content_validate' ],
+			'permission_callback' => [ __CLASS__, 'check_read_permission' ],
+			'args'                => [
+				'name'     => [ 'required' => false, 'type' => 'string' ],
+				'settings' => [ 'required' => false, 'type' => 'object' ],
+				'value'    => [ 'required' => false, 'type' => 'string' ],
+				'post_id'  => [ 'required' => false, 'type' => 'integer' ],
+				'context'  => [ 'required' => false, 'type' => 'string', 'default' => 'edit' ],
 			],
 		] );
 

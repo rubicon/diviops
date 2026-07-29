@@ -1628,6 +1628,16 @@ trait DiviOps_Agent_Page {
 			);
 		}
 
+		// Conservative dynamic-content guard (#36): only values that actually
+		// LOOK like a $variable(...)$ or legacy @ET-DC@...@ token are inspected
+		// at all, so an ordinary plain string is never rejected. A malformed or
+		// unregistered binding fails loudly here rather than being written and
+		// silently rendering empty.
+		$dynamic_content_error = self::dynamic_content_validate_module_update_attrs( $attrs, $post_id );
+		if ( null !== $dynamic_content_error ) {
+			return $dynamic_content_error;
+		}
+
 		// Map helper output back to the local variables the rest of this
 		// handler uses. Kept rather than rewriting downstream to minimize
 		// risk; the inline parsing block is replaced, not the walk.

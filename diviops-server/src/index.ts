@@ -3574,6 +3574,89 @@ registerPluginTool(
   },
 );
 
+// ── Dynamic Content Tools ────────────────────────────────────────────
+
+registerPluginTool(
+  "diviops_dynamic_content_list",
+  {
+    description:
+      "List the live Divi dynamic-content option registry (apply_filters('divi_module_dynamic_content_options', ...)) for this site — includes ACF/SCF fields that actually exist here, not a static catalog. Optional post_id (default: 0, no specific post context — some options that gate on post/Theme-Builder context may register fewer entries) and context ('edit'|'display', default 'edit'). Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; success data is { options: { <name>: { id, label, type, custom, group, fields, ... } }, count, post_id, context }. An unknown post_id returns 'not_found' (HTTP 404); a post_id the caller cannot edit returns 'forbidden' (HTTP 403); an invalid context returns 'invalid_input' (HTTP 400). Read-only.",
+    inputSchema: {
+      post_id: z.number().int().optional().describe("Post ID context for the registry lookup. Defaults to 0 (no specific post)."),
+      context: z.enum(["edit", "display"]).optional().default("edit").describe("Registry context: 'edit' (Visual Builder) or 'display' (frontend render)."),
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ post_id, context }) => {
+    const params: Record<string, string> = {};
+    if (post_id) params.post_id = String(post_id);
+    if (context) params.context = context;
+    const result = await wp.requestEnveloped("/dynamic-content/list", { params });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_dynamic_content_list") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
+  "diviops_dynamic_content_build",
+  {
+    description:
+      "Validate a dynamic-content `name` + `settings` against the live registry (diviops_dynamic_content_list), then return the exact $variable({...})$ token Divi's own Conversion::formatDynamicContent() would emit for the same inputs — byte-identical encoding, including empty settings serializing as {} not []. Does NOT write anything; use diviops_module_update to actually apply the returned token to a module attr. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; success data is { token, name, settings, type }. An unregistered name or a settings key outside the option's registered schema returns 'invalid_input' (HTTP 400) with error.data.errors listing every problem found.",
+    inputSchema: {
+      name: z.string().describe("Registered dynamic-content option name, e.g. 'post_title'."),
+      settings: z.record(z.string(), z.any()).optional().describe("Settings map for the option (defaults to {} when omitted)."),
+      type: z.string().optional().default("content").describe("Dynamic-content type, e.g. 'content' (default) or 'color'."),
+      post_id: z.number().int().optional().describe("Post ID context for the registry lookup. Defaults to 0 (no specific post)."),
+      context: z.enum(["edit", "display"]).optional().default("edit").describe("Registry context: 'edit' (Visual Builder) or 'display' (frontend render)."),
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ name, settings, type, post_id, context }) => {
+    const result = await wp.requestEnveloped("/dynamic-content/build", {
+      method: "POST",
+      body: { name, settings, type, post_id, context },
+    });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_dynamic_content_build") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
+  "diviops_dynamic_content_validate",
+  {
+    description:
+      "Validate a dynamic-content binding against the live registry. Provide exactly one of: `name` (with optional `settings`), or `value` (a raw token string — either the modern $variable({...})$ form or a legacy D4 @ET-DC@...@ form, auto-detected and decoded). A legacy value additionally reports `modern_equivalent`, the exact $variable() token it decodes to. Returns the standardized envelope { ok, data?, error: { code, message, hint? } } — the REQUEST succeeds (ok:true) even when the binding itself is invalid; check data.valid/data.errors, which mirrors diviops_validate_blocks' 'findings are the success payload' convention. Only a malformed call shape (neither/both of name/value) returns ok:false 'invalid_input' (HTTP 400).",
+    inputSchema: {
+      name: z.string().optional().describe("Dynamic-content option name to validate. Provide exactly one of name or value."),
+      settings: z.record(z.string(), z.any()).optional().describe("Settings map to validate against `name`'s schema (only used with name)."),
+      value: z.string().optional().describe("Raw $variable({...})$ or legacy @ET-DC@...@ token string to parse and validate. Provide exactly one of name or value."),
+      post_id: z.number().int().optional().describe("Post ID context for the registry lookup. Defaults to 0 (no specific post)."),
+      context: z.enum(["edit", "display"]).optional().default("edit").describe("Registry context: 'edit' (Visual Builder) or 'display' (frontend render)."),
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ name, settings, value, post_id, context }) => {
+    const result = await wp.requestEnveloped("/dynamic-content/validate", {
+      method: "POST",
+      body: { name, settings, value, post_id, context },
+    });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_dynamic_content_validate") },
+      ],
+    };
+  },
+);
+
 // ── Theme Builder Tools ─────────────────────────────────────────────
 
 registerPluginTool(
