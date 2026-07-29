@@ -21,7 +21,7 @@ require_once __DIR__ . '/wp-shim.php';
 // registered on DiviOps_Agent::CAPABILITIES so the handshake advertises them
 // and REST clients (incl. the MCP server) can gate on them. ───────────────
 
-foreach ( array( 'media_upload', 'media_get', 'media_list', 'media_set_featured_image' ) as $capability ) {
+foreach ( array( 'media_upload', 'media_get', 'media_list', 'media_set_featured_image', 'media_update_meta' ) as $capability ) {
 	assert_true(
 		in_array( $capability, DiviOps_Agent::CAPABILITIES, true ),
 		"CAPABILITIES includes $capability"
@@ -991,5 +991,171 @@ unset(
 	$GLOBALS['diviops_test_filetype'],
 	$GLOBALS['diviops_test_http_responses'],
 	$GLOBALS['diviops_test_next_attach_id']
+);
+$GLOBALS['diviops_test_allowed_mimes'] = array( 'png' => 'image/png' );
+
+// ── media_update_meta(): set/clear alt+caption, omit-vs-empty, noop, dry_run,
+// gates (#33) ────────────────────────────────────────────────────────────────
+// Test-global hygiene: this suite sets diviops_test_posts, diviops_test_
+// attachments, diviops_test_post_meta, diviops_test_uneditable_ids; every one
+// is reset/unset at the end so nothing leaks into files sharing this process.
+
+$GLOBALS['diviops_test_posts']       = array();
+$GLOBALS['diviops_test_attachments'] = array();
+$GLOBALS['diviops_test_post_meta']   = array();
+
+diviops_media_register_attachment( 1001, 'Update Target', 'image/png', 'update-target.png' );
+$GLOBALS['diviops_test_posts'][1001]->post_excerpt = 'Original caption';
+update_post_meta( 1001, '_wp_attachment_image_alt', 'Original alt' );
+
+// ── set both alt and caption on an editable attachment ────────────────────
+$r = diviops_call(
+	'media_update_meta',
+	array( diviops_media_req( array( 'id' => 1001, 'alt' => 'New alt text', 'caption' => 'New caption text' ) ) )
+);
+$d = $r->get_data();
+assert_true( true === $d['ok'], 'set both: ok' );
+assert_true( 1001 === $d['data']['attachment_id'], 'set both: attachment_id' );
+assert_true( 'New alt text' === $d['data']['alt'], 'set both: returned alt' );
+assert_true( 'New caption text' === $d['data']['caption'], 'set both: returned caption' );
+assert_true( false === $d['data']['noop'], 'set both: noop false' );
+assert_true(
+	'New alt text' === get_post_meta( 1001, '_wp_attachment_image_alt', true ),
+	'set both: alt actually stored'
+);
+assert_true(
+	'New caption text' === $GLOBALS['diviops_test_posts'][1001]->post_excerpt,
+	'set both: caption actually stored'
+);
+
+// ── omit caption while setting alt → caption unchanged ────────────────────
+$r = diviops_call(
+	'media_update_meta',
+	array( diviops_media_req( array( 'id' => 1001, 'alt' => 'Yet another alt' ) ) )
+);
+$d = $r->get_data();
+assert_true( true === $d['ok'], 'omit caption: ok' );
+assert_true( 'Yet another alt' === $d['data']['alt'], 'omit caption: alt updated' );
+assert_true(
+	'New caption text' === $d['data']['caption'],
+	'omit caption: caption reported unchanged in response'
+);
+assert_true(
+	'New caption text' === $GLOBALS['diviops_test_posts'][1001]->post_excerpt,
+	'omit caption: caption unchanged in storage'
+);
+
+// ── explicit alt: "" clears alt ────────────────────────────────────────────
+$r = diviops_call( 'media_update_meta', array( diviops_media_req( array( 'id' => 1001, 'alt' => '' ) ) ) );
+$d = $r->get_data();
+assert_true( true === $d['ok'], 'clear alt: ok' );
+assert_true( '' === $d['data']['alt'], 'clear alt: returned alt is empty' );
+assert_true(
+	'' === get_post_meta( 1001, '_wp_attachment_image_alt', true ),
+	'clear alt: meta deleted, reads back empty like an attachment with no alt'
+);
+$get_r = diviops_call( 'media_get', array( diviops_media_req( array( 'id' => 1001 ) ) ) );
+assert_true(
+	'' === $get_r->get_data()['data']['alt'],
+	'clear alt: media_get confirms alt reads back empty'
+);
+
+// ── neither field present → invalid_input, 400 ─────────────────────────────
+$r = diviops_call( 'media_update_meta', array( diviops_media_req( array( 'id' => 1001 ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'], 'neither field: not ok' );
+assert_true( 'invalid_input' === $d['error']['code'], 'neither field: invalid_input code' );
+assert_true( 400 === $r->get_status(), 'neither field: 400' );
+
+// ── non-existent attachment id → not_found, 404 ────────────────────────────
+$r = diviops_call( 'media_update_meta', array( diviops_media_req( array( 'id' => 999999, 'alt' => 'x' ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'], 'missing id: not ok' );
+assert_true( 'not_found' === $d['error']['code'], 'missing id: not_found code' );
+assert_true( 404 === $r->get_status(), 'missing id: 404' );
+
+// ── real post but not an attachment → same type-guard precedent as media_get ──
+diviops_test_register_post( 1002, '', 'page', 'A Regular Page' );
+$r = diviops_call( 'media_update_meta', array( diviops_media_req( array( 'id' => 1002, 'alt' => 'x' ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'], 'non-attachment: not ok' );
+assert_true( 'not_found' === $d['error']['code'], 'non-attachment: not_found code (matches media_get precedent)' );
+assert_true( 404 === $r->get_status(), 'non-attachment: 404' );
+
+// ── uneditable attachment → forbidden, 403 ─────────────────────────────────
+$GLOBALS['diviops_test_uneditable_ids'] = array( 1001 );
+$r = diviops_call( 'media_update_meta', array( diviops_media_req( array( 'id' => 1001, 'alt' => 'blocked' ) ) ) );
+$d = $r->get_data();
+assert_true( false === $d['ok'], 'uneditable: not ok' );
+assert_true( 'forbidden' === $d['error']['code'], 'uneditable: forbidden code' );
+assert_true( 403 === $r->get_status(), 'uneditable: 403' );
+unset( $GLOBALS['diviops_test_uneditable_ids'] );
+
+// ── setting alt/caption to their CURRENT values → noop:true, no write ─────
+// Re-establish a known state, then re-request the exact same values.
+$r = diviops_call(
+	'media_update_meta',
+	array( diviops_media_req( array( 'id' => 1001, 'alt' => 'Stable alt', 'caption' => 'Stable caption' ) ) )
+);
+assert_true( true === $r->get_data()['ok'], 'noop setup: initial set ok' );
+
+$meta_before_noop = $GLOBALS['diviops_test_post_meta'][1001]['_wp_attachment_image_alt'] ?? null;
+$excerpt_before_noop = $GLOBALS['diviops_test_posts'][1001]->post_excerpt;
+$r = diviops_call(
+	'media_update_meta',
+	array( diviops_media_req( array( 'id' => 1001, 'alt' => 'Stable alt', 'caption' => 'Stable caption' ) ) )
+);
+$d = $r->get_data();
+assert_true( true === $d['ok'], 'noop: ok' );
+assert_true( true === $d['data']['noop'], 'noop: noop true' );
+assert_true( 'Stable alt' === $d['data']['alt'], 'noop: returned alt matches current' );
+assert_true( 'Stable caption' === $d['data']['caption'], 'noop: returned caption matches current' );
+assert_true(
+	$meta_before_noop === $GLOBALS['diviops_test_post_meta'][1001]['_wp_attachment_image_alt'],
+	'noop: alt meta untouched (no write)'
+);
+assert_true(
+	$excerpt_before_noop === $GLOBALS['diviops_test_posts'][1001]->post_excerpt,
+	'noop: caption untouched (no write)'
+);
+
+// ── dry_run: true with a real change → plan, no write ──────────────────────
+$alt_before_dry_run     = get_post_meta( 1001, '_wp_attachment_image_alt', true );
+$caption_before_dry_run = $GLOBALS['diviops_test_posts'][1001]->post_excerpt;
+$r = diviops_call(
+	'media_update_meta',
+	array( diviops_media_req( array( 'id' => 1001, 'alt' => 'Dry run alt', 'dry_run' => true ) ) )
+);
+$d = $r->get_data();
+assert_true( true === $d['ok'] && isset( $d['data']['plan'] ), 'dry_run: returns plan' );
+assert_true(
+	$alt_before_dry_run === get_post_meta( 1001, '_wp_attachment_image_alt', true ),
+	'dry_run: alt unchanged'
+);
+assert_true(
+	$caption_before_dry_run === $GLOBALS['diviops_test_posts'][1001]->post_excerpt,
+	'dry_run: caption unchanged'
+);
+
+// dry_run that WOULD be a noop still returns a plan (not a hard error) and still
+// performs no write; the summary communicates the no-op nature per the brief.
+$r = diviops_call(
+	'media_update_meta',
+	array( diviops_media_req( array( 'id' => 1001, 'alt' => 'Stable alt', 'caption' => 'Stable caption', 'dry_run' => true ) ) )
+);
+$d = $r->get_data();
+assert_true( true === $d['ok'] && isset( $d['data']['plan'] ), 'dry_run noop: still returns a plan' );
+assert_true(
+	'Stable alt' === get_post_meta( 1001, '_wp_attachment_image_alt', true ),
+	'dry_run noop: alt unchanged'
+);
+
+// Test-global hygiene: unset everything this suite set so later test files
+// start from a clean slate.
+unset(
+	$GLOBALS['diviops_test_posts'],
+	$GLOBALS['diviops_test_attachments'],
+	$GLOBALS['diviops_test_post_meta'],
+	$GLOBALS['diviops_test_uneditable_ids']
 );
 $GLOBALS['diviops_test_allowed_mimes'] = array( 'png' => 'image/png' );

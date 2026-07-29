@@ -106,7 +106,7 @@ class DiviOps_Agent {
 		// library
 		'library_delete', 'library_get', 'library_list', 'library_save',
 		// media
-		'media_upload', 'media_get', 'media_list', 'media_set_featured_image',
+		'media_upload', 'media_get', 'media_list', 'media_set_featured_image', 'media_update_meta',
 		// meta
 		'meta_find_icon', 'meta_flush_cache',
 		// menu
@@ -1015,6 +1015,23 @@ class DiviOps_Agent {
 				'attachment_id' => [ 'required' => false, 'type' => 'integer' ],
 				'url'           => [ 'required' => false, 'type' => 'string' ],
 				'dry_run'       => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
+			],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/media/update/(?P<id>\d+)', [
+			'methods'             => 'POST',
+			'callback'            => [ __CLASS__, 'media_update_meta' ],
+			'permission_callback' => [ __CLASS__, 'check_authenticated_permission' ],
+			'args'                => [
+				'id' => [
+					'required'          => true,
+					'validate_callback' => function ( $param ) {
+						return is_numeric( $param );
+					},
+				],
+				'alt'     => [ 'required' => false, 'type' => 'string' ],
+				'caption' => [ 'required' => false, 'type' => 'string' ],
+				'dry_run' => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
 			],
 		] );
 

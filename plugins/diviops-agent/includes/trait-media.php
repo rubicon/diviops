@@ -752,6 +752,154 @@ trait DiviOps_Agent_Media {
 	}
 
 	/**
+	 * Set/clear an attachment's alt text and/or caption. At least one of
+	 * `alt`/`caption` must be present in the request; the other, if omitted,
+	 * is left untouched. An explicit empty string clears that field. Idempotent:
+	 * applying values that already match the current stored values is a no-op.
+	 * Supports dry_run.
+	 *
+	 * @param mixed $request REST request-like object ($request['id'], get_param()).
+	 * @return WP_REST_Response
+	 */
+	public static function media_update_meta( $request ) {
+		$id   = absint( $request['id'] );
+		$post = get_post( $id );
+
+		// Gate ordering matches media_set_featured_image()/media_get(): not_found
+		// before forbidden, and an id that resolves to a real-but-wrong-type post
+		// (e.g. a page) is reported the same way as a missing id, mirroring
+		// media_get()'s type-guard precedent exactly.
+		if ( ! $post || 'attachment' !== $post->post_type ) {
+			return self::envelope_error(
+				'not_found',
+				"Attachment #{$id} not found.",
+				'Use diviops_media_list to find a valid attachment id.',
+				404,
+				array( 'attachment_id' => $id )
+			);
+		}
+		if ( ! current_user_can( 'edit_post', $id ) ) {
+			return self::envelope_error(
+				'forbidden',
+				"You are not allowed to edit attachment #{$id}.",
+				'Authenticate as a user who can edit this attachment.',
+				403,
+				array( 'attachment_id' => $id )
+			);
+		}
+
+		// $request->get_param() returns null for a param that was never sent
+		// and '' for one explicitly sent as an empty string — that distinction
+		// is what separates "leave untouched" from "clear this field", so it
+		// must be read via get_param() here rather than defaulting to '' the
+		// way media_upload() does for its own (always-optional) alt/caption.
+		$alt_param     = $request->get_param( 'alt' );
+		$caption_param = $request->get_param( 'caption' );
+		$has_alt       = null !== $alt_param;
+		$has_caption   = null !== $caption_param;
+
+		if ( ! $has_alt && ! $has_caption ) {
+			return self::envelope_error(
+				'invalid_input',
+				'Provide at least one of alt or caption.',
+				null,
+				400
+			);
+		}
+
+		// Same read logic media_get() uses, so noop detection and the
+		// resulting response are consistent with what a caller would see by
+		// reading the attachment back afterward.
+		$current_alt     = (string) get_post_meta( $id, '_wp_attachment_image_alt', true );
+		$current_caption = (string) get_post_field( 'post_excerpt', $id );
+
+		$new_alt     = $has_alt ? sanitize_text_field( (string) $alt_param ) : $current_alt;
+		$new_caption = $has_caption ? sanitize_text_field( (string) $caption_param ) : $current_caption;
+
+		$noop = ( $new_alt === $current_alt ) && ( $new_caption === $current_caption );
+
+		$dry_run = self::media_bool_param( $request, 'dry_run' );
+
+		if ( $dry_run ) {
+			return self::media_update_meta_dry_run( $id, $has_alt, $has_caption, $current_alt, $new_alt, $current_caption, $new_caption, $noop );
+		}
+
+		if ( $noop ) {
+			return self::envelope_success(
+				array(
+					'attachment_id' => $id,
+					'alt'           => $new_alt,
+					'caption'       => $new_caption,
+					'noop'          => true,
+				)
+			);
+		}
+
+		if ( $has_alt ) {
+			// An empty alt is CLEARED (meta deleted), not stored as an empty
+			// string — this is what makes a cleared alt read back identically
+			// to an attachment that never had alt meta set, via media_get().
+			if ( '' === $new_alt ) {
+				delete_post_meta( $id, '_wp_attachment_image_alt' );
+			} else {
+				update_post_meta( $id, '_wp_attachment_image_alt', $new_alt );
+			}
+		}
+		if ( $has_caption ) {
+			// Unlike alt, an empty post_excerpt is a valid, storable value —
+			// WordPress allows an empty excerpt, so clearing the caption is
+			// just an ordinary write of ''.
+			wp_update_post(
+				array(
+					'ID'           => $id,
+					'post_excerpt' => $new_caption,
+				)
+			);
+		}
+
+		return self::envelope_success(
+			array(
+				'attachment_id' => $id,
+				'alt'           => $new_alt,
+				'caption'       => $new_caption,
+				'noop'          => false,
+			)
+		);
+	}
+
+	/** Build the dry_run plan response for media_update_meta(). */
+	private static function media_update_meta_dry_run( int $id, bool $has_alt, bool $has_caption, string $current_alt, string $new_alt, string $current_caption, string $new_caption, bool $noop ) {
+		$changes = array();
+		if ( $has_alt && $new_alt !== $current_alt ) {
+			$changes[] = array(
+				'kind'   => 'update_alt',
+				'target' => "attachment#{$id}",
+				'before' => $current_alt,
+				'after'  => $new_alt,
+			);
+		}
+		if ( $has_caption && $new_caption !== $current_caption ) {
+			$changes[] = array(
+				'kind'   => 'update_caption',
+				'target' => "attachment#{$id}",
+				'before' => $current_caption,
+				'after'  => $new_caption,
+			);
+		}
+
+		$summary = $noop
+			? "Attachment #{$id}'s alt/caption already match the requested values — no-op."
+			: "Would update attachment #{$id}: " . implode( ', ', array_column( $changes, 'kind' ) ) . '.';
+
+		return self::dry_run_response(
+			$summary,
+			$changes,
+			array(),
+			array( 'attachment_id' => $id )
+		);
+	}
+
+	/**
 	 * Resolve a redirect's Location header against the URL it was returned
 	 * from. Handles: an already-absolute target (has both scheme and host,
 	 * passes through unchanged); protocol-relative (`//host/path`, inherits
