@@ -83,21 +83,35 @@ The skill enforces the Divi block format, the design system, and the response co
 
 ## Tools at a glance
 
-The server exposes **94 always-on tools** across the categories below. Each category links to representative tools; the full table lives in [server-reference.md](../docs/server-reference.md).
+The server exposes **109 always-on tools** across the categories below. Each category links to representative tools; the full table lives in [server-reference.md](../docs/server-reference.md).
 
 | Category | Use case | Tool prefixes |
 |----------|----------|---------------|
 | Page authoring | Create, edit, restructure pages | `page_*`, `section_*`, `module_*` |
 | Design system | Manage colors, fonts, variables, presets | `variable_*`, `global_color_*`, `global_font_*`, `preset_*` |
 | Library + templates | Reusable layouts + Theme Builder | `library_*`, `template_*`, `tb_*` |
+| Media | Upload, list, and inspect attachments; alt text/caption; set featured image | `media_*` |
+| Revisions | Native WordPress post-revision list/get/diff/restore | `revision_*` |
 | WordPress menus | Author reusable nav menus and theme-location assignments | `menu_*` |
 | Semantic SEO metadata | Inspect provider support and author two explicit TSF text fields with checksum/readback guards | `seo_*` |
-| Schema introspection | Module attribute discovery | `schema_*` |
+| Schema introspection | Module attribute discovery, including native Divi 5 core modules resolved from Divi's own `module.json` files | `schema_*` |
 | Canvas / off-canvas | Popups, modals, menus | `canvas_*` |
 | SCF integration | Secure Custom Fields sync | `scf_*` |
 | Render + validate | Preview HTML, validate block markup | `render_preview`, `validate_blocks` |
 | WP-CLI passthrough | Escape hatch for site ops | `meta_wp_cli` |
 | Cache + meta | Connection probe, identity, icons, cache flush | `meta_*` |
+
+**Media domain and SVG uploads.** `media_upload`, `media_get`, `media_list`,
+`media_set_featured_image`, and `media_update_meta` (alt text/caption, with
+partial-update and clear-via-empty-string semantics) cover the media library.
+URL uploads are SSRF-guarded (public `http`/`https` only, reserved/private IPv4
+and IPv6 ranges rejected on every redirect hop) and every upload is validated
+against its real bytes via `wp_check_filetype_and_ext()`. **SVG uploads require
+an active SVG sanitizer** — the plugin verifies [Safe SVG](https://wordpress.org/plugins/safe-svg/)
+is actually bound to `wp_handle_sideload_prefilter`, not just that the SVG mime
+is allowed, and fails closed with `svg_sanitizer_required` (415) otherwise. See
+the [main README's Media domain section](../README.md#media-domain) for the full
+write-up, including deployment hardening notes.
 
 Use `diviops_meta_info` as the S0 preflight before dogfooding or product work. It returns `server_version`, a numeric `tool_count`, a `tools` catalog summary (`registered_total`, always-on count, Pro possible/registered counts by target), `plugins` version records for `diviops-agent`, `diviops-agent-pro`, FluentCart, and FluentCart Pro when available, plus the existing handshake and slice state.
 
