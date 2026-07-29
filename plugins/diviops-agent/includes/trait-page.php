@@ -689,6 +689,205 @@ trait DiviOps_Agent_Page {
 	}
 
 	/**
+	 * Duplicate a page/post on the SAME site (#35 / G4).
+	 *
+	 * Scope, per the owner-approved split (issue #35 comment, 2026-07-29):
+	 * this ships without any reference remapping. Attachment ids, internal
+	 * links, and global color/font/variable refs need no remapping when the
+	 * target IS the source site — they are already valid there. That is not
+	 * a corner cut silently; the response says so explicitly via
+	 * `references_remapped: false` (plus a pointer at #96, where cross-site
+	 * remapping — which DOES need per-reference-class policy work — is
+	 * tracked) so a caller cannot infer more happened than actually did.
+	 *
+	 * Reuses page_get_layout / page_create's shape rather than reimplementing:
+	 * the source lookup + can_inspect_post_object read gate mirror
+	 * page_get_layout's; the created-post response fields (page_id/url/
+	 * edit_url) mirror page_create's.
+	 *
+	 * Being a parse/serialize round trip on the source page's block markup —
+	 * the write path reads the source's raw post_content and writes it,
+	 * unchanged, into a new post — this routes through the same discipline
+	 * page_block_insert (#32) uses for the identical reason: parse via
+	 * parse_blocks_for_write() (NOT bare parse_blocks()), then write via
+	 * update_post_content_with_integrity_guard() with
+	 * $check_global_layout_drift = true, so a source page carrying a
+	 * divi/global-layout wrapper cannot have that wrapper materialized into
+	 * the new page by the copy (#11).
+	 *
+	 * dry_run deliberately does NOT perform that round trip — it previews
+	 * from the source's raw post_content only (byte length, resolved
+	 * title/status/post_type, and the source_uses_divi disclosure), matching
+	 * page_create's simpler dry-run convention rather than page_block_insert's
+	 * (which mutates an existing page and so needs the parsed tree to report
+	 * a target). This keeps dry_run cheap and side-effect-free without ever
+	 * touching Divi's parser.
+	 */
+	public static function page_duplicate( $request ) {
+		$source_id = absint( $request['id'] );
+		$source    = get_post( $source_id );
+
+		if ( ! $source ) {
+			return self::envelope_error(
+				'not_found',
+				"Page #{$source_id} not found.",
+				'Verify the page id via diviops_page_list.',
+				404,
+				[ 'page_id' => $source_id ]
+			);
+		}
+		if ( ! self::can_inspect_post_object( $source ) ) {
+			return self::envelope_object_read_forbidden( $source_id, 'page' );
+		}
+
+		$title_param = $request->get_param( 'title' );
+		if ( null !== $title_param && ! is_string( $title_param ) ) {
+			return self::envelope_error(
+				'invalid_input',
+				'title must be a string when provided.',
+				null,
+				400,
+				[ 'field' => 'title', 'received_type' => gettype( $title_param ) ]
+			);
+		}
+		$title_explicit = ( null !== $title_param && '' !== trim( (string) $title_param ) );
+		$new_title      = $title_explicit
+			? sanitize_text_field( $title_param )
+			: sanitize_text_field( (string) $source->post_title . ' (Copy)' );
+
+		$status            = sanitize_key( (string) ( $request->get_param( 'status' ) ?? 'draft' ) );
+		$allowed_statuses  = get_post_stati( [ 'internal' => false ] );
+		if ( ! in_array( $status, $allowed_statuses, true ) ) {
+			return self::envelope_error(
+				'invalid_input',
+				'status must be a valid public WordPress post status.',
+				'Pass status as one of the allowed values.',
+				400,
+				[
+					'field'    => 'status',
+					'allowed'  => array_values( $allowed_statuses ),
+					'received' => $status,
+				]
+			);
+		}
+
+		$post_type_param = $request->get_param( 'post_type' );
+		$post_type       = ( null === $post_type_param || '' === $post_type_param )
+			? (string) $source->post_type
+			: sanitize_key( (string) $post_type_param );
+		if ( ! post_type_exists( $post_type ) ) {
+			return self::envelope_error(
+				'invalid_input',
+				"post_type '{$post_type}' is not a registered post type.",
+				'Pass a registered post type or omit to inherit the source page\'s post_type.',
+				400,
+				[ 'field' => 'post_type', 'received' => $post_type ]
+			);
+		}
+
+		$source_content  = (string) $source->post_content;
+		$source_is_divi  = self::post_uses_divi( $source );
+		$references_note = 'Attachment ids, internal links, and global color/font/variable refs are copied as-is because the duplicate is created on the same site as the source — nothing to remap. Cross-site duplication with reference remapping is tracked separately (#96), not implemented here.';
+
+		if ( (bool) $request->get_param( 'dry_run' ) ) {
+			return self::dry_run_response(
+				"Would duplicate page #{$source_id} ('{$source->post_title}') as '{$new_title}' (post_type={$post_type}, status={$status}).",
+				[ [
+					'kind'   => 'page.duplicate',
+					'target' => "page#{$source_id}",
+					'after'  => [
+						'title'     => $new_title,
+						'status'    => $status,
+						'post_type' => $post_type,
+						'source_id' => $source_id,
+						'bytes'     => strlen( $source_content ),
+					],
+				] ],
+				[],
+				[
+					'source_uses_divi'    => $source_is_divi,
+					'references_remapped' => false,
+					'references_note'     => $references_note,
+				]
+			);
+		}
+
+		// Parse/serialize round trip (#11, same discipline as page_block_insert
+		// #32): parse_blocks_for_write() routes through Divi's own save-context
+		// parser when available so a divi/global-layout wrapper is never
+		// expanded during this read, then serialize_blocks() rebuilds the
+		// markup unchanged. Not shimmed in tests/wp-shim.php (parse_blocks()
+		// deliberately unshimmed, see #17) — covered live, not in the unit
+		// suite; see tests/test-page-duplicate.php's docblock.
+		$blocks      = self::enrich_blocks_with_empty_object_paths( self::parse_blocks_for_write( $source_content ), $source_content );
+		$new_content = serialize_blocks( self::restore_blocks_empty_objects( $blocks ) );
+
+		$normalized = self::normalize_and_validate_divi_markup_before_write( $new_content, 'source_content' );
+		if ( is_wp_error( $normalized ) ) {
+			return self::envelope_from_wp_error( $normalized );
+		}
+		$new_content = $normalized['content'];
+
+		$new_post_id = wp_insert_post( [
+			'post_title'   => $new_title,
+			'post_content' => '',
+			'post_status'  => $status,
+			'post_type'    => $post_type,
+		], true );
+
+		if ( is_wp_error( $new_post_id ) ) {
+			return self::envelope_from_wp_error( $new_post_id );
+		}
+
+		// $source_content (pre-round-trip) is the drift-comparison baseline:
+		// update_post_content_with_integrity_guard() checks that every
+		// divi/global-layout wrapper identity present there is still present
+		// in $new_content. It is also the corruption-fallback revert target —
+		// acceptable here since it is the same content, only without the
+		// round-trip's re-serialization.
+		$result = self::update_post_content_with_integrity_guard(
+			$new_post_id,
+			$new_content,
+			'page_duplicate',
+			"page #{$new_post_id} duplicated from page #{$source_id}",
+			$source_content,
+			true
+		);
+
+		if ( is_wp_error( $result ) ) {
+			// Refused or failed content write — don't leave an empty shell
+			// page behind from a duplication that didn't actually happen.
+			wp_delete_post( $new_post_id, true );
+			return self::envelope_from_content_write_error( $result );
+		}
+
+		// Mirror page_update_content: only stamp Divi builder meta when the
+		// copied content is actually Divi content, so duplicating a non-Divi
+		// source page does not turn the copy into a Divi page (#45's
+		// should_init_divi_page_meta_on_write reasoning applies here too).
+		if ( self::should_init_divi_page_meta_on_write( $new_post_id, $new_content ) ) {
+			self::initialize_divi_page_meta( $new_post_id, $post_type );
+		}
+
+		self::invalidate_divi_cache( $new_post_id );
+
+		return self::envelope_success( [
+			'success'             => true,
+			'page_id'             => $new_post_id,
+			'source_id'           => $source_id,
+			'title'               => $new_title,
+			'status'              => $status,
+			'post_type'           => $post_type,
+			'url'                 => get_permalink( $new_post_id ),
+			'edit_url'            => admin_url( "post.php?post={$new_post_id}&action=edit" ),
+			'source_uses_divi'    => $source_is_divi,
+			'references_remapped' => false,
+			'references_note'     => $references_note,
+			'message'             => "Page '{$source->post_title}' duplicated to '{$new_title}'.",
+		] );
+	}
+
+	/**
 	 * Insert one or more blocks (a new row, column, or module) at a specific
 	 * position on a page, without rebuilding the surrounding section.
 	 *
