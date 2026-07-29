@@ -538,6 +538,20 @@ assert_same(
 // ── dynamic_content_get_registry(): per-request memoization (#36 review
 // fix 4) — the DB-backed filter must be invoked at most once per distinct
 // (post_id, context), not once per candidate value scanned.
+//
+// Isolation note for whoever adds the next test here: DiviOps_Agent's
+// $dynamic_content_registry_cache is a real per-request cache, but this test
+// runner loads the whole suite into ONE PHP process (tests/run.php requires
+// every test-*.php file in sequence), so it persists across every assertion
+// in this file, not just this block. Correct in production (one WP REST call
+// = one process = a fresh cache), but it means a test that mutates the
+// divi_module_dynamic_content_options filter must use a post_id that has
+// never been passed to dynamic_content_get_registry() before, or its result
+// will read a STALE cached registry from an earlier assertion instead of the
+// one it just registered. Every registry-mutating block in this file (list,
+// build, validate, and each module_update write-path case) already follows
+// that rule by using a fresh, never-before-used post_id — keep doing that
+// rather than reusing one.
 
 $memo_call_count = 0;
 remove_all_filters( 'divi_module_dynamic_content_options' );
