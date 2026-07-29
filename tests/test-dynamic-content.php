@@ -290,6 +290,9 @@ $mu_valid_response = diviops_call( 'module_update', array( $mu_valid_request ) )
 $mu_valid_data     = $mu_valid_response->get_data();
 assert_true( ! empty( $mu_valid_data['ok'] ), 'module_update accepts attrs carrying a well-formed, registered $variable() token' );
 
+// #36 review fix 1: the write-path guard is not a general-purpose linter —
+// diviops_dynamic_content_validate is. A malformed $variable(...)$ payload
+// must ALLOW the write (fail open), not reject it.
 diviops_test_register_post( 9511, $dc_page_content );
 $mu_malformed_request  = new DiviOps_Test_Request(
 	array(
@@ -300,13 +303,7 @@ $mu_malformed_request  = new DiviOps_Test_Request(
 );
 $mu_malformed_response = diviops_call( 'module_update', array( $mu_malformed_request ) );
 $mu_malformed_data     = $mu_malformed_response->get_data();
-assert_true( empty( $mu_malformed_data['ok'] ), 'module_update rejects attrs carrying a malformed $variable() token' );
-assert_same( 'invalid_input', $mu_malformed_data['error']['code'] ?? null, 'malformed dynamic-content token -> invalid_input' );
-assert_same(
-	$dc_page_content,
-	$GLOBALS['diviops_test_posts'][9511]->post_content,
-	'a rejected malformed dynamic-content write leaves post_content untouched'
-);
+assert_true( ! empty( $mu_malformed_data['ok'] ), 'module_update ALLOWS attrs carrying a malformed $variable() token (guard fails open, not the standalone linter)' );
 
 diviops_test_register_post( 9512, $dc_page_content );
 $mu_unknown_request  = new DiviOps_Test_Request(
@@ -360,3 +357,232 @@ $mu_nested_response = diviops_call( 'module_update', array( $mu_nested_request )
 $mu_nested_data     = $mu_nested_response->get_data();
 assert_true( empty( $mu_nested_data['ok'] ), 'module_update walks nested attrs values to find a buried dynamic-content binding' );
 assert_same( 'invalid_input', $mu_nested_data['error']['code'] ?? null, 'buried unregistered dynamic-content option -> invalid_input' );
+
+// ── module_update() write-path guard: mandatory regressions (#36 review) ─
+//
+// $variable(...)$ is Divi's SHARED variable wrapper, not exclusive to dynamic
+// content — global colors (gcid-*), global variables (gvid-*: spacing/sizes/
+// fonts), and gradients use the identical syntax and are deliberately never
+// registered in divi_module_dynamic_content_options
+// (DynamicContentGlobalVariableOptions::register_option_callback() returns
+// $options unchanged) since they resolve via the separate
+// divi_module_dynamic_content_resolved_value filter instead. `type` does not
+// discriminate: the fork's own canonical gvid- form uses "type":"content",
+// identical to a real dynamic-content binding. The fake registry active for
+// this whole file (post_title/post_excerpt only) never contains a gvid-/
+// gcid- entry, so these prove the exemption is by NAME PATTERN / type, not
+// by registry membership — exactly the gap the live-registry review caught.
+
+// Canonical gvid- form taken verbatim from
+// skills/divi-5-builder/references/presets.md:489 (unescaped for a PHP
+// string literal — the reference doc shows it embedded inside a JSON string
+// for documentation purposes).
+$gvid_token = '$variable({"type":"content","value":{"name":"gvid-oa-space-2","settings":{}}})$';
+diviops_test_register_post( 9515, $dc_page_content );
+$mu_gvid_request  = new DiviOps_Test_Request(
+	array(
+		'id'         => 9515,
+		'auto_index' => 'text:1',
+		'attrs'      => array( 'content.dynamicContentValue' => $gvid_token ),
+	)
+);
+$mu_gvid_response = diviops_call( 'module_update', array( $mu_gvid_request ) );
+$mu_gvid_data     = $mu_gvid_response->get_data();
+assert_true(
+	! empty( $mu_gvid_data['ok'] ),
+	'module_update ALLOWS a gvid- global-variable token even though it is absent from the (non-empty) dynamic-content registry'
+);
+
+// Divi core's own Conversion.php calls formatDynamicContent($globalColorId,
+// [], 'color') for global colors — type:"color", not "content".
+$gcid_token = '$variable({"type":"color","value":{"name":"gcid-primary-color","settings":{}}})$';
+diviops_test_register_post( 9516, $dc_page_content );
+$mu_gcid_request  = new DiviOps_Test_Request(
+	array(
+		'id'         => 9516,
+		'auto_index' => 'text:1',
+		'attrs'      => array( 'content.dynamicContentValue' => $gcid_token ),
+	)
+);
+$mu_gcid_response = diviops_call( 'module_update', array( $mu_gcid_request ) );
+$mu_gcid_data     = $mu_gcid_response->get_data();
+assert_true(
+	! empty( $mu_gcid_data['ok'] ),
+	'module_update ALLOWS a gcid- global-color token (type:"color", not "content") even though it is absent from the registry'
+);
+
+diviops_test_register_post( 9517, $dc_page_content );
+$mu_trailing_text_request  = new DiviOps_Test_Request(
+	array(
+		'id'         => 9517,
+		'auto_index' => 'text:1',
+		'attrs'      => array( 'content.dynamicContentValue' => $modern_token . ' trailing text' ),
+	)
+);
+$mu_trailing_text_response = diviops_call( 'module_update', array( $mu_trailing_text_request ) );
+$mu_trailing_text_data     = $mu_trailing_text_response->get_data();
+assert_true(
+	! empty( $mu_trailing_text_data['ok'] ),
+	'module_update ALLOWS a $variable() token followed by literal text (fails the anchored regex -> malformed_token -> guard fails open)'
+);
+
+diviops_test_register_post( 9518, $dc_page_content );
+$mu_two_tokens_request  = new DiviOps_Test_Request(
+	array(
+		'id'         => 9518,
+		'auto_index' => 'text:1',
+		'attrs'      => array( 'content.dynamicContentValue' => $modern_token . $modern_token ),
+	)
+);
+$mu_two_tokens_response = diviops_call( 'module_update', array( $mu_two_tokens_request ) );
+$mu_two_tokens_data     = $mu_two_tokens_response->get_data();
+assert_true(
+	! empty( $mu_two_tokens_data['ok'] ),
+	'module_update ALLOWS two adjacent $variable() tokens in one attr value (invalid JSON between them -> malformed_token -> guard fails open)'
+);
+
+diviops_test_register_post( 9519, $dc_page_content );
+$mu_et_dc_prose_request  = new DiviOps_Test_Request(
+	array(
+		'id'         => 9519,
+		'auto_index' => 'text:1',
+		'attrs'      => array( 'content.innerContent' => 'Divi 4 used @ET-DC@ tokens for dynamic content.' ),
+	)
+);
+$mu_et_dc_prose_response = diviops_call( 'module_update', array( $mu_et_dc_prose_request ) );
+$mu_et_dc_prose_data     = $mu_et_dc_prose_response->get_data();
+assert_true(
+	! empty( $mu_et_dc_prose_data['ok'] ),
+	'module_update ALLOWS ordinary prose that merely contains the substring @ET-DC@ (no closing @ -> malformed_token -> guard fails open)'
+);
+
+// Empty/unavailable registry (a D4-only site, an older/deactivated Divi, or
+// a non-REST invocation): a real, well-formed, otherwise-known-good token
+// must still be ALLOWED — we cannot confirm the name is bad without a
+// registry to check it against, so failing closed here would make every
+// existing dynamic-content page uneditable.
+remove_all_filters( 'divi_module_dynamic_content_options' );
+diviops_test_register_post( 9521, $dc_page_content );
+$mu_empty_registry_request  = new DiviOps_Test_Request(
+	array(
+		'id'         => 9521,
+		'auto_index' => 'text:1',
+		'attrs'      => array( 'content.dynamicContentValue' => $modern_token ),
+	)
+);
+$mu_empty_registry_response = diviops_call( 'module_update', array( $mu_empty_registry_request ) );
+$mu_empty_registry_data     = $mu_empty_registry_response->get_data();
+assert_true(
+	! empty( $mu_empty_registry_data['ok'] ),
+	'module_update ALLOWS a well-formed, well-known dynamic-content token when the live registry is empty/unavailable (fails open)'
+);
+diviops_test_register_fake_dynamic_content_registry(); // restore for anything after this point
+
+// The one true positive: registry non-empty, token well-formed, name is
+// NOT a global-variable id, and is genuinely absent from the registry ->
+// the guard must still reject. (Already proven above at post 9512/9514;
+// re-asserted here, immediately after the empty-registry fail-open case, so
+// a regression that accidentally makes the guard fail open UNCONDITIONALLY
+// would be caught right where it's most likely to be introduced.)
+diviops_test_register_post( 9522, $dc_page_content );
+$mu_true_positive_request  = new DiviOps_Test_Request(
+	array(
+		'id'         => 9522,
+		'auto_index' => 'text:1',
+		'attrs'      => array( 'content.dynamicContentValue' => '$variable({"type":"content","value":{"name":"definitely_not_registered","settings":{}}})$' ),
+	)
+);
+$mu_true_positive_response = diviops_call( 'module_update', array( $mu_true_positive_request ) );
+$mu_true_positive_data     = $mu_true_positive_response->get_data();
+assert_true(
+	empty( $mu_true_positive_data['ok'] ),
+	'module_update still REJECTS a well-formed token naming a genuinely unregistered option when the registry is non-empty'
+);
+assert_same(
+	'invalid_input',
+	$mu_true_positive_data['error']['code'] ?? null,
+	'the one true positive still surfaces invalid_input'
+);
+assert_same(
+	$dc_page_content,
+	$GLOBALS['diviops_test_posts'][9522]->post_content,
+	'the one true positive still leaves post_content untouched'
+);
+
+// ── dynamic_content_parse_and_validate_string(): modern-first reorder (#36
+// review fix 5) — a well-formed MODERN token whose settings happen to
+// contain the literal substring "@ET-DC@" must still be parsed as modern,
+// not misrouted to the legacy @ET-DC@ parser (which would fail to
+// base64-decode it and report a spurious malformed_token).
+
+$modern_token_containing_et_dc_substring =
+	'$variable({"type":"content","value":{"name":"post_title","settings":{"before":"@ET-DC@literal@"}}})$';
+
+$validate_reorder_request  = new DiviOps_Test_Request( array( 'value' => $modern_token_containing_et_dc_substring ) );
+$validate_reorder_response = diviops_call( 'dynamic_content_validate', array( $validate_reorder_request ) );
+$validate_reorder_data     = $validate_reorder_response->get_data();
+assert_true(
+	true === ( $validate_reorder_data['data']['valid'] ?? null ),
+	'a modern token whose settings contain the literal substring @ET-DC@ still validates as a modern token, not a malformed legacy one'
+);
+assert_true(
+	false === ( $validate_reorder_data['data']['legacy_format'] ?? null ),
+	'a modern token whose settings contain @ET-DC@ is not misrouted to the legacy parser'
+);
+assert_same(
+	'post_title',
+	$validate_reorder_data['data']['name'] ?? null,
+	'the modern-first reorder still parses out the correct name'
+);
+
+// ── dynamic_content_get_registry(): per-request memoization (#36 review
+// fix 4) — the DB-backed filter must be invoked at most once per distinct
+// (post_id, context), not once per candidate value scanned.
+
+$memo_call_count = 0;
+remove_all_filters( 'divi_module_dynamic_content_options' );
+add_filter(
+	'divi_module_dynamic_content_options',
+	function ( array $options, int $post_id, string $context ) use ( &$memo_call_count ): array {
+		$memo_call_count++;
+		$options['memo_probe'] = array(
+			'label'  => 'Memo Probe',
+			'type'   => 'text',
+			'custom' => false,
+			'group'  => 'Default',
+			'fields' => array(),
+		);
+		return $options;
+	},
+	10,
+	3
+);
+
+diviops_test_register_post( 9530, $dc_page_content );
+diviops_test_register_post( 9531, $dc_page_content );
+
+diviops_call( 'dynamic_content_list', array( new DiviOps_Test_Request( array( 'post_id' => 9530 ) ) ) );
+diviops_call( 'dynamic_content_list', array( new DiviOps_Test_Request( array( 'post_id' => 9530 ) ) ) );
+diviops_call( 'dynamic_content_list', array( new DiviOps_Test_Request( array( 'post_id' => 9530 ) ) ) );
+assert_same( 1, $memo_call_count, 'dynamic_content_get_registry() memoizes: 3 calls for the same (post_id, context) invoke the underlying filter once' );
+
+diviops_call( 'dynamic_content_list', array( new DiviOps_Test_Request( array( 'post_id' => 9531 ) ) ) );
+assert_same( 2, $memo_call_count, 'a different post_id is a different cache key and re-invokes the filter' );
+
+diviops_test_register_fake_dynamic_content_registry(); // restore for anything after this point
+
+// ── dynamic_content_build(): wp_json_encode() failure is handled, not
+// silently coerced (#36 review fix 6) — an invalid-UTF-8 settings value
+// makes json_encode()/wp_json_encode() return false; dynamic_content_build
+// must surface an error envelope, not the literal string '$variable()$'.
+
+$invalid_utf8 = "\xB1\x31"; // a lone continuation byte: not valid UTF-8.
+$build_bad_utf8_request  = new DiviOps_Test_Request(
+	array(
+		'name'     => 'post_title',
+		'settings' => array( 'before' => $invalid_utf8 ),
+	)
+);
+$build_bad_utf8_response = diviops_call( 'dynamic_content_build', array( $build_bad_utf8_request ) );
+$build_bad_utf8_data     = $build_bad_utf8_response->get_data();
+assert_true( empty( $build_bad_utf8_data['ok'] ), 'dynamic_content_build surfaces an error when settings cannot be JSON-encoded (invalid UTF-8), instead of silently emitting a corrupted token' );

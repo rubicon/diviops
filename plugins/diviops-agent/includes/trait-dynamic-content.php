@@ -31,7 +31,26 @@
  * reference site), which is the live, site-specific registry — including ACF/SCF
  * fields that actually exist here. dynamic_content_get_registry() calls that filter
  * directly rather than re-deriving it, and is the single source of truth every
- * handler in this trait validates against.
+ * handler in this trait validates against. It is memoized per (post_id, context)
+ * for the request, since module_update()'s write-path guard can look it up once
+ * per candidate value scanned.
+ *
+ * IMPORTANT: `$variable(...)$` is Divi's SHARED variable wrapper, not exclusive
+ * to dynamic content. Global colors (`gcid-*`), global variables (`gvid-*` —
+ * spacing/sizes/fonts), and gradients use the identical syntax and are
+ * deliberately never registered in `divi_module_dynamic_content_options`
+ * (`DynamicContentGlobalVariableOptions::register_option_callback()` returns
+ * `$options` unchanged) — they resolve via the separate
+ * `divi_module_dynamic_content_resolved_value` filter instead. `type` does NOT
+ * discriminate: this fork's own canonical `gvid-` design-token form uses
+ * `"type":"content"`, identical to a real dynamic-content binding (see
+ * skills/divi-5-builder/references/presets.md and module-formats.md). Because of
+ * this, module_update()'s write-path guard (dynamic_content_write_path_rejection())
+ * is deliberately far more lenient than dynamic_content_validate: it fails OPEN on
+ * anything malformed, on anything in the gcid-/gvid-/gfid- namespace or with a
+ * non-'content' type, and on an empty/unavailable registry — the ONE thing it
+ * rejects is a well-formed token naming an option that is definitively absent
+ * from a non-empty registry. See that function's docblock for the full policy.
  *
  * Part of the diviops-agent monolith split (#220) pattern. Mixed into
  * DiviOps_Agent via `use` in diviops-agent.php — `self::` calls and class
@@ -43,6 +62,19 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 trait DiviOps_Agent_DynamicContent {
 
 	/**
+	 * Per-request registry cache, keyed by `"$post_id:$context"` (#36 review
+	 * fix 4). A single module_update() write-path scan can hit many candidate
+	 * values (e.g. a page carrying 20 design-token attrs), each of which
+	 * previously re-ran the DB-backed `divi_module_dynamic_content_options`
+	 * filter from scratch. A plain static property is a safe per-REQUEST
+	 * cache here: each WP REST call is its own PHP process/request, so this
+	 * never leaks registry state across requests.
+	 *
+	 * @var array<string, array<string, array>>
+	 */
+	private static $dynamic_content_registry_cache = array();
+
+	/**
 	 * Query the live `divi_module_dynamic_content_options` registry for a given
 	 * post/context, normalizing the `id` key exactly as Divi's own
 	 * DynamicContentOptions::get_options() does: `id` is forced to the array key,
@@ -50,17 +82,25 @@ trait DiviOps_Agent_DynamicContent {
 	 * is NOT a copy of get_options()'s reentrancy guard/sort — we call
 	 * apply_filters() directly and are never invoked reentrantly from within it,
 	 * and sort order is a display concern this introspection surface doesn't need.
+	 * Memoized per `(post_id, context)` for the lifetime of this request/process.
 	 *
 	 * @param int    $post_id Post id context passed to the filter (0 when none).
 	 * @param string $context 'edit' or 'display'.
 	 * @return array<string, array> Option name => registered option entry.
 	 */
 	private static function dynamic_content_get_registry( int $post_id, string $context ): array {
+		$cache_key = $post_id . ':' . $context;
+		if ( isset( self::$dynamic_content_registry_cache[ $cache_key ] ) ) {
+			return self::$dynamic_content_registry_cache[ $cache_key ];
+		}
+
 		$options = apply_filters( 'divi_module_dynamic_content_options', array(), $post_id, $context );
 		$options = is_array( $options ) ? $options : array();
 		foreach ( $options as $id => $option ) {
 			$options[ $id ]['id'] = $id;
 		}
+
+		self::$dynamic_content_registry_cache[ $cache_key ] = $options;
 		return $options;
 	}
 
@@ -100,10 +140,14 @@ trait DiviOps_Agent_DynamicContent {
 	 * @param string $name     Registered dynamic-content option name.
 	 * @param array  $settings Settings map (cast to a JSON object even when empty).
 	 * @param string $type     Dynamic-content type, e.g. 'content'.
-	 * @return string
+	 * @return string|null The token, or null when `$settings` cannot be
+	 *                      JSON-encoded (#36 review fix 6 — wp_json_encode()
+	 *                      returns false on e.g. invalid UTF-8; a bare
+	 *                      concatenation would otherwise silently coerce that
+	 *                      to the literal string '$variable()$').
 	 */
-	private static function dynamic_content_format_token( string $name, array $settings, string $type ): string {
-		return '$variable(' . wp_json_encode(
+	private static function dynamic_content_format_token( string $name, array $settings, string $type ): ?string {
+		$encoded = wp_json_encode(
 			array(
 				'type'  => $type,
 				'value' => array(
@@ -112,7 +156,11 @@ trait DiviOps_Agent_DynamicContent {
 				),
 			),
 			JSON_UNESCAPED_UNICODE
-		) . ')$';
+		);
+		if ( false === $encoded ) {
+			return null;
+		}
+		return '$variable(' . $encoded . ')$';
 	}
 
 	/**
@@ -266,8 +314,13 @@ trait DiviOps_Agent_DynamicContent {
 	/**
 	 * Parse a value string that looks like dynamic content (either encoding) and
 	 * validate it, or report that it does not look like dynamic content at all.
-	 * Legacy (`@ET-DC@`) is checked first since a legacy token can never also
-	 * match the modern `$variable(` prefix.
+	 * The modern `$variable(` prefix is checked FIRST (#36 review fix 5): a
+	 * legacy token can never itself start with `$variable(`, but a well-formed
+	 * MODERN token's JSON `settings` payload could legitimately contain the
+	 * literal substring `@ET-DC@` (e.g. a text setting describing D4 tokens) —
+	 * checking `@ET-DC@` first would misroute that string to the legacy parser,
+	 * which would then fail to base64-decode it and report a spurious
+	 * `malformed_token` for a perfectly well-formed modern token.
 	 *
 	 * @param string $value   Raw attr/token value to inspect.
 	 * @param int    $post_id Post id context for the registry lookup.
@@ -276,12 +329,12 @@ trait DiviOps_Agent_DynamicContent {
 	 *               type?: string, legacy_format?: bool, modern_equivalent?: string}
 	 */
 	private static function dynamic_content_parse_and_validate_string( string $value, int $post_id, string $context ): array {
-		if ( false !== strpos( $value, '@ET-DC@' ) ) {
-			return self::dynamic_content_parse_legacy( $value, $post_id, $context );
-		}
-
 		if ( 0 === strpos( $value, '$variable(' ) ) {
 			return self::dynamic_content_parse_modern( $value, $post_id, $context );
+		}
+
+		if ( false !== strpos( $value, '@ET-DC@' ) ) {
+			return self::dynamic_content_parse_legacy( $value, $post_id, $context );
 		}
 
 		return array(
@@ -320,16 +373,92 @@ trait DiviOps_Agent_DynamicContent {
 	}
 
 	/**
-	 * module_update()'s write-path guard: scan `$attrs` for anything that looks
-	 * like a dynamic-content binding and, if found, validate it against the live
-	 * registry — a malformed or unknown binding fails loudly instead of being
-	 * written and silently rendering empty. Never rejects a plain string; only
-	 * values matching the `$variable(`/`@ET-DC@` heuristic are inspected at all.
+	 * module_update()'s write-path decision for ONE candidate value already
+	 * matched by dynamic_content_scan_attrs()'s conservative heuristic (#36
+	 * review — Critical fix). This is deliberately a much more lenient policy
+	 * than the standalone `/dynamic-content/validate` endpoint's, because
+	 * `$variable(...)$` is Divi's SHARED variable wrapper, not exclusive to
+	 * dynamic content: global colors (`gcid-*`), global variables (`gvid-*` —
+	 * spacing/sizes/fonts), and gradients (`gvid-*`) use the identical syntax
+	 * and are deliberately never registered in
+	 * `divi_module_dynamic_content_options` —
+	 * `DynamicContentGlobalVariableOptions::register_option_callback()`
+	 * returns `$options` unchanged, because those resolve via the separate
+	 * `divi_module_dynamic_content_resolved_value` filter instead. `type`
+	 * does NOT discriminate: this fork's own canonical `gvid-` design-token
+	 * form uses `"type":"content"`, identical to a real dynamic-content
+	 * binding (skills/divi-5-builder/references/presets.md,
+	 * module-formats.md, diviops-server/src/validate-attrs.ts). This is the
+	 * plugin's primary documented design-token write path, so rejecting it
+	 * here would break real page editing.
+	 *
+	 * The guard therefore fails OPEN in every case except one: a well-formed
+	 * token naming an option that is DEFINITIVELY absent from a non-empty
+	 * live registry, and is not itself a global-variable/color/gradient id.
+	 * Specifically, this returns null (allow) when:
+	 *   - the value doesn't even parse as a token (`malformed_token` /
+	 *     `not_dynamic_content`) — this guard is not a general-purpose
+	 *     linter, `diviops_dynamic_content_validate` is;
+	 *   - the name matches the `gcid-`/`gvid-`/`gfid-` global-variable
+	 *     namespace, or `type` isn't `content` at all (color/gradient tokens);
+	 *   - the live registry is empty/unavailable (a D4-only site, an
+	 *     older/deactivated Divi, or a non-REST invocation) — we cannot
+	 *     confirm the name is bad, so we must not block a legitimate write;
+	 *   - the binding is fully valid, or invalid only on a settings-schema
+	 *     nuance (`unknown_setting`) rather than the name itself being
+	 *     unregistered — that nuance is the validate endpoint's job, not this
+	 *     guard's.
+	 *
+	 * @param string $value   Candidate dynamic-content-shaped string.
+	 * @param int    $post_id Target page id, used as registry context.
+	 * @return array{code: string, message: string}|null Rejection reason, or
+	 *                                                    null to allow the write.
+	 */
+	private static function dynamic_content_write_path_rejection( string $value, int $post_id ): ?array {
+		$result       = self::dynamic_content_parse_and_validate_string( $value, $post_id, 'edit' );
+		$error_codes  = array_column( $result['errors'] ?? array(), 'code' );
+
+		if ( in_array( 'malformed_token', $error_codes, true ) || in_array( 'not_dynamic_content', $error_codes, true ) ) {
+			return null;
+		}
+
+		$name = $result['name'] ?? null;
+		$type = $result['type'] ?? null;
+		if ( null === $name ) {
+			return null; // Defensive: nothing to check against the registry.
+		}
+
+		if ( 'content' !== $type || 1 === preg_match( '/^(?:gcid|gvid|gfid)-/', $name ) ) {
+			return null; // Global variable / color / gradient namespace — never registered by design.
+		}
+
+		if ( ! in_array( 'unknown_option', $error_codes, true ) ) {
+			return null; // Valid, or invalid only on a settings-schema nuance — not this guard's job.
+		}
+
+		$registry = self::dynamic_content_get_registry( $post_id, 'edit' );
+		if ( empty( $registry ) ) {
+			return null; // Registry unavailable/empty — cannot confirm the name is bad. Fail open.
+		}
+
+		return array(
+			'code'    => 'unknown_option',
+			'message' => "'{$name}' is not a registered dynamic content option and does not match the gcid-/gvid-/gfid- global-variable namespace.",
+		);
+	}
+
+	/**
+	 * module_update()'s write-path guard: scan `$attrs` for anything that
+	 * looks like a dynamic-content binding and, if found, run it through
+	 * dynamic_content_write_path_rejection(). Never rejects a plain string;
+	 * only values matching the `$variable(`/`@ET-DC@` heuristic are inspected
+	 * at all, and even among those, only a confirmed-unregistered name is
+	 * rejected — see dynamic_content_write_path_rejection()'s docblock.
 	 *
 	 * @param array $attrs   The attrs map from the module_update request.
 	 * @param int   $post_id Target page id, used as registry context.
-	 * @return WP_REST_Response|null Error envelope to return immediately, or null
-	 *                               when every candidate binding (if any) is valid.
+	 * @return WP_REST_Response|null Error envelope to return immediately, or
+	 *                               null when nothing was confirmed-rejected.
 	 */
 	private static function dynamic_content_validate_module_update_attrs( array $attrs, int $post_id ) {
 		$hits = array();
@@ -341,19 +470,14 @@ trait DiviOps_Agent_DynamicContent {
 		}
 
 		foreach ( $hits as $path => $value ) {
-			$result = self::dynamic_content_parse_and_validate_string( $value, $post_id, 'edit' );
-			if ( ! $result['valid'] ) {
-				$first_error = $result['errors'][0] ?? array( 'code' => 'invalid', 'message' => 'Dynamic content binding failed validation.' );
+			$rejection = self::dynamic_content_write_path_rejection( $value, $post_id );
+			if ( null !== $rejection ) {
 				return self::envelope_error(
 					'invalid_input',
-					"Attr path '{$path}' contains an invalid dynamic-content binding: {$first_error['message']}",
+					"Attr path '{$path}' contains an invalid dynamic-content binding: {$rejection['message']}",
 					'Use diviops_dynamic_content_validate to inspect the binding, or diviops_dynamic_content_list to see valid option names.',
 					400,
-					array(
-						'field'                  => $path,
-						'dynamic_content_errors' => $result['errors'],
-						'legacy_format'          => $result['legacy_format'] ?? false,
-					)
+					array( 'field' => $path, 'code' => $rejection['code'] )
 				);
 			}
 		}
@@ -461,6 +585,15 @@ trait DiviOps_Agent_DynamicContent {
 		}
 
 		$token = self::dynamic_content_format_token( $name, $settings, $type );
+		if ( null === $token ) {
+			return self::envelope_error(
+				'divi_error',
+				'settings could not be JSON-encoded into a dynamic-content token.',
+				'Check for invalid UTF-8 or non-JSON-serializable values in settings.',
+				500,
+				array( 'name' => $name )
+			);
+		}
 
 		return self::envelope_success(
 			array(
