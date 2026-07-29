@@ -10,6 +10,14 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.10.0](https://github.com/rubicon/diviops/compare/v1.9.2...v1.10.0) (2026-07-29)
+
+
+### Features
+
+* **media:** alt text / caption update endpoint ([#33](https://github.com/rubicon/diviops/issues/33)) ([#84](https://github.com/rubicon/diviops/issues/84)) ([2f6fef2](https://github.com/rubicon/diviops/commit/2f6fef2adcbed9c22ab4071e0eb37154c7cb5f7a))
+* **server:** add diviops_theme_options_update MCP tool ([#29](https://github.com/rubicon/diviops/issues/29)) ([#85](https://github.com/rubicon/diviops/issues/85)) ([50e28d9](https://github.com/rubicon/diviops/commit/50e28d9c9e90bf2150125589bcf09c7bd5bc5664))
+
 ## [1.9.2](https://github.com/rubicon/diviops/compare/v1.9.1...v1.9.2) (2026-07-28)
 
 
