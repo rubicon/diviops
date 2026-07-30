@@ -17,7 +17,10 @@ jobs:
       fail-fast: false
       matrix:
         # The plugin header declares "Requires PHP: 7.4", so the floor is linted too.
-        php: ['7.4', '8.3']
+        # 8.5 is here because the reference dev site already runs it (runtime
+        # drift -- see #72) -- production hosts are moving to it and CI must
+        # exercise what actually ships, not lag behind by a version.
+        php: ['7.4', '8.3', '8.5']
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
@@ -51,6 +54,26 @@ jobs:
 
       # The runner itself exits non-zero when it discovers no test files, so an
       # empty suite fails here rather than reporting a green PASS of zero assertions.
+      - name: Run test suite
+        run: php tests/run.php
+
+  # A separate job, not a matrix leg of "Test suite" above (#72): that job's
+  # exact name is a required status check in branch protection, and renaming
+  # or matrix-parameterizing it would make that check permanently unsatisfiable
+  # for every future PR the same way changing the CI matrix's node labels did
+  # in #55 -- discovered the hard way once already this cycle, not repeating
+  # it here. This job is purely additive.
+  test-php85:
+    name: Test suite (php 8.5)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.5'
+          coverage: none
+
       - name: Run test suite
         run: php tests/run.php
 
