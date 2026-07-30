@@ -305,12 +305,16 @@ Need a semantic name? Register it inside Divi as a `gvid-*` / `gcid-*` in the Va
 | **Blurb** | Title shape is an object | `title.innerContent.desktop.value: {text: "..."}` | plain string → title silently absent from rendered HTML |
 | **Blurb** | Icon requires useIcon flag | `imageIcon.innerContent.desktop.value.useIcon: "on"` | setting `icon` without `useIcon: "on"` → empty `<span>` |
 | **Text/Blurb** | Body font triple-nesting | `content.decoration.bodyFont.body.font.desktop.value.*` | `bodyFont.bodyFont.*` → color/size silently ignored |
+| **CTA** | Title shape is a plain string, unlike Blurb's title (superficially the same "title + content" shape, different field type) | `title.innerContent.desktop.value: "Plain text"` (same shape as Heading's title) | Blurb's `{text: "..."}` object shape → **fatal error on render**, not a silent drop: `MultiViewUtils.php:1253` throws `UnexpectedValueException: Expected a string value, but a array value was given` when Divi tries to treat the object as a string. The write itself reports `success` (free-form dot-path merge, no schema validation) — the page only breaks the next time it's rendered. VB-verified 2026-07-30, Divi 5.9.0. |
 | **Flex children only** | `flexType` 24-unit grid path is `module.decoration.sizing.desktop.value.flexType` | on `divi/column` / `divi/column-inner` inside `divi/row` whose `module.decoration.layout.desktop.value.display = "flex"`, OR on Group children inside a Group with `display: "flex"` | `decoration.layout.flexType` (wrong path — byte-stored but semantically dropped); on a default `display: block` row the renderer ignores `flexType` and emits legacy `et_pb_column_N_M` classes by column count → 3×`"8_24"` columns render full-width stacked, not side-by-side (Divi 5.4.1 verified 2026-05-09); on blurb/text/image with no flex parent → silently dropped, use `module.decoration.sizing.width` instead |
 | **Image** | Spacing/sizing on advanced | `module.advanced.{spacing,sizing}` | `module.decoration.{spacing,sizing}` |
 | **Image** | Border on image element | `image.decoration.border` | `module.decoration.border` |
 | **Image** | Border-radius from preset alone doesn't render | reinforce inline on `image.decoration.border.desktop.value.radius` (same path as preset) | preset only → square corners on frontend (image-specific quirk) |
 | **Icon** | Border/bg on module only | `module.decoration.{border,background}` | `icon.decoration.{border,background}` |
 | **Video** | No module background | `overlay.decoration.background` | `module.decoration.background` |
+| **Accordion** | Container only — its own `title`/`content`/`openToggle`/`closedToggle`/etc. attrs (listed in the generated index below) exist in the schema but are **never rendered**, with or without children | Add one or more `divi/accordion-item` child blocks nested inside `divi/accordion` — each carries its own `title`/`content` in exactly the shape documented for Toggle | Setting `title`/`content` directly on `divi/accordion` itself → renders as a completely empty `<div class="et_pb_accordion ...">` with no title, no content, no toggle markup at all, no error, no items, with or without accordion-item children present. VB-verified 2026-07-30, Divi 5.9.0 (bare parent with its own title/content and zero children rendered empty; a second scratch page with the same parent attrs plus two `divi/accordion-item` children rendered only the two children, the parent's own title/content still absent). |
+| **Accordion** | First `divi/accordion-item` child opens by default; there is no attribute for it | Position in the block tree (first child = open) | Assuming a Toggle-style `module.advanced.open` flag controls which item starts open — neither `divi/accordion` nor `divi/accordion-item` declares an `open` key under `module.advanced` at all (confirmed against both modules' live schema; compare Toggle, which does declare it). Setting it anyway is accepted by the free-form dot-path merge and silently does nothing; open/closed state on load is purely positional (`et_pb_toggle_open` on child 1, `et_pb_toggle_close` on the rest — VB-verified 2026-07-30). |
+| **Toggle** | Initial open/closed state | `module.advanced.open.desktop.value`: `"on"` \| `"off"` (VB label "State") | Omitting it defaults to closed (`et_pb_toggle_close`); this is the one module in this table where "open" lives under `module.advanced`, not any `decoration` path. VB-verified 2026-07-30, Divi 5.9.0: `"on"` → `et_pb_toggle_open` class; unset → `et_pb_toggle_close`. |
 | **Social Media Follow** | Custom icon size lives under `icon.advanced`, gated by `useSize` toggle | `icon.advanced.useSize: "on"` + `icon.advanced.size: "<value>"` (`"96px"`, `"$variable({...})$"`, `"calc(2rem + 1vw)"`, `"clamp(48px, 5vw, 96px)"`, `"var(--gvid-...)"`, or length keywords — all accepted at parity per Divi 5.3.3) | omitting `useSize` (size is ignored) or assuming a numeric-only field (pre-5.3.3 silently dropped math/var/keyword) |
 | **Breadcrumbs (5.4.0+)** | `trail.advanced.htmlTag` is the only `trail.advanced.*` key the renderer reads | `trail.advanced.htmlTag.desktop.value`: `"nav"` (default) \| `"div"` \| `"span"` \| `"p"` | other `trail.advanced.*` paths silently inert at render — `trail` is content-config only, not style-registered |
 | **Breadcrumbs (5.4.0+)** | Per-item element backgrounds restricted (no mask/pattern/video, no parallax) | put rich backgrounds on `module.decoration.background` instead | setting `mask`/`pattern`/`video`/parallax on `breadcrumb.decoration.background`, `breadcrumbLink.decoration.background`, `home.decoration.background`, or `separator.decoration.background` → silently dropped |
@@ -341,8 +345,10 @@ Upgrade to Pro: https://diviops.com
 ## Generated path index
 
 > Generated mechanically by `diviops-server/scripts/regen-module-formats.mjs` from `diviops_schema_get_module` dump-all output. Each module block lives between `BEGIN GENERATED:module:divi/<slug>` / `END GENERATED:module:divi/<slug>` HTML-comment sentinels (see `diviops-server/CONTRIBUTING.md` for the full convention). Do **not** edit between sentinels — edits are clobbered on regen.
+>
+> **Neither `regen-module-formats.mjs` nor `diviops-server/CONTRIBUTING.md` currently exist in this repository** (confirmed 2026-07-30) — the tooling that produced this index was never committed. Until it's rebuilt, treat the sentinel blocks below as hand-maintained: extend them the same way the `divi/cta` block was added for #63 (fetch `schema/module/{name}` from a live site, list every top-level attribute key except `metadata`/`className`/`style`/`lock`, and for each one list `{key}.decoration.{name}` for every key present under `settings.decoration` plus `_(+innerContent)_`/`_(+advanced)_` suffixes when those keys are present — regardless of whether the values are empty arrays/objects, since the schema dump lists an option as *available*, not necessarily *populated*).
 
-> Generated against Divi `5.8.0`, schema `af7c9d795e77…`.
+> Generated against Divi `5.8.0`, schema `af7c9d795e77…`. Spot-verified against live Divi `5.9.0` for `divi/accordion`, `divi/blurb`, `divi/button`, `divi/image`, `divi/text`, `divi/toggle`, and `divi/video` (2026-07-30, #63) — byte-for-byte identical output, no drift. The `divi/cta` block was authored fresh against `5.9.0` (previously absent from this index entirely). The remaining ~20 module blocks below have not been re-verified against 5.9.0.
 
 Per CLAUDE.md "Suite architecture coherence": schema dump is the canonical index; VB-verified prose above is the canonical interpretation. The two sections are complementary, not competing — prose explains surprises, this index enumerates paths exhaustively. On conflicts, the prose above wins (per `feedback_vb_first_verification`).
 
@@ -434,6 +440,18 @@ Per CLAUDE.md "Suite architecture coherence": schema dump is the canonical index
 - **title** — `title.decoration.font` _(+innerContent)_
 
 <!-- END GENERATED:module:divi/countdown-timer -->
+
+<!-- BEGIN GENERATED:module:divi/cta -->
+
+<!-- TIER: free -->
+#### `divi/cta`
+
+- **button** — `button.decoration.background`, `button.decoration.border`, `button.decoration.boxShadow`, `button.decoration.button`, `button.decoration.font`, `button.decoration.sizing`, `button.decoration.spacing` _(+innerContent)_
+- **content** — `content.decoration.bodyFont` _(+innerContent)_
+- **module** — `module.decoration.animation`, `module.decoration.attributes`, `module.decoration.background`, `module.decoration.border`, `module.decoration.boxShadow`, `module.decoration.conditions`, `module.decoration.disabledOn`, `module.decoration.filters`, `module.decoration.interactions`, `module.decoration.layout`, `module.decoration.order`, `module.decoration.overflow`, `module.decoration.position`, `module.decoration.scroll`, `module.decoration.sizing`, `module.decoration.spacing`, `module.decoration.sticky`, `module.decoration.transform`, `module.decoration.transition`, `module.decoration.zIndex` _(+advanced)_
+- **title** — `title.decoration.font` _(+innerContent)_
+
+<!-- END GENERATED:module:divi/cta -->
 
 <!-- BEGIN GENERATED:module:divi/divider -->
 
