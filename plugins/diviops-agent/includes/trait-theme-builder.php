@@ -1432,7 +1432,7 @@ trait DiviOps_Agent_ThemeBuilder {
 		}
 		$content = $normalized['content'];
 
-		$blocks = parse_blocks( $content );
+		$blocks = self::parse_blocks_for_write( $content );
 		foreach ( $blocks as $block ) {
 			if ( empty( $block['blockName'] ) ) {
 				$inner = implode( '', $block['innerContent'] ?? [] );

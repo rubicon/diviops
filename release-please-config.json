@@ -12,6 +12,12 @@
           "path": "plugins/diviops-agent/diviops-agent.php"
         }
       ]
+    },
+    "diviops-server": {
+      "release-type": "node",
+      "package-name": "@diviops/mcp-server",
+      "component": "mcp-server",
+      "include-component-in-tag": true
     }
   }
 }

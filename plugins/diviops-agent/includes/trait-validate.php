@@ -38,7 +38,7 @@ trait DiviOps_Agent_Validate {
 		$content = $resolved;
 
 		try {
-			$blocks   = parse_blocks( $content );
+			$blocks   = self::parse_blocks_for_write( $content );
 			$registry = WP_Block_Type_Registry::get_instance();
 
 			$errors   = [];
