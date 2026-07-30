@@ -14,6 +14,31 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+/**
+ * Traits cannot declare their own constants until PHP 8.2 (this plugin's
+ * floor is 7.4 — confirmed live: `private const` directly inside
+ * DiviOps_Agent_Core fails CI's PHP 7.4 lint with "Traits cannot have
+ * constants"). A small helper class carrying the value, same pattern
+ * trait-seo.php already uses for DiviOps_SEO_TSF_Adapter's constants.
+ */
+final class DiviOps_Variable_Token_Limits {
+	/**
+	 * Upper bound, in bytes, on how far variable_token_end() will scan
+	 * looking for a token's closing brace. The largest real token observed
+	 * on the reference site (page 900390, 64 tokens surveyed) is 270 bytes;
+	 * this gives over 15x headroom for legitimately larger nested settings
+	 * while keeping the cost of a single failed match bounded rather than
+	 * proportional to however much text follows it (#97, adversarial
+	 * review: an unbounded scan made a run of many unclosed `$variable({`
+	 * fragments O(n²) — each one, failing to ever balance, scanned all the
+	 * way to end-of-string before giving up, and strip_variable_tokens()'s
+	 * outer loop retries at every subsequent `$`. 8,000 repeats of the
+	 * 11-byte fragment took 6.3s unbounded; confirmed linear at this bound
+	 * up to 64,000 repeats).
+	 */
+	const MAX_SCAN = 4096;
+}
+
 trait DiviOps_Agent_Core {
 
 	private static function get_nested_array_value( $source, $path, $default = null ) {
@@ -842,10 +867,197 @@ trait DiviOps_Agent_Core {
 	 * @return string|null
 	 */
 	private static function find_malformed_block_attr_escape( string $json ): ?string {
-		if ( preg_match( '/(?<!\\\\)u00(?:3c|3e|26|22|5c|2d)/i', $json, $match ) ) {
+		// Divi's own `$variable({...})$` wrapper (dynamic content, and the
+		// shared gcid-/gvid- global color/variable syntax — see
+		// trait-dynamic-content.php) legitimately embeds its nested JSON
+		// payload's quotes as bare `u0022`, with no backslash at all, for
+		// global color/variable references specifically; other $variable()
+		// forms carry the backslash. Neither is a caller-typed pseudo-escape:
+		// it is Divi's own already-valid, already-rendering token format, so
+		// it is excluded from the scan rather than mistaken for one (#97).
+		//
+		// Three rounds of adversarial review found that a single regex
+		// applied to the raw text — however carefully anchored — cannot
+		// reliably tell "a real JSON string boundary" from "an escaped quote
+		// sitting mid-string" (parity of backslashes immediately before a
+		// `"`, which a bounded lookbehind cannot express), and separately
+		// cannot tell "exactly one token" from "multiple tokens concatenated
+		// with something else between them" (a greedy match satisfied by
+		// either shape just as well — a caller composing a field that cites
+		// two design-token references, e.g. two gradient stops, is ordinary
+		// authoring for a tool built for programmatic content, not a
+		// contrived edge case). json_string_segments() closes the first
+		// class by walking real string boundaries instead of matching them
+		// with a regex; strip_variable_tokens() closes the second by
+		// scanning for and skipping EVERY well-formed token wherever it
+		// occurs, however many there are, rather than asking whether an
+		// entire string is exactly one. Text before, after, or between
+		// tokens — including a genuine typo — is left in place to be
+		// scanned normally either way.
+		$scannable = '';
+		foreach ( self::json_string_segments( $json ) as $segment ) {
+			$scannable .= $segment['in_string'] ? self::strip_variable_tokens( $segment['text'] ) : $segment['text'];
+		}
+		if ( preg_match( '/(?<!\\\\)u00(?:3c|3e|26|22|5c|2d)/i', $scannable, $match ) ) {
 			return $match[0];
 		}
 		return null;
+	}
+
+	/**
+	 * Remove every well-formed `$variable(...)$` token found anywhere in
+	 * $text, leaving everything else — surrounding text, text between
+	 * multiple tokens, or a `$variable(` that never resolves to a balanced
+	 * token — in place. Scans left to right rather than matching the whole
+	 * string against a pattern, so it correctly handles any number of
+	 * tokens in any arrangement (#97, round 4).
+	 *
+	 * @param string $text Content of one in-string segment.
+	 * @return string $text with every well-formed token's span deleted.
+	 */
+	private static function strip_variable_tokens( string $text ): string {
+		$out = '';
+		$len = strlen( $text );
+		$i   = 0;
+		while ( $i < $len ) {
+			if ( '$' === $text[ $i ] ) {
+				$end = self::variable_token_end( $text, $i );
+				if ( null !== $end ) {
+					$i = $end;
+					continue;
+				}
+			}
+			$out .= $text[ $i ];
+			$i++;
+		}
+		return $out;
+	}
+
+	/**
+	 * If a well-formed `$variable({...})$` token starts at exactly $start,
+	 * return the index one past its closing `)$`. Otherwise null — a
+	 * `$variable(` that is not followed by a `{`, whose braces never
+	 * balance within DiviOps_Variable_Token_Limits::MAX_SCAN bytes, or that
+	 * is not immediately closed with `)$` right after its payload's matching `}`
+	 * is not a token this scan will skip over, so a malformed one still
+	 * gets scanned like ordinary text (matches
+	 * find_malformed_block_attr_escape()'s existing behavior for an
+	 * unterminated `$variable(` — degrade to plain text, not swallow the
+	 * rest of the string).
+	 *
+	 * Brace-balance counting is string-aware for the same reason
+	 * json_string_segments() is: real token payloads can nest objects
+	 * (settings can), and neither observed real form (bare `u0022` or
+	 * backslash-preserved `"`) ever contains a genuinely bare, unescaped
+	 * `"` — but a hypothetical payload that did must not have a stray
+	 * brace inside that quoted text miscounted as structural.
+	 *
+	 * @param string $text  Content to scan.
+	 * @param int    $start Index where `$variable(` is expected to begin.
+	 * @return int|null
+	 */
+	private static function variable_token_end( string $text, int $start ): ?int {
+		$prefix = '$variable(';
+		$plen   = strlen( $prefix );
+		if ( substr( $text, $start, $plen ) !== $prefix ) {
+			return null;
+		}
+
+		$len = strlen( $text );
+		$i   = $start + $plen;
+		if ( $i >= $len || '{' !== $text[ $i ] ) {
+			return null;
+		}
+
+		$scan_limit = min( $len, $i + DiviOps_Variable_Token_Limits::MAX_SCAN );
+		$depth      = 0;
+		$in_str     = false;
+		for ( ; $i < $scan_limit; $i++ ) {
+			$ch = $text[ $i ];
+			if ( $in_str ) {
+				if ( '\\' === $ch && $i + 1 < $len ) {
+					$i++;
+					continue;
+				}
+				if ( '"' === $ch ) {
+					$in_str = false;
+				}
+				continue;
+			}
+			if ( '"' === $ch ) {
+				$in_str = true;
+				continue;
+			}
+			if ( '{' === $ch ) {
+				$depth++;
+				continue;
+			}
+			if ( '}' === $ch ) {
+				$depth--;
+				if ( 0 === $depth ) {
+					return ( ')$' === substr( $text, $i + 1, 2 ) ) ? $i + 3 : null;
+				}
+				if ( $depth < 0 ) {
+					return null;
+				}
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * Split $json into segments alternating between "inside a JSON string
+	 * literal's content" (the bytes strictly between its real, unescaped
+	 * quotes) and "outside one" (structural JSON: braces, colons, commas,
+	 * and the quote characters themselves). `\X` is always consumed as one
+	 * unit while inside a string, so an escaped quote can never be
+	 * mistaken for the string's real closing boundary — the exact case
+	 * that broke a lookbehind-based approach under adversarial review.
+	 *
+	 * This does not validate that $json is well-formed JSON; find_malformed_
+	 * block_attr_escape() runs before the json_decode() validity check in
+	 * normalize_divi_full_content_for_write(), so it must degrade
+	 * predictably (as plain non-string text) on malformed input rather than
+	 * throw or infinite-loop.
+	 *
+	 * @param string $json Raw JSON-shaped text.
+	 * @return array<int, array{in_string: bool, text: string}>
+	 */
+	private static function json_string_segments( string $json ): array {
+		$segments  = [];
+		$len       = strlen( $json );
+		$in_string = false;
+		$start     = 0;
+		$i         = 0;
+
+		while ( $i < $len ) {
+			$char = $json[ $i ];
+
+			if ( $in_string ) {
+				if ( '\\' === $char && $i + 1 < $len ) {
+					$i += 2;
+					continue;
+				}
+				if ( '"' === $char ) {
+					$segments[] = [ 'in_string' => true, 'text' => substr( $json, $start, $i - $start ) ];
+					$in_string  = false;
+					$start      = $i;
+				}
+				$i++;
+				continue;
+			}
+
+			if ( '"' === $char ) {
+				$segments[] = [ 'in_string' => false, 'text' => substr( $json, $start, $i - $start + 1 ) ];
+				$in_string  = true;
+				$start      = $i + 1;
+			}
+			$i++;
+		}
+
+		$segments[] = [ 'in_string' => $in_string, 'text' => substr( $json, $start ) ];
+
+		return $segments;
 	}
 
 	// ── Block-tree empty-object round-trip guard (#901) ─────────────
