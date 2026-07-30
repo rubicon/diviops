@@ -37,13 +37,13 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/oaris-dev/diviops.git",
+    "url": "git+https://github.com/rubicon/diviops.git",
     "directory": "diviops-server"
   },
   "bugs": {
-    "url": "https://github.com/oaris-dev/diviops/issues"
+    "url": "https://github.com/rubicon/diviops/issues"
   },
-  "homepage": "https://github.com/oaris-dev/diviops/tree/main/diviops-server#readme",
+  "homepage": "https://github.com/rubicon/diviops/tree/main/diviops-server#readme",
   "engines": {
     "node": ">=22.0.0"
   },
