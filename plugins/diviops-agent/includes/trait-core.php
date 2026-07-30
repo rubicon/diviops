@@ -850,11 +850,22 @@ trait DiviOps_Agent_Core {
 		// forms carry the backslash. Neither is a caller-typed pseudo-escape:
 		// it is Divi's own already-valid, already-rendering token format, so
 		// it is excluded from the scan rather than mistaken for one (#97).
-		// Non-greedy: stops at the first `)$`, which is correct for the
-		// well-formed token this wrapper always produces; an unterminated
-		// `$variable(` (no closing `)$`) simply does not match and the
-		// original text is scanned unchanged.
-		$scannable = preg_replace( '/\$variable\(.*?\)\$/s', '', $json );
+		//
+		// Matches a COMPLETE JSON string literal whose content starts with
+		// `$variable(` and ends with `)$` — not just the loosest possible
+		// span between those markers. A naive non-greedy `.*?` between
+		// `$variable(` and the nearest later `)$` can cross into an entirely
+		// unrelated later property (attrs routinely carry 6+ of these tokens
+		// alongside ordinary text fields) and silently swallow a genuine
+		// pseudo-escape typo sitting in between — caught in review. Since a
+		// well-formed JSON string never contains a bare unescaped `"`,
+		// `(?:[^"\\]|\\.)*` (consume anything that is not a bare quote or
+		// backslash, or an escaped pair as one unit) can only terminate at
+		// this token's OWN true closing quote, never bridge into another
+		// string. A `$variable(...)$` that is not the *entire* value of its
+		// property (as real Divi output never produces) simply does not
+		// match and falls through to the scan unchanged.
+		$scannable = preg_replace( '/"\$variable\((?:[^"\\\\]|\\\\.)*\)\$"/s', '""', $json );
 		if ( preg_match( '/(?<!\\\\)u00(?:3c|3e|26|22|5c|2d)/i', $scannable, $match ) ) {
 			return $match[0];
 		}
