@@ -1,0 +1,17 @@
+{
+    "name": "rubicon/diviops",
+    "description": "Dev-tooling dependencies for the diviops-agent plugin (static analysis). The plugin itself ships no Composer dependencies at runtime -- see CLAUDE.md.",
+    "license": "GPL-2.0-or-later",
+    "type": "project",
+    "require-dev": {
+        "php": ">=7.4",
+        "phpstan/phpstan": "^2.0",
+        "szepeviktor/phpstan-wordpress": "^2.0"
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "scripts": {
+        "phpstan": "phpstan analyse"
+    }
+}

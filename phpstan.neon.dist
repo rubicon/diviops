@@ -1,0 +1,34 @@
+includes:
+    - vendor/szepeviktor/phpstan-wordpress/extension.neon
+    - phpstan-baseline.neon
+
+parameters:
+    level: 1
+    paths:
+        - plugins/diviops-agent
+
+    # Divi 5 and The SEO Framework are both required at runtime (guarded by
+    # class_exists()/function_exists() checks) but ship no PHPStan-consumable
+    # stubs anywhere redistributable -- Divi is a commercial theme, and
+    # authoring full stubs for either is out of scope for wiring up this tool
+    # (#71). These are the specific external symbols this plugin calls,
+    # ignored by exact message so a genuinely new "not found" elsewhere still
+    # surfaces rather than being silently swallowed by a broad pattern.
+    ignoreErrors:
+        - '#^Function et_get_option not found\.$#'
+        - '#^Function et_update_option not found\.$#'
+        - '#^Function tsf not found\.$#'
+        - '#^Call to static method \S+\(\) on an unknown class ET\\Builder\\.*$#'
+        -
+            message: '#^Constant DIVIOPS_RATE_LIMIT_DISABLED not found\.$#'
+            path: plugins/diviops-agent/diviops-agent.php
+            count: 2
+            # False positive, not a real bug: this constant is defined near
+            # the bottom of this same file (defined() || define() bootstrap
+            # boilerplate), but both usages are inside REST filter callback
+            # bodies invoked only later, at actual request-dispatch time --
+            # by which point the whole file, including the later define(),
+            # has already loaded. PHPStan's file-order analysis doesn't
+            # model "this method body executes only after the file that
+            # defines it has fully loaded," which is true for every method
+            # on this class, not a rare exception.

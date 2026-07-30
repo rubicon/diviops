@@ -92,6 +92,35 @@ jobs:
       - name: Run test suite
         run: php tests/run.php
 
+  static-analysis:
+    name: PHPStan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.3'
+          coverage: none
+          tools: composer:v2
+
+      # Dev-tooling only (#71) -- composer.json/composer.lock exist solely to
+      # pin PHPStan + WordPress stubs for this job. The plugin itself ships
+      # zero Composer dependencies at runtime; nothing here changes that.
+      - name: Install PHPStan
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      # Scoped to plugins/diviops-agent (the security-sensitive PHP surface —
+      # CodeQL's default setup does not cover PHP at all, see #71). Divi and
+      # The SEO Framework's own symbols are ignored by exact message
+      # (phpstan.neon.dist) since no redistributable stubs exist for either;
+      # everything else pre-existing is captured in phpstan-baseline.neon so
+      # this starts permissive rather than blocking on day one, per the
+      # issue's own "start permissive, ratchet up" plan. Level and baseline
+      # both live in phpstan.neon.dist, not duplicated here.
+      - name: Run PHPStan
+        run: vendor/bin/phpstan analyse --no-progress --memory-limit=2G
+
   server-security-test:
     name: diviops-server security tests (node ${{ matrix.node }})
     runs-on: ubuntu-latest
