@@ -3,13 +3,19 @@
  * global_layout_wrapper_drift() — the Layer 2 backstop for #11.
  *
  * module_lock/unlock/clone, module_move's parser fallback, tb_layout_block_insert,
- * and preset_reassign all round-trip page content through parse_blocks() ->
- * mutate -> serialize_blocks(). On a page carrying a divi/global-layout wrapper,
- * Divi's own block parser expands that wrapper into the resolved content of the
- * layout it references unless a skip condition holds. One of those conditions is
- * a fragile $_SERVER['REQUEST_URI'] string match that fails open outside a
- * genuine REST dispatch (e.g. wp eval). parse_blocks_for_write() (trait-core.php)
- * is Layer 1 — it makes the skip unconditional by routing through Divi's own
+ * preset_reassign, normalize_and_validate_divi_markup_before_write, and
+ * validate_blocks all round-trip or walk page content through parse_blocks() ->
+ * mutate -> serialize_blocks() (the latter two validate-only, no serialize, but
+ * the same materialization risk applies to what they walk). On a page carrying
+ * a divi/global-layout wrapper, Divi's own block parser expands that wrapper
+ * into the resolved content of the layout it references unless a skip condition
+ * holds. One of those conditions is _is_rest_update_request() -- confirmed by
+ * reading the real method on the reference Divi install to be
+ * Conditions::is_rest_api_request() plus a REQUEST_METHOD check, not the fragile
+ * $_SERVER['REQUEST_URI'] string match an earlier version of this comment
+ * claimed -- which reliably holds for genuine REST dispatch but fails open for
+ * wp eval/CLI invocation (#99). parse_blocks_for_write() (trait-core.php) is
+ * Layer 1 — it makes the skip unconditional by routing through Divi's own
  * save-context parser when available. global_layout_wrapper_drift() is Layer 2 —
  * the backstop for when Layer 1 could not apply (Divi's class absent) and the
  * wrapper got expanded anyway: it detects the loss before the write persists,
