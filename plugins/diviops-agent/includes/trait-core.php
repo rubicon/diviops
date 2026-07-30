@@ -851,30 +851,129 @@ trait DiviOps_Agent_Core {
 		// it is Divi's own already-valid, already-rendering token format, so
 		// it is excluded from the scan rather than mistaken for one (#97).
 		//
-		// Two rounds of adversarial review found that a single regex applied
-		// to the raw text — however carefully anchored — cannot reliably
-		// tell "a real JSON string boundary" from "an escaped quote sitting
-		// mid-string", because that distinction depends on counting the
-		// PARITY of backslashes immediately before a `"`, which a bounded
-		// lookbehind cannot express and a naive scan gets wrong in exactly
-		// the way the original bug and both regressions did. Walking the
-		// text into real JSON-string-literal segments via
-		// json_string_segments() (which explicitly skips `\X` as one unit,
-		// so it can never mistake an escaped quote for a boundary) sidesteps
-		// the whole class rather than patching another triggering shape.
-		// Only a segment whose ENTIRE content is a `$variable(...)$` token —
-		// the only shape real Divi output ever produces — is excluded; any
-		// other content, including a token embedded alongside other text in
-		// the same property (never a real shape), is scanned normally.
+		// Three rounds of adversarial review found that a single regex
+		// applied to the raw text — however carefully anchored — cannot
+		// reliably tell "a real JSON string boundary" from "an escaped quote
+		// sitting mid-string" (parity of backslashes immediately before a
+		// `"`, which a bounded lookbehind cannot express), and separately
+		// cannot tell "exactly one token" from "multiple tokens concatenated
+		// with something else between them" (a greedy match satisfied by
+		// either shape just as well — a caller composing a field that cites
+		// two design-token references, e.g. two gradient stops, is ordinary
+		// authoring for a tool built for programmatic content, not a
+		// contrived edge case). json_string_segments() closes the first
+		// class by walking real string boundaries instead of matching them
+		// with a regex; strip_variable_tokens() closes the second by
+		// scanning for and skipping EVERY well-formed token wherever it
+		// occurs, however many there are, rather than asking whether an
+		// entire string is exactly one. Text before, after, or between
+		// tokens — including a genuine typo — is left in place to be
+		// scanned normally either way.
 		$scannable = '';
 		foreach ( self::json_string_segments( $json ) as $segment ) {
-			if ( $segment['in_string'] && 1 === preg_match( '/^\$variable\(.*\)\$$/s', $segment['text'] ) ) {
-				continue;
-			}
-			$scannable .= $segment['text'];
+			$scannable .= $segment['in_string'] ? self::strip_variable_tokens( $segment['text'] ) : $segment['text'];
 		}
 		if ( preg_match( '/(?<!\\\\)u00(?:3c|3e|26|22|5c|2d)/i', $scannable, $match ) ) {
 			return $match[0];
+		}
+		return null;
+	}
+
+	/**
+	 * Remove every well-formed `$variable(...)$` token found anywhere in
+	 * $text, leaving everything else — surrounding text, text between
+	 * multiple tokens, or a `$variable(` that never resolves to a balanced
+	 * token — in place. Scans left to right rather than matching the whole
+	 * string against a pattern, so it correctly handles any number of
+	 * tokens in any arrangement (#97, round 4).
+	 *
+	 * @param string $text Content of one in-string segment.
+	 * @return string $text with every well-formed token's span deleted.
+	 */
+	private static function strip_variable_tokens( string $text ): string {
+		$out = '';
+		$len = strlen( $text );
+		$i   = 0;
+		while ( $i < $len ) {
+			if ( '$' === $text[ $i ] ) {
+				$end = self::variable_token_end( $text, $i );
+				if ( null !== $end ) {
+					$i = $end;
+					continue;
+				}
+			}
+			$out .= $text[ $i ];
+			$i++;
+		}
+		return $out;
+	}
+
+	/**
+	 * If a well-formed `$variable({...})$` token starts at exactly $start,
+	 * return the index one past its closing `)$`. Otherwise null — a
+	 * `$variable(` that is not followed by a `{`, whose braces never
+	 * balance, or that is not immediately closed with `)$` right after its
+	 * payload's matching `}` is not a token this scan will skip over, so a
+	 * malformed one still gets scanned like ordinary text (matches
+	 * find_malformed_block_attr_escape()'s existing behavior for an
+	 * unterminated `$variable(` — degrade to plain text, not swallow the
+	 * rest of the string).
+	 *
+	 * Brace-balance counting is string-aware for the same reason
+	 * json_string_segments() is: real token payloads can nest objects
+	 * (settings can), and neither observed real form (bare `u0022` or
+	 * backslash-preserved `"`) ever contains a genuinely bare, unescaped
+	 * `"` — but a hypothetical payload that did must not have a stray
+	 * brace inside that quoted text miscounted as structural.
+	 *
+	 * @param string $text  Content to scan.
+	 * @param int    $start Index where `$variable(` is expected to begin.
+	 * @return int|null
+	 */
+	private static function variable_token_end( string $text, int $start ): ?int {
+		$prefix = '$variable(';
+		$plen   = strlen( $prefix );
+		if ( substr( $text, $start, $plen ) !== $prefix ) {
+			return null;
+		}
+
+		$len = strlen( $text );
+		$i   = $start + $plen;
+		if ( $i >= $len || '{' !== $text[ $i ] ) {
+			return null;
+		}
+
+		$depth  = 0;
+		$in_str = false;
+		for ( ; $i < $len; $i++ ) {
+			$ch = $text[ $i ];
+			if ( $in_str ) {
+				if ( '\\' === $ch && $i + 1 < $len ) {
+					$i++;
+					continue;
+				}
+				if ( '"' === $ch ) {
+					$in_str = false;
+				}
+				continue;
+			}
+			if ( '"' === $ch ) {
+				$in_str = true;
+				continue;
+			}
+			if ( '{' === $ch ) {
+				$depth++;
+				continue;
+			}
+			if ( '}' === $ch ) {
+				$depth--;
+				if ( 0 === $depth ) {
+					return ( ')$' === substr( $text, $i + 1, 2 ) ) ? $i + 3 : null;
+				}
+				if ( $depth < 0 ) {
+					return null;
+				}
+			}
 		}
 		return null;
 	}
