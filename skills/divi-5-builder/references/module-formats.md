@@ -232,7 +232,7 @@ Divi theme CSS (base visual defaults: font-size, color, line-height, margins)
 | Type | Example modules | Format |
 |------|-----------------|--------|
 | HTML string | Text, Accordion content, Slide content | `"<p>HTML</p>"` |
-| Plain string | Heading title, Author name, Job title | `"Plain text"` |
+| Plain string | Heading title, CTA title, Author name, Job title | `"Plain text"` |
 | Object `{text, linkUrl, linkTarget}` | Testimonial company | `{"text": "Corp", "linkUrl": "#", "linkTarget": "on"}` |
 | Object `{url}` | Testimonial portrait | `{"url": "https://example.com/photo.jpg"}` |
 | Object `{src, id, alt, ...}` | Image, Slide image | `{"src": "https://...", "id": "49", "alt": "Desc"}` |
@@ -348,7 +348,7 @@ Upgrade to Pro: https://diviops.com
 >
 > **Neither `regen-module-formats.mjs` nor `diviops-server/CONTRIBUTING.md` currently exist in this repository** (confirmed 2026-07-30) — the tooling that produced this index was never committed. Until it's rebuilt, treat the sentinel blocks below as hand-maintained: extend them the same way the `divi/cta` block was added for #63 (fetch `schema/module/{name}` from a live site, list every top-level attribute key except `metadata`/`className`/`style`/`lock`, and for each one list `{key}.decoration.{name}` for every key present under `settings.decoration` plus `_(+innerContent)_`/`_(+advanced)_` suffixes when those keys are present — regardless of whether the values are empty arrays/objects, since the schema dump lists an option as *available*, not necessarily *populated*).
 
-> Generated against Divi `5.8.0`, schema `af7c9d795e77…`. Spot-verified against live Divi `5.9.0` for `divi/accordion`, `divi/blurb`, `divi/button`, `divi/image`, `divi/text`, `divi/toggle`, and `divi/video` (2026-07-30, #63) — byte-for-byte identical output, no drift. The `divi/cta` block was authored fresh against `5.9.0` (previously absent from this index entirely). The remaining ~20 module blocks below have not been re-verified against 5.9.0.
+> Generated against Divi `5.8.0`, schema `af7c9d795e77…`. Spot-verified against live Divi `5.9.0` for `divi/accordion`, `divi/blurb`, `divi/button`, `divi/image`, `divi/text`, `divi/toggle`, and `divi/video` (2026-07-30, #63) — byte-for-byte identical output, no drift. The `divi/cta` block was authored fresh against `5.9.0` (previously absent from this index entirely), then cross-checked against `CTAPresetAttrsMap.php` (Divi's own preset-registration source — the canonical dot-path source per #63's issue comment) — every element (`button`/`content`/`module`/`title`) and every decoration group listed for CTA below is independently confirmed present there, with zero contradictions. That source goes deeper than this index does (full leaf-level paths, e.g. `button.decoration.button.decoration.button__icon.enable`, not just group membership like `button.decoration.button`) — this index, like all 28 other blocks below, only reaches group-level. Re-deriving the full index at that depth is a separately-scoped effort. The remaining ~20 module blocks below have not been re-verified against 5.9.0.
 
 Per CLAUDE.md "Suite architecture coherence": schema dump is the canonical index; VB-verified prose above is the canonical interpretation. The two sections are complementary, not competing — prose explains surprises, this index enumerates paths exhaustively. On conflicts, the prose above wins (per `feedback_vb_first_verification`).
 
