@@ -842,7 +842,20 @@ trait DiviOps_Agent_Core {
 	 * @return string|null
 	 */
 	private static function find_malformed_block_attr_escape( string $json ): ?string {
-		if ( preg_match( '/(?<!\\\\)u00(?:3c|3e|26|22|5c|2d)/i', $json, $match ) ) {
+		// Divi's own `$variable({...})$` wrapper (dynamic content, and the
+		// shared gcid-/gvid- global color/variable syntax — see
+		// trait-dynamic-content.php) legitimately embeds its nested JSON
+		// payload's quotes as bare `u0022`, with no backslash at all, for
+		// global color/variable references specifically; other $variable()
+		// forms carry the backslash. Neither is a caller-typed pseudo-escape:
+		// it is Divi's own already-valid, already-rendering token format, so
+		// it is excluded from the scan rather than mistaken for one (#97).
+		// Non-greedy: stops at the first `)$`, which is correct for the
+		// well-formed token this wrapper always produces; an unterminated
+		// `$variable(` (no closing `)$`) simply does not match and the
+		// original text is scanned unchanged.
+		$scannable = preg_replace( '/\$variable\(.*?\)\$/s', '', $json );
+		if ( preg_match( '/(?<!\\\\)u00(?:3c|3e|26|22|5c|2d)/i', $scannable, $match ) ) {
 			return $match[0];
 		}
 		return null;
