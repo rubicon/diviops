@@ -387,7 +387,7 @@ Common quick fixes — full reference in [SETUP.md#troubleshooting](../SETUP.md#
 
 ## Requirements
 
-- Node.js >= 18.0.0
+- Node.js >= 20.0.0
 - PHP >= 7.4
 - WordPress >= 6.5
 - Divi 5 theme active

@@ -98,9 +98,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # package.json declares "engines.node": ">=18.0.0", so the floor is
+        # package.json declares "engines.node": ">=20.0.0", so the floor is
         # tested alongside current LTS.
-        node: ['18', '22']
+        node: ['20', '22']
     defaults:
       run:
         working-directory: diviops-server
