@@ -61,13 +61,17 @@ php -d display_errors=0 -d mysqli.default_socket="$SOCK" /opt/homebrew/bin/wp \
 
 # 4. Store that value in 1Password rather than leaving it in shell history —
 #    this is a real credential for a real (if local) WordPress admin account.
-op item create --category=login --title="DiviOps Live Test Runner (colleyvillelions)" \
-  --vault=Automation username="$DIVIOPS_LIVE_USER" password="<paste the value from step 3>"
+#    Title/category are not load-bearing, just be consistent -- the reference
+#    site's actual item is an API Credential titled "ColleyvilleLions.local
+#    diviops-agent Application Password" in the Automation vault (the
+#    category matters: API Credential's password field is "credential", a
+#    Login item's is "password" -- match step 5's reference to whichever you use).
+op item create --category="API Credential" --title="ColleyvilleLions.local diviops-agent Application Password" \
+  --vault=Automation username="$DIVIOPS_LIVE_USER" credential="<paste the value from step 3>"
 
 # 5. Export it for the runner (read back from 1Password rather than pasted
-#    inline, once step 4 is done). `op read`'s op:// URI form chokes on the
-#    parentheses in this title, so use `op item get` instead:
-export DIVIOPS_LIVE_APP_PASSWORD="$(op item get 'DiviOps Live Test Runner (colleyvillelions)' --vault=Automation --fields label=password --reveal)"
+#    inline, once step 4 is done):
+export DIVIOPS_LIVE_APP_PASSWORD="$(op read 'op://Automation/ColleyvilleLions.local diviops-agent Application Password/credential')"
 ```
 
 `DIVIOPS_LIVE_WP_CLI_BIN` is also overridable (defaults to
