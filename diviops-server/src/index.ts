@@ -2535,6 +2535,53 @@ registerPluginTool(
 );
 
 registerPluginTool(
+  "diviops_page_duplicate",
+  {
+    description:
+      "Duplicate a page/post on the SAME site — a first-class operation instead of hand-rolling diviops_page_get_layout + diviops_page_create. Scope (owner-approved split, issue #35): NO reference remapping. Attachment ids, internal links, and global color/font/variable refs are copied as-is because the duplicate is created on the same site as the source, so they are already valid there — nothing to remap. The response discloses this explicitly via `references_remapped: false` plus a `references_note` rather than leaving you to assume it happened. Cross-site duplication with reference remapping is tracked separately and NOT implemented by this tool (issue #96). Defaults: title becomes '<source title> (Copy)' when omitted (no auto-suffix on repeat calls — unlike canvas duplication, page titles are not a WordPress uniqueness key); status defaults to draft (never publish) so duplicating never silently goes live; post_type defaults to inheriting the source page's post_type. A non-Divi (classic-editor) source is duplicated too, not refused — the response reports `source_uses_divi` so you can tell which kind of content was copied. This is a BYTE COPY of the source's stored content — not a parse/serialize round trip — so it never runs Divi's block parser and a divi/global-layout wrapper on the source cannot be materialized by the copy; it is preserved by construction, with nothing to validate or refuse. post_excerpt, post_parent, menu_order, the page template, the featured image, and taxonomy term assignments are copied along with the content. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; missing source page returns 'not_found', an invalid title/status/post_type returns 'invalid_input' with `error.data.field` naming the offending param." +
+      DRY_RUN_DESC_SUFFIX,
+    inputSchema: {
+      page_id: z.number().int().describe("Source page/post ID to duplicate"),
+      title: z
+        .string()
+        .optional()
+        .describe("Title for the new page. Defaults to '<source title> (Copy)' when omitted."),
+      status: z
+        .enum(["draft", "publish", "private"])
+        .optional()
+        .default("draft")
+        .describe("Post status for the new page. Defaults to draft."),
+      post_type: z
+        .string()
+        .optional()
+        .describe(
+          "Post type for the new page. Defaults to inheriting the source page's post_type. An unregistered type returns invalid_input.",
+        ),
+      dry_run: DRY_RUN_FIELD,
+    },
+    annotations: { idempotentHint: false },
+    _meta: { idempotent: "false" },
+  },
+  async ({ page_id, title, status, post_type, dry_run }) => {
+    const body: Record<string, unknown> = {
+      status: status ?? "draft",
+    };
+    if (title !== undefined) body.title = title;
+    if (post_type !== undefined) body.post_type = post_type;
+    if (dry_run) body.dry_run = true;
+    const result = await wp.requestEnveloped(`/page/duplicate/${page_id}`, {
+      method: "POST",
+      body,
+    });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_page_duplicate") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
   "diviops_page_trash",
   {
     description:

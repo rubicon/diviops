@@ -83,7 +83,7 @@ The skill enforces the Divi block format, the design system, and the response co
 
 ## Tools at a glance
 
-The server exposes **114 always-on tools** across the categories below. Each category links to representative tools; a full per-tool reference table is tracked as a follow-up ([#93](https://github.com/rubicon/diviops/issues/93)) — see the note in [Learn more](#learn-more).
+The server exposes **115 always-on tools** across the categories below. Each category links to representative tools; a full per-tool reference table is tracked as a follow-up ([#93](https://github.com/rubicon/diviops/issues/93)) — see the note in [Learn more](#learn-more).
 
 | Category | Use case | Tool prefixes |
 |----------|----------|---------------|
