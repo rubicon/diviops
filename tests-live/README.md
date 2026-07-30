@@ -30,6 +30,12 @@ make fixtures silently KSES-mangled, which surfaces as confusing assertion
 failures elsewhere rather than a clear error naming the real cause. Nothing
 in `Live_Config::load()` checks this for you.
 
+Use a dedicated service account (a separate WP administrator user, e.g.
+`diviops-agent`), not a personal login — keeps automation traffic
+attributable to a clearly-labeled account rather than mixed into a human
+admin's own activity, same reasoning as using a 1Password service account
+for `op` calls instead of a personal session.
+
 The commands below assume Local by Flywheel (for the WP-CLI socket path) and
 1Password (for credential storage) — swap steps 2 and 4 for your own local
 stack and secret manager if you use something else; the rest is identical.
@@ -37,7 +43,7 @@ stack and secret manager if you use something else; the rest is identical.
 ```bash
 # 1. Point at the site (adjust for your local environment).
 export DIVIOPS_LIVE_URL="http://colleyvillelions.local"
-export DIVIOPS_LIVE_USER="daxdavis"
+export DIVIOPS_LIVE_USER="diviops-agent"
 export DIVIOPS_LIVE_WP_PATH="/Users/daxdavis/Local Sites/colleyvillelions/app/public"
 
 # 2. Local by Flywheel's MySQL socket path changes if the site is ever
@@ -55,12 +61,17 @@ php -d display_errors=0 -d mysqli.default_socket="$SOCK" /opt/homebrew/bin/wp \
 
 # 4. Store that value in 1Password rather than leaving it in shell history —
 #    this is a real credential for a real (if local) WordPress admin account.
-op item create --category=login --title="DiviOps Live Test Runner (colleyvillelions)" \
-  --vault=Private username="$DIVIOPS_LIVE_USER" password="<paste the value from step 3>"
+#    Title/category are not load-bearing, just be consistent -- the reference
+#    site's actual item is an API Credential titled "ColleyvilleLions.local
+#    diviops-agent Application Password" in the Automation vault (the
+#    category matters: API Credential's password field is "credential", a
+#    Login item's is "password" -- match step 5's reference to whichever you use).
+op item create --category="API Credential" --title="ColleyvilleLions.local diviops-agent Application Password" \
+  --vault=Automation username="$DIVIOPS_LIVE_USER" credential="<paste the value from step 3>"
 
 # 5. Export it for the runner (read back from 1Password rather than pasted
 #    inline, once step 4 is done):
-export DIVIOPS_LIVE_APP_PASSWORD="$(op read 'op://Private/DiviOps Live Test Runner (colleyvillelions)/password')"
+export DIVIOPS_LIVE_APP_PASSWORD="$(op read 'op://Automation/ColleyvilleLions.local diviops-agent Application Password/credential')"
 ```
 
 `DIVIOPS_LIVE_WP_CLI_BIN` is also overridable (defaults to

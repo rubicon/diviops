@@ -98,9 +98,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # package.json declares "engines.node": ">=18.0.0", so the floor is
-        # tested alongside current LTS.
-        node: ['18', '22']
+        # package.json declares "engines.node": ">=22.0.0", so the floor is
+        # tested alongside current Active LTS (24 as of 2026-07 -- see
+        # nodejs/Release's schedule.json; 22 itself entered maintenance-only
+        # LTS on 2025-10-21 and both were confirmed still within their own
+        # support windows when this was last checked).
+        node: ['22', '24']
     defaults:
       run:
         working-directory: diviops-server
