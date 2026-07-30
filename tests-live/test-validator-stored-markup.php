@@ -34,17 +34,29 @@ assert_true(
 
 $scratch_id = live_create_scratch_page( $reference_content, 'DiviOps live-suite #97 validator regression' );
 
-// ── dry_run: validation must pass without persisting anything ──
-$dry = live_rest_call(
+// ── dry_run: validation must pass WITHOUT persisting anything ──
+//
+// Submits DIFFERENT content than what the page already holds specifically so
+// non-persistence is actually observable: dry_run-ing the page's own existing
+// content back at itself would make a real accidental write indistinguishable
+// from correct no-op behavior (caught in review — the first version of this
+// test had exactly that gap).
+$dry_run_content = '<!-- wp:divi/text {"module":{"meta":{"adminLabel":{"desktop":{"value":"dry_run probe — must never persist"}}}},"builderVersion":"5.1.1"} /-->';
+$dry             = live_rest_call(
 	'POST',
 	'diviops/v1/page/update-content/' . $scratch_id,
 	array(
-		'content' => $reference_content,
+		'content' => $dry_run_content,
 		'dry_run' => true,
 	)
 );
 assert_same( 200, $dry['status'], 'dry_run update-content on real $variable()-bearing markup returns HTTP 200, not the old invalid_input rejection' );
 assert_true( ! empty( $dry['body']['ok'] ), 'dry_run response envelope reports ok:true' );
+assert_same(
+	$reference_content,
+	live_get_post_content( $scratch_id ),
+	'dry_run actually did not persist — the page still holds its original content, not the dry_run probe content'
+);
 
 // ── real write: the full guard, including persistence ──
 $real = live_rest_call(
@@ -80,4 +92,4 @@ $rejected = live_rest_call(
 assert_same( 400, $rejected['status'], 'a genuine bare pseudo-escape outside any $variable() wrapper is still rejected over the real route' );
 assert_same( 'invalid_input', $rejected['body']['error']['code'] ?? null, 'the rejection is still the expected invalid_input error code' );
 
-echo "PASS: validator-stored-markup (9 assertions)\n";
+echo "PASS: validator-stored-markup (10 assertions)\n";

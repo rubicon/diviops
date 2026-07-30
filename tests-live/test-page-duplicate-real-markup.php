@@ -51,8 +51,12 @@ $resp = live_rest_call( 'POST', 'diviops/v1/page/duplicate/' . $source_id, array
 assert_same( 200, $resp['status'], 'page/duplicate on real global-layout + difl markup returns HTTP 200' );
 assert_true( ! empty( $resp['body']['ok'] ), 'duplicate response envelope reports ok:true' );
 
-$new_id = (int) ( $resp['body']['data']['page_id'] ?? $resp['body']['data']['new_page_id'] ?? 0 );
-assert_true( $new_id > 0 && $new_id !== $source_id, 'a distinct new page id was returned' );
+// page_duplicate's success payload key is page_id (trait-page.php) — asserting
+// the exact field rather than hedging across possible names doubles as a
+// contract check: if this ever changes, the test fails loudly instead of
+// silently falling through.
+$new_id = (int) ( $resp['body']['data']['page_id'] ?? 0 );
+assert_true( $new_id > 0 && $new_id !== $source_id, 'a distinct new page id was returned under the page_id key' );
 if ( $new_id > 0 ) {
 	live_assert_not_forbidden_post_id( $new_id );
 	$GLOBALS['diviops_live_scratch_post_ids'][] = $new_id;

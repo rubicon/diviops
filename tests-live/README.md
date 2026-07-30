@@ -22,7 +22,17 @@ Divi, not their actual behavior. See [#20](https://github.com/rubicon/diviops/is
 
 You need a WordPress site with the DiviOps Agent plugin active, a WP-CLI
 install that can reach its database, and an Application Password for an
-administrator on that site.
+**administrator** on that site — `DIVIOPS_LIVE_USER` must actually be an
+admin, not just any authenticated user. `live_wp_cli()` passes `--user=`
+specifically to grant `unfiltered_html` for byte-for-byte fixtures (see the
+Safety model section below); a non-admin user without that capability will
+make fixtures silently KSES-mangled, which surfaces as confusing assertion
+failures elsewhere rather than a clear error naming the real cause. Nothing
+in `Live_Config::load()` checks this for you.
+
+The commands below assume Local by Flywheel (for the WP-CLI socket path) and
+1Password (for credential storage) — swap steps 2 and 4 for your own local
+stack and secret manager if you use something else; the rest is identical.
 
 ```bash
 # 1. Point at the site (adjust for your local environment).
@@ -69,10 +79,20 @@ instead of partway through a fixture.
 ## Safety model
 
 - **Page 900390 is permanently read-only.** `harness.php` hard-codes it in
-  `DIVIOPS_LIVE_FORBIDDEN_POST_IDS`, and every mutating helper checks against
-  that list before writing. Tests that need real, complex, already-rendering
-  Divi markup read it via `live_get_post_content()` (read-only) and write the
-  content into a *new* scratch page — never back into 900390.
+  `DIVIOPS_LIVE_FORBIDDEN_POST_IDS`. Coverage is real but not universal —
+  `live_create_scratch_page()` always checks; `live_rest_call()` checks a
+  best-effort extraction of the target id from the route's trailing path
+  segment (matches every current diviops route's `.../{id}` convention, but
+  not an id passed as a body parameter); `live_wp_cli()` is a general
+  passthrough with no id detection at all. See the guard-coverage comment
+  above `DIVIOPS_LIVE_FORBIDDEN_POST_IDS` in `harness.php` for the exact
+  scope, and call `live_assert_not_forbidden_post_id()` yourself before any
+  mutating call that doesn't go through `live_create_scratch_page()` or a
+  route with the id in its path — `test-page-duplicate-real-markup.php`'s
+  handling of its derived `$new_id` is the pattern to follow. Tests that need
+  real, complex, already-rendering Divi markup read 900390 via
+  `live_get_post_content()` (read-only) and write the content into a *new*
+  scratch page — never back into 900390.
 - **Every scratch page is cleaned up automatically**, even on failure or a
   thrown exception, via a `register_shutdown_function()` in `harness.php`
   that force-deletes everything `live_create_scratch_page()` created during

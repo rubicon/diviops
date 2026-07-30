@@ -31,13 +31,29 @@ declare( strict_types = 1 );
 
 // ── page 900390 is read-only, full stop — see CLAUDE.md's site constraints ──
 //
-// Every mutating helper below (live_create_scratch_page, live_rest_call for a
-// non-GET method) MUST route through live_assert_not_forbidden_post_id() first.
-// This is a best-effort technical control, not a substitute for care: a test
-// file that hand-rolls its own curl call instead of using these helpers can
-// still bypass it. Read-only helpers (live_get_post_content) never call it,
-// on purpose — reading 900390 to build fixtures FROM its real content is the
-// entire point of several tests here.
+// Actual guard coverage, precisely (a prior version of this comment overclaimed
+// this and was corrected after review):
+//   - live_create_scratch_page() checks after every create (defense in depth —
+//     a freshly minted autoincrement id cannot structurally collide with an
+//     existing id, but the check costs nothing and stays as a backstop anyway).
+//   - live_rest_call() checks a BEST-EFFORT extraction of the last numeric
+//     path segment in $route for any non-GET call, since every diviops route
+//     that targets a specific post/module follows exactly that
+//     `.../{id}`-suffix convention. This does NOT catch a target id passed as
+//     a body parameter (e.g. a hypothetical route taking `post_id` in JSON
+//     rather than the URL) or any other shape.
+//   - live_wp_cli() is a general WP-CLI passthrough with no id detection at
+//     all — WP-CLI command shapes vary too much to reliably guess which
+//     argument, if any, names a target post. A test that calls it directly
+//     for a mutating command (not through live_create_scratch_page) MUST call
+//     live_assert_not_forbidden_post_id() itself first — see
+//     test-page-duplicate-real-markup.php's handling of its derived $new_id
+//     for the pattern to follow.
+// None of this is a substitute for care: a test file that hand-rolls its own
+// curl call instead of using these helpers bypasses all of it. Read-only
+// helpers (live_get_post_content) never call the guard, on purpose — reading
+// 900390 to build fixtures FROM its real content is the entire point of
+// several tests here.
 const DIVIOPS_LIVE_FORBIDDEN_POST_IDS = array( 900390 );
 
 /**
@@ -243,6 +259,16 @@ function live_get_post_content( int $post_id ): string {
  * @return array{status:int, body:mixed, raw:string}
  */
 function live_rest_call( string $method, string $route, array $body = array() ): array {
+	// Best-effort: every diviops route that targets a specific post/module id
+	// puts it as the LAST path segment (.../page/duplicate/{id},
+	// .../page/update-content/{id}, ...). Checking it here catches the
+	// realistic accident (a scratch id variable holding 900390 by mistake)
+	// without pretending to catch every possible shape — see the guard
+	// coverage note above DIVIOPS_LIVE_FORBIDDEN_POST_IDS.
+	if ( 'GET' !== strtoupper( $method ) && preg_match( '#/(\d+)(?:\?.*)?$#', $route, $trailing_id ) ) {
+		live_assert_not_forbidden_post_id( (int) $trailing_id[1] );
+	}
+
 	$config = Live_Config::load();
 	$url    = rtrim( $config['DIVIOPS_LIVE_URL'], '/' ) . '/wp-json/' . ltrim( $route, '/' );
 

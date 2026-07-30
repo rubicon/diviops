@@ -41,6 +41,21 @@ jobs:
           fi
           find plugins -name '*.php' -type f -print0 | xargs -0 -n1 -P4 php -l
 
+      # tests-live/ (#20) is opt-in and never executed here -- it needs a real
+      # WordPress site and credentials CI doesn't have -- but a syntax check
+      # needs neither, and its scripts should not be able to bit-rot unnoticed
+      # between the rare manual runs that would otherwise be the only thing
+      # to catch a typo.
+      - name: Lint every live-suite PHP file (syntax only, never executed)
+        run: |
+          count=$(find tests-live -name '*.php' -type f | wc -l | tr -d ' ')
+          echo "linting $count PHP file(s) under tests-live/"
+          if [ "$count" -lt 1 ]; then
+            echo "::error::found no PHP files to lint. The glob is wrong; this is a blind gate, not a pass."
+            exit 1
+          fi
+          find tests-live -name '*.php' -type f -print0 | xargs -0 -n1 -P4 php -l
+
   test:
     name: Test suite
     runs-on: ubuntu-latest
