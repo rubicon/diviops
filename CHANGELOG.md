@@ -10,6 +10,18 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.12.0](https://github.com/rubicon/diviops/compare/v1.11.0...v1.12.0) (2026-07-30)
+
+
+### Features
+
+* **page:** same-site whole-page duplication ([#35](https://github.com/rubicon/diviops/issues/35)) ([#98](https://github.com/rubicon/diviops/issues/98)) ([4e2c80c](https://github.com/rubicon/diviops/commit/4e2c80c8cf8de0ff70356fd017c03c91618e8f1c))
+
+
+### Bug Fixes
+
+* **docs:** repoint dangling docs/ links and sync stale tool counts ([#90](https://github.com/rubicon/diviops/issues/90)) ([#94](https://github.com/rubicon/diviops/issues/94)) ([4423108](https://github.com/rubicon/diviops/commit/442310825032b1fae5f6d01b53ac9d44558fd6ad))
+
 ## [1.11.0](https://github.com/rubicon/diviops/compare/v1.10.0...v1.11.0) (2026-07-29)
 
 
