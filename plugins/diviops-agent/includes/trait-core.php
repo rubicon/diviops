@@ -230,11 +230,12 @@ trait DiviOps_Agent_Core {
 	 * described it as a fragile `$_SERVER['REQUEST_URI']` string match,
 	 * which is not what the code does — corrected during #99's
 	 * investigation). Because every diviops-agent write happens through a
-	 * genuine `register_rest_route()` dispatch, this condition reliably
-	 * holds for production traffic on its own; it does NOT hold for `wp
-	 * eval`/CLI invocation, which is how #11 and #99 were both actually
-	 * found — there is no REST request to detect outside a real HTTP round
-	 * trip.
+	 * genuine `register_rest_route()` dispatch, this condition holds for
+	 * production traffic on its own — confirmed by one live HTTP trial
+	 * against the reference site during #99, not exhaustively fuzzed across
+	 * every route. It does NOT hold for `wp eval`/CLI invocation, which is
+	 * how #11 and #99 were both actually found — there is no REST request
+	 * to detect outside a real HTTP round trip.
 	 *
 	 * The other skip condition is independent of request shape:
 	 * `'saving_content' === BlockParserStore::get_layout_type()`, set by
