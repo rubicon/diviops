@@ -1,0 +1,25 @@
+parameters:
+	ignoreErrors:
+		-
+			message: '#^Variable \$block might not be defined\.$#'
+			identifier: variable.undefined
+			count: 1
+			path: plugins/diviops-agent/diviops-agent.php
+
+		-
+			message: '#^Variable \$likes in empty\(\) always exists and is not falsy\.$#'
+			identifier: empty.variable
+			count: 1
+			path: plugins/diviops-agent/diviops-agent.php
+
+		-
+			message: '#^Variable \$orders in empty\(\) always exists and is not falsy\.$#'
+			identifier: empty.variable
+			count: 3
+			path: plugins/diviops-agent/diviops-agent.php
+
+		-
+			message: '#^Variable \$target might not be defined\.$#'
+			identifier: variable.undefined
+			count: 2
+			path: plugins/diviops-agent/diviops-agent.php
