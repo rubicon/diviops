@@ -20,13 +20,28 @@
  * write path that runs full-content validation: trait-page.php's final_page
  * write and both trait-theme-builder.php full-layout/per-field writes.
  *
- * Adversarial review of the first version of this fix (a naive non-greedy
- * `.*?` between `$variable(` and the nearest later `)$`) found it could cross
- * into an entirely unrelated LATER property's value and silently swallow a
- * genuine pseudo-escape typo sitting in between — a masking false negative
- * that did not exist before #97's fix. See the cross-property test below and
- * the fix's own comment in trait-core.php for why matching a complete JSON
- * string literal, not just the loosest span between two markers, closes it.
+ * Three review rounds, three regressions, each narrower than the last —
+ * recorded here because the fix's final shape (a JSON-string-boundary
+ * tokenizer, not a regex) only makes sense in light of what a regex kept
+ * getting wrong:
+ *   1. A naive non-greedy `.*?` between `$variable(` and the nearest later
+ *      `)$` could cross into an entirely unrelated LATER property's value
+ *      (attrs routinely carry 6+ tokens alongside ordinary text fields) and
+ *      silently swallow a genuine typo sitting in between.
+ *   2. Anchoring the span to a complete JSON string literal
+ *      (`"\$variable\((?:[^"\\]|\\.)*\)\$"`) closed that, but the anchor
+ *      itself — a literal `"` immediately before `$variable(` — could not
+ *      tell a true string-opening quote from the second byte of an escaped
+ *      `\"` sitting mid-string, so `{"weird":"abc\"$variable(u003c
+ *      faketoken)$","tail":"end"}` (valid JSON: "weird" is one string
+ *      containing a real `"` character) still masked the typo.
+ *   3. Both were the same underlying problem: telling a "real" unescaped
+ *      quote apart from an escaped one requires counting the PARITY of
+ *      backslashes immediately before it, which no bounded regex lookbehind
+ *      can express. json_string_segments() (trait-core.php) sidesteps the
+ *      whole class by walking the text and explicitly consuming `\X` as one
+ *      unit while inside a string, so it can never mistake an escaped quote
+ *      for a boundary.
  *
  * @package DiviOps
  */
@@ -39,7 +54,11 @@ require_once __DIR__ . '/wp-shim.php';
 $bare_variable_token = '$variable({u0022typeu0022:u0022coloru0022,u0022valueu0022:{u0022nameu0022:u0022gcid-myuw5vpz20u0022,u0022settingsu0022:{}}})$';
 
 // Dynamic content binding: backslash preserved, exactly as WordPress core's
-// serialize_block_attributes() emits it (\" -> ") — never a bare `"`.
+// serialize_block_attributes() emits it (json_encode()'s own `\"` becomes
+// `"` — backslash retained, "u0022" as literal text). A prior version
+// of this fixture used bare `"` characters, which is not valid JSON once
+// embedded and cannot occur at this function's real call site (caught in
+// review — see file header, regression 3's sibling finding).
 $escaped_variable_token = '$variable({"type":"content","value":{"name":"post_title","settings":{}}})$';
 
 assert_true(
@@ -48,7 +67,7 @@ assert_true(
 );
 assert_true(
 	null === diviops_call( 'find_malformed_block_attr_escape', array( '{"name":"' . $escaped_variable_token . '"}' ) ),
-	'backslash-escaped " inside a $variable({...})$ wrapper (dynamic content form) is not flagged'
+	'backslash-escaped u0022 inside a $variable({...})$ wrapper (dynamic content form) is not flagged'
 );
 
 // The full block-attrs shape as it actually appears in stored content: the
@@ -83,16 +102,34 @@ assert_same(
 	'a genuine pseudo-escape appearing AFTER a legitimate $variable() token is still caught, not masked by the exclusion'
 );
 
-// ── regression: a genuine typo in a DIFFERENT property than the token must ──
-// not be masked by that other property's own unrelated closing text landing
-// on a coincidental )$ shape (the false negative adversarial review found in
-// the first version of this fix — see file header) ─────────────────────
+// ── regression 1: a genuine typo in a DIFFERENT property than the token ──
+// must not be masked by that other property's own unrelated closing text
+// landing on a coincidental )$ shape ────────────────────────────────────
 
 $cross_property_masking = '{"a":"' . $bare_variable_token . '","b":"u003c typo","c":"ends with )$"}';
 assert_same(
 	'u003c',
 	diviops_call( 'find_malformed_block_attr_escape', array( $cross_property_masking ) ),
 	'a typo in one property is not masked by an unrelated )$-shaped ending in a LATER property, even with a real token earlier in the blob'
+);
+
+// ── regression 2: a genuine typo must not be masked by a fake "token" that ──
+// starts at an ESCAPED quote sitting mid-string (valid JSON: this is one
+// property whose value legitimately contains a real `"` character,
+// immediately followed by text that happens to look like a token opener) ──
+
+$escaped_quote_adjacent_faketoken = '{"weird":"abc\"$variable(u003c faketoken)$","tail":"end"}';
+assert_same(
+	'u003c',
+	diviops_call( 'find_malformed_block_attr_escape', array( $escaped_quote_adjacent_faketoken ) ),
+	'a typo following text like $variable( that starts right after an escaped quote (not a real token boundary) is still caught'
+);
+
+$escaped_quote_adjacent_with_real_token = '{"a":"' . $bare_variable_token . '","weird":"abc\"$variable(u003c faketoken)$"}';
+assert_same(
+	'u003c',
+	diviops_call( 'find_malformed_block_attr_escape', array( $escaped_quote_adjacent_with_real_token ) ),
+	'the same escaped-quote-adjacent case is still caught even with a real, legitimately-excluded token elsewhere in the blob'
 );
 
 // ── malformed/unterminated $variable( must not swallow the rest of the scan ──
@@ -102,6 +139,22 @@ assert_same(
 	'u003c',
 	diviops_call( 'find_malformed_block_attr_escape', array( $unterminated ) ),
 	'an unterminated $variable( with no closing )$ anywhere does not suppress scanning of the rest of the string'
+);
+
+$unterminated_string = '{"color":"$variable({broken forever with u003c inside';
+assert_same(
+	'u003c',
+	diviops_call( 'find_malformed_block_attr_escape', array( $unterminated_string ) ),
+	'a string with no closing quote at all still gets scanned rather than treated as an open-ended exclusion'
+);
+
+// ── real token payloads contain nested braces/objects — must not confuse ──
+// segment boundaries ─────────────────────────────────────────────────────
+
+$nested_braces = '{"color":"$variable({u0022au0022:{u0022bu0022:{u0022cu0022:1}}})$"}';
+assert_true(
+	null === diviops_call( 'find_malformed_block_attr_escape', array( $nested_braces ) ),
+	'a token payload with nested objects (the real shape — settings can nest) is still excluded correctly'
 );
 
 // ── integration: the full write-guard no longer rejects real Divi markup ──
@@ -115,4 +168,4 @@ assert_true(
 	'normalize_divi_full_content_for_write() accepts a real block carrying a global-color $variable() reference'
 );
 
-echo "PASS: block-attr-pseudo-escape (9 assertions)\n";
+echo "PASS: block-attr-pseudo-escape (13 assertions)\n";
