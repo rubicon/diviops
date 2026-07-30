@@ -223,17 +223,26 @@ trait DiviOps_Agent_Core {
 	 * Divi 5 registers its own block parser via the `block_parser_class`
 	 * filter. That parser expands a `divi/global-layout` wrapper into the
 	 * resolved content of the layout it references unless a skip condition
-	 * holds. One of those conditions is `_is_rest_update_request()`, which
-	 * decides "is this a save" by string-matching `$_SERVER['REQUEST_URI']`
-	 * for a REST-shaped path — a heuristic that fails open outside a genuine
-	 * REST dispatch (e.g. `wp eval`), so a write in that context silently
-	 * materializes the wrapper's resolved content into the page.
+	 * holds. One of those conditions is `_is_rest_update_request()` —
+	 * `Conditions::is_rest_api_request()` plus `$_SERVER['REQUEST_METHOD']`
+	 * in `['POST','PUT','PATCH']` (confirmed by reading the real method on
+	 * the reference Divi install; an earlier version of this comment
+	 * described it as a fragile `$_SERVER['REQUEST_URI']` string match,
+	 * which is not what the code does — corrected during #99's
+	 * investigation). Because every diviops-agent write happens through a
+	 * genuine `register_rest_route()` dispatch, this condition reliably
+	 * holds for production traffic on its own; it does NOT hold for `wp
+	 * eval`/CLI invocation, which is how #11 and #99 were both actually
+	 * found — there is no REST request to detect outside a real HTTP round
+	 * trip.
 	 *
 	 * The other skip condition is independent of request shape:
 	 * `'saving_content' === BlockParserStore::get_layout_type()`, set by
 	 * `BlockParserUtils::parse_blocks_with_layout_context()`. Routing every
 	 * write-path parse through that call instead of bare parse_blocks()
-	 * makes the skip unconditional, regardless of how this code was invoked.
+	 * makes the skip unconditional, regardless of how this code was invoked
+	 * — closing the CLI/debug-tooling gap that `_is_rest_update_request()`
+	 * alone leaves open, even though that gap does not reach production.
 	 * Confirmed by reading `ET\Builder\FrontEnd\BlockParser\BlockParser::parse()`
 	 * on the reference Divi install: `$should_skip` includes
 	 * `'saving_content' === BlockParserStore::get_layout_type()` alongside
@@ -264,7 +273,9 @@ trait DiviOps_Agent_Core {
 	 * count without pretending to know which layout they referenced.
 	 *
 	 * A plain method rather than a class constant: trait constants require
-	 * PHP 8.3, and this plugin's own header declares `Requires PHP: 7.4`.
+	 * PHP 8.2 (confirmed by CI's real 7.4 lint job during #97 — "Traits
+	 * cannot have constants" — not 8.3, correcting this comment's earlier
+	 * claim), and this plugin's own header declares `Requires PHP: 7.4`.
 	 *
 	 * @return string
 	 */
