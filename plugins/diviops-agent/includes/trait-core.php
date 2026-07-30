@@ -14,6 +14,31 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+/**
+ * Traits cannot declare their own constants until PHP 8.2 (this plugin's
+ * floor is 7.4 — confirmed live: `private const` directly inside
+ * DiviOps_Agent_Core fails CI's PHP 7.4 lint with "Traits cannot have
+ * constants"). A small helper class carrying the value, same pattern
+ * trait-seo.php already uses for DiviOps_SEO_TSF_Adapter's constants.
+ */
+final class DiviOps_Variable_Token_Limits {
+	/**
+	 * Upper bound, in bytes, on how far variable_token_end() will scan
+	 * looking for a token's closing brace. The largest real token observed
+	 * on the reference site (page 900390, 64 tokens surveyed) is 270 bytes;
+	 * this gives over 15x headroom for legitimately larger nested settings
+	 * while keeping the cost of a single failed match bounded rather than
+	 * proportional to however much text follows it (#97, adversarial
+	 * review: an unbounded scan made a run of many unclosed `$variable({`
+	 * fragments O(n²) — each one, failing to ever balance, scanned all the
+	 * way to end-of-string before giving up, and strip_variable_tokens()'s
+	 * outer loop retries at every subsequent `$`. 8,000 repeats of the
+	 * 11-byte fragment took 6.3s unbounded; confirmed linear at this bound
+	 * up to 64,000 repeats).
+	 */
+	const MAX_SCAN = 4096;
+}
+
 trait DiviOps_Agent_Core {
 
 	private static function get_nested_array_value( $source, $path, $default = null ) {
@@ -909,27 +934,11 @@ trait DiviOps_Agent_Core {
 	}
 
 	/**
-	 * Upper bound, in bytes, on how far variable_token_end() will scan
-	 * looking for a token's closing brace. The largest real token observed
-	 * on the reference site (page 900390, 64 tokens surveyed) is 270 bytes;
-	 * this gives over 15x headroom for legitimately larger nested settings
-	 * while keeping the cost of a single failed match bounded rather than
-	 * proportional to however much text follows it (#97, adversarial
-	 * review: an unbounded scan made a run of many unclosed `$variable({`
-	 * fragments O(n²) — each one, failing to ever balance, scanned all the
-	 * way to end-of-string before giving up, and strip_variable_tokens()'s
-	 * outer loop retries at every subsequent `$`. 8,000 repeats of the
-	 * 11-byte fragment took 6.3s unbounded; confirmed linear at this bound
-	 * up to 64,000 repeats).
-	 */
-	private const MAX_VARIABLE_TOKEN_SCAN = 4096;
-
-	/**
 	 * If a well-formed `$variable({...})$` token starts at exactly $start,
 	 * return the index one past its closing `)$`. Otherwise null — a
 	 * `$variable(` that is not followed by a `{`, whose braces never
-	 * balance within MAX_VARIABLE_TOKEN_SCAN bytes, or that is not
-	 * immediately closed with `)$` right after its payload's matching `}`
+	 * balance within DiviOps_Variable_Token_Limits::MAX_SCAN bytes, or that
+	 * is not immediately closed with `)$` right after its payload's matching `}`
 	 * is not a token this scan will skip over, so a malformed one still
 	 * gets scanned like ordinary text (matches
 	 * find_malformed_block_attr_escape()'s existing behavior for an
@@ -960,7 +969,7 @@ trait DiviOps_Agent_Core {
 			return null;
 		}
 
-		$scan_limit = min( $len, $i + self::MAX_VARIABLE_TOKEN_SCAN );
+		$scan_limit = min( $len, $i + DiviOps_Variable_Token_Limits::MAX_SCAN );
 		$depth      = 0;
 		$in_str     = false;
 		for ( ; $i < $scan_limit; $i++ ) {
