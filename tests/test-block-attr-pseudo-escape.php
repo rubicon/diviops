@@ -60,6 +60,19 @@
  *      Text before, after, or between tokens — including a genuine typo —
  *      is left for the scan either way.
  *
+ *      Round 4's first version had its own bug, caught by adversarial
+ *      review before merge rather than a fifth round: variable_token_end(),
+ *      on a fragment whose braces never balance, scanned all the way to
+ *      end-of-string before giving up, and strip_variable_tokens()' outer
+ *      loop retried that full-length scan at every subsequent `$` — a run
+ *      of many unclosed `$variable({` fragments was O(n²) (8,000 repeats
+ *      of the 11-byte fragment measured at 6.3s, reachable end-to-end
+ *      through the real REST write path with no upstream size guard).
+ *      MAX_VARIABLE_TOKEN_SCAN bounds a single scan to comfortably more
+ *      than the largest real token observed (270 bytes, 15x headroom),
+ *      restoring linear-time behavior without narrowing what a legitimate
+ *      token can look like.
+ *
  * @package DiviOps
  */
 
@@ -225,6 +238,28 @@ assert_same(
 	'the same gradient-stop shape still catches a genuine typo sitting in the text between two real tokens'
 );
 
+// ── regression 5: many unclosed $variable({ fragments in a row must not ──
+// make the scan quadratic ────────────────────────────────────────────────
+//
+// variable_token_end(), on a fragment whose braces never balance, used to
+// scan all the way to end-of-string before giving up -- and
+// strip_variable_tokens()'s outer loop retries that full-length scan at
+// every subsequent `$`, so a run of many unclosed fragments was O(n^2).
+// Adversarial review measured 8,000 repeats of the 11-byte fragment
+// "$variable({" at 6.3s unbounded; MAX_VARIABLE_TOKEN_SCAN (trait-core.php)
+// bounds a single scan's cost, restoring linear-time behavior. This
+// threshold (3s) sits with wide margin either side of the measured before
+// (~6s at this size) and after (~0.5s) to avoid CI timing flakiness while
+// still catching a real regression back to the unbounded scan.
+$many_unclosed_fragments = str_repeat( '$variable({', 8000 );
+$perf_start               = microtime( true );
+diviops_call( 'strip_variable_tokens', array( $many_unclosed_fragments ) );
+$perf_elapsed = microtime( true ) - $perf_start;
+assert_true(
+	$perf_elapsed < 3.0,
+	sprintf( '8,000 unclosed $variable({ fragments do not trigger quadratic-time scanning (took %.3fs, must be well under 3s)', $perf_elapsed )
+);
+
 // ── integration: the full write-guard no longer rejects real Divi markup ──
 
 $block_with_variable_color = '<!-- wp:divi/section {"module":{"decoration":{"background":{"desktop":{"value":{"color":"'
@@ -282,4 +317,4 @@ assert_same(
 	'strip_variable_tokens(): a $variable( that never resolves to a balanced token is left as ordinary text, untouched'
 );
 
-echo "PASS: block-attr-pseudo-escape (26 assertions)\n";
+echo "PASS: block-attr-pseudo-escape (27 assertions)\n";
