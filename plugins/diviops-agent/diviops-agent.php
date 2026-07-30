@@ -979,7 +979,13 @@ class DiviOps_Agent {
 				'title'       => [ 'required' => false, 'type' => 'string' ],
 				'alt'         => [ 'required' => false, 'type' => 'string' ],
 				'caption'     => [ 'required' => false, 'type' => 'string' ],
-				'attach_to'   => [ 'required' => false, 'type' => 'integer' ],
+				'attach_to'   => [
+					'required'          => false,
+					'type'              => 'integer',
+					'validate_callback' => function ( $value, $request, $param ) {
+						return self::media_validate_positive_id( $value, $param );
+					},
+				],
 				'dry_run'     => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
 			],
 		] );
@@ -1015,8 +1021,20 @@ class DiviOps_Agent {
 			'callback'            => [ __CLASS__, 'media_set_featured_image' ],
 			'permission_callback' => [ __CLASS__, 'check_authenticated_permission' ],
 			'args'                => [
-				'post_id'       => [ 'required' => true,  'type' => 'integer' ],
-				'attachment_id' => [ 'required' => false, 'type' => 'integer' ],
+				'post_id'       => [
+					'required'          => true,
+					'type'              => 'integer',
+					'validate_callback' => function ( $value, $request, $param ) {
+						return self::media_validate_positive_id( $value, $param );
+					},
+				],
+				'attachment_id' => [
+					'required'          => false,
+					'type'              => 'integer',
+					'validate_callback' => function ( $value, $request, $param ) {
+						return self::media_validate_positive_id( $value, $param );
+					},
+				],
 				'url'           => [ 'required' => false, 'type' => 'string' ],
 				'dry_run'       => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
 			],

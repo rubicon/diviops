@@ -968,4 +968,27 @@ trait DiviOps_Agent_Media {
 		}
 		return '/' . implode( '/', $stack );
 	}
+
+	/**
+	 * REST-boundary validator for the media route target-id params
+	 * (attach_to, attachment_id, post_id): absent/empty is valid — these
+	 * fields are optional and "no target" is a legitimate state — but a
+	 * present value must be a positive integer. 0 and negative values
+	 * previously passed the route's args schema and reached handler logic
+	 * that generally treats an unset/zero target the same as no target,
+	 * silently discarding a caller's actual (invalid) intent (#81).
+	 *
+	 * @param mixed  $value Raw param value as REST delivers it (int or numeric string).
+	 * @param string $param Field name, for the error message.
+	 * @return true|WP_Error
+	 */
+	private static function media_validate_positive_id( $value, string $param ) {
+		if ( null === $value || '' === $value ) {
+			return true;
+		}
+		if ( ! is_numeric( $value ) || (float) $value !== (float) (int) $value || (int) $value <= 0 ) {
+			return new WP_Error( 'rest_invalid_param', "{$param} must be a positive integer.", array( 'status' => 400 ) );
+		}
+		return true;
+	}
 }
