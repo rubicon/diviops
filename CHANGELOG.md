@@ -10,6 +10,18 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.13.0](https://github.com/rubicon/diviops/compare/v1.12.0...v1.13.0) (2026-07-30)
+
+
+### Features
+
+* **tests:** gated live-WP integration runner ([#102](https://github.com/rubicon/diviops/issues/102)) ([b822a5c](https://github.com/rubicon/diviops/commit/b822a5cd19c6cd017deaf4a3a3c1f832ca88f36d))
+
+
+### Bug Fixes
+
+* **media:** reject non-positive target ids at the REST boundary ([#104](https://github.com/rubicon/diviops/issues/104)) ([1f6b9ab](https://github.com/rubicon/diviops/commit/1f6b9abb4b684df5c5873c8055a96fad6dcae389)), closes [#81](https://github.com/rubicon/diviops/issues/81)
+
 ## [1.12.0](https://github.com/rubicon/diviops/compare/v1.11.0...v1.12.0) (2026-07-30)
 
 
