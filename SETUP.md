@@ -8,7 +8,7 @@ Get from zero to generating Divi 5 pages with Claude Code or Codex in ~15 minute
 
 - **WordPress** 6.5+ with **Divi 5** theme (5.1.0+)
 - **PHP** 7.4+
-- **Node.js** 18+ (for the MCP server)
+- **Node.js** 22+ (for the MCP server)
 - **Claude Code** CLI or **Codex** installed
 - A local or remote WordPress site (Local by Flywheel recommended for local dev)
 
@@ -507,4 +507,4 @@ No clone, no build.
 | WP-CLI "not configured" | Set `WP_PATH` (Local by Flywheel) or `WP_CLI_CMD` (containerized) |
 | Styles not rendering | Hard-refresh browser (Cmd+Shift+R) — CSS cache |
 | VB shows raw `$variable()$` | Dynamic content binding — click the chip to edit |
-| `npx` can't find package | Update Node.js to 18+; verify `npx --version` works; use `npx -y --package @diviops/mcp-server diviops-mcp`; the explicit package/bin form is required |
+| `npx` can't find package | Update Node.js to 22+; verify `npx --version` works; use `npx -y --package @diviops/mcp-server diviops-mcp`; the explicit package/bin form is required |

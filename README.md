@@ -277,7 +277,7 @@ Pro upgrade: <https://diviops.com>
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 22+
 - PHP 7.4+
 - WordPress 6.5+
 - Divi 5.1.0+ theme active

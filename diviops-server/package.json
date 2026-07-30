@@ -45,7 +45,7 @@
   },
   "homepage": "https://github.com/oaris-dev/diviops/tree/main/diviops-server#readme",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
