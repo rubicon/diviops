@@ -2164,6 +2164,43 @@ class DiviOps_Agent {
 		<?php
 	}
 
+	/**
+	 * Capabilities shown on the admin dashboard.
+	 *
+	 * Every entry is a claim a user reads as "this works" or "this does not,"
+	 * so this list may only advertise capabilities the plugin itself provides
+	 * AND can observe. All seven are Divi-backed, so all seven gate on the
+	 * same flag.
+	 *
+	 * WP-CLI used to be listed here and was neither (#123). This plugin never
+	 * executes WP-CLI — there is no shell_exec/proc_open/passthru/WP_CLI:: in
+	 * it, which tests/test-dashboard-capabilities.php asserts so it stays
+	 * true. WP-CLI is run by the Node MCP server, a separate process whose
+	 * environment PHP cannot read, so the old probe
+	 * (`defined( 'DIVIOPS_WP_CLI_PATH' ) || getenv( 'WP_PATH' ) ||
+	 * getenv( 'WP_CLI_CMD' )`) reported a red ✗ on setups where WP-CLI worked
+	 * perfectly well. Defining DIVIOPS_WP_CLI_PATH — a constant referenced
+	 * nowhere else — would only have inverted the lie into an unconditional ✓.
+	 * The MCP server reports genuine WP-CLI readiness through
+	 * `diviops_meta_info`; that is the side of the boundary that can see it.
+	 *
+	 * @param bool $divi_active Whether a Divi 5 install was detected.
+	 * @return array<string,bool> Capability label => availability.
+	 */
+	public static function dashboard_capabilities( $divi_active ) {
+		$divi_active = (bool) $divi_active;
+
+		return [
+			'Pages'         => $divi_active,
+			'Modules'       => $divi_active,
+			'Presets'       => $divi_active,
+			'Library'       => $divi_active,
+			'Theme Builder' => $divi_active,
+			'Canvas'        => $divi_active,
+			'Variables'     => $divi_active,
+		];
+	}
+
 	public static function render_admin_page() {
 		$divi_active   = function_exists( 'et_get_option' );
 		$divi_version  = $divi_active && defined( 'ET_BUILDER_PRODUCT_VERSION' ) ? ET_BUILDER_PRODUCT_VERSION : null;
@@ -2277,18 +2314,7 @@ class DiviOps_Agent {
 				<?php // ── Capabilities ── ?>
 				<div class="card" style="padding:16px 20px;">
 					<h2 style="margin-top:0;">Capabilities</h2>
-					<?php
-					$caps = [
-						'Pages'         => $divi_active,
-						'Modules'       => $divi_active,
-						'Presets'       => $divi_active,
-						'Library'       => $divi_active,
-						'Theme Builder' => $divi_active,
-						'Canvas'        => $divi_active,
-						'Variables'     => $divi_active,
-						'WP-CLI'        => defined( 'DIVIOPS_WP_CLI_PATH' ) || getenv( 'WP_PATH' ) || getenv( 'WP_CLI_CMD' ),
-					];
-					?>
+					<?php $caps = self::dashboard_capabilities( $divi_active ); ?>
 					<ul style="margin:0;padding:0;list-style:none;">
 						<?php foreach ( $caps as $name => $ok ) : ?>
 						<li style="padding:4px 0;">
