@@ -5,7 +5,7 @@
  * Generate one at: WP Admin → Users → Your Profile → Application Passwords.
  */
 
-import { type HandshakeResult } from './compatibility.js';
+import { type ClientRuntime, type HandshakeResult } from './compatibility.js';
 import {
   type DiviopsResponse,
   ErrorCodes,
@@ -414,10 +414,17 @@ export class WPClient {
    */
   async handshake(
     serverVersion: string,
+    clientRuntime?: ClientRuntime,
   ): Promise<HandshakeResult> {
     const result = await this.request<HandshakeResult>('/handshake', {
       method: 'POST',
-      body: { mcp_server_version: serverVersion },
+      body: {
+        mcp_server_version: serverVersion,
+        // Only sent when known. The plugin treats an absent `client_runtime`
+        // as "no report" rather than a negative one (#123), so omitting it
+        // leaves any previous report intact instead of clobbering it.
+        ...(clientRuntime ? { client_runtime: clientRuntime } : {}),
+      },
     });
 
     // Pre-1.2.0 plugins emit `capabilities` as a string[] of coarse

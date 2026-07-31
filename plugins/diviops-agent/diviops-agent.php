@@ -427,6 +427,11 @@ class DiviOps_Agent {
 			'permission_callback' => [ __CLASS__, 'check_read_permission' ],
 			'args'                => [
 				'mcp_server_version' => [ 'required' => true, 'type' => 'string' ],
+				// Optional (#123): runtime facts the client can observe about
+				// itself and this plugin cannot — currently just wp_cli.
+				// Optional on purpose, so every MCP server predating this
+				// contract keeps handshaking unchanged.
+				'client_runtime'     => [ 'required' => false, 'type' => 'object' ],
 			],
 		] );
 
@@ -2165,6 +2170,87 @@ class DiviOps_Agent {
 	}
 
 	/**
+	 * Where the most recent client-reported runtime state is cached.
+	 *
+	 * Long TTL on purpose: this is a "last known" record, not a liveness
+	 * probe. An MCP client may not connect for days, and the dashboard
+	 * showing a timestamped report from last Tuesday is more useful than
+	 * silently reverting to "unknown" because a short window lapsed.
+	 */
+	const CLIENT_RUNTIME_TRANSIENT = 'diviops_client_runtime';
+
+	/**
+	 * Record runtime facts an MCP client reported about itself (#123).
+	 *
+	 * Only fields actually present are written. A client that omits
+	 * `client_runtime` entirely — every MCP server older than this contract —
+	 * must leave the stored report untouched, because silence is not a
+	 * retraction. Recording "absent" as "unavailable" would recreate the
+	 * original bug in a new place: a red cross on a working setup.
+	 *
+	 * @param mixed  $client_runtime Raw `client_runtime` param, unvalidated.
+	 * @param string $server_version Reporting MCP server version, for provenance.
+	 * @return void
+	 */
+	private static function record_client_runtime( $client_runtime, $server_version ) {
+		if ( ! is_array( $client_runtime ) || ! array_key_exists( 'wp_cli', $client_runtime ) ) {
+			return;
+		}
+
+		$stored = get_transient( self::CLIENT_RUNTIME_TRANSIENT );
+		$stored = is_array( $stored ) ? $stored : [];
+
+		$stored['wp_cli'] = [
+			'available'          => (bool) $client_runtime['wp_cli'],
+			'reported_at'        => time(),
+			'mcp_server_version' => $server_version,
+		];
+
+		set_transient( self::CLIENT_RUNTIME_TRANSIENT, $stored, MONTH_IN_SECONDS );
+	}
+
+	/**
+	 * Runtime state reported by MCP clients, for the dashboard.
+	 *
+	 * Deliberately separate from dashboard_capabilities(). Those two answer
+	 * different questions — "what does this plugin provide?" versus "what did
+	 * a client tell us about its own environment?" — and merging them is what
+	 * produced #123 in the first place: WP-CLI sat in the capability list as
+	 * though the plugin provided it, so the dashboard guessed from PHP and
+	 * reported a red cross on setups where WP-CLI worked fine.
+	 *
+	 * Three states, because two cannot express the truth here:
+	 *   available / unavailable  a client actually reported
+	 *   unknown                  nobody has reported yet — NOT "broken"
+	 *
+	 * @return array<string,array{state:string,reported_at:?int,mcp_server_version:?string}>
+	 */
+	public static function dashboard_client_runtime() {
+		$stored = get_transient( self::CLIENT_RUNTIME_TRANSIENT );
+		$stored = is_array( $stored ) ? $stored : [];
+
+		$report = isset( $stored['wp_cli'] ) && is_array( $stored['wp_cli'] ) ? $stored['wp_cli'] : null;
+
+		if ( null === $report ) {
+			return [
+				'wp_cli' => [
+					'state'              => 'unknown',
+					'reported_at'        => null,
+					'mcp_server_version' => null,
+				],
+			];
+		}
+
+		return [
+			'wp_cli' => [
+				'state'              => ! empty( $report['available'] ) ? 'available' : 'unavailable',
+				'reported_at'        => isset( $report['reported_at'] ) ? (int) $report['reported_at'] : null,
+				'mcp_server_version' => isset( $report['mcp_server_version'] ) ? (string) $report['mcp_server_version'] : null,
+			],
+		];
+	}
+
+	/**
 	 * Capabilities shown on the admin dashboard.
 	 *
 	 * Every entry is a claim a user reads as "this works" or "this does not,"
@@ -2323,6 +2409,54 @@ class DiviOps_Agent {
 						</li>
 						<?php endforeach; ?>
 					</ul>
+
+					<?php
+					// Client-reported runtime (#123). Rendered apart from the
+					// list above because it is a different kind of claim: the
+					// list is what this plugin provides, this is what an MCP
+					// client told us about its own environment. Three states —
+					// "unknown" is shown when nobody has reported yet, which is
+					// emphatically not the same as "broken".
+					$runtime = self::dashboard_client_runtime();
+					$wp_cli  = $runtime['wp_cli'];
+					?>
+					<h3 style="margin:16px 0 4px;font-size:13px;">Reported by MCP client</h3>
+					<ul style="margin:0;padding:0;list-style:none;">
+						<li style="padding:4px 0;">
+							<?php
+							if ( 'available' === $wp_cli['state'] ) {
+								echo '<span style="color:#46b450;">&#10003;</span> ';
+							} elseif ( 'unavailable' === $wp_cli['state'] ) {
+								echo '<span style="color:#dc3232;">&#10007;</span> ';
+							} else {
+								echo '<span style="color:#888;">&#8211;</span> ';
+							}
+							?>
+							WP-CLI
+							<?php if ( 'unknown' === $wp_cli['state'] ) : ?>
+								<span class="description">— not reported yet; connect an MCP client</span>
+							<?php else : ?>
+								<span class="description">
+									—
+									<?php
+									echo esc_html(
+										sprintf(
+											/* translators: 1: human-readable time difference, 2: MCP server version */
+											'reported %1$s ago by MCP server %2$s',
+											human_time_diff( (int) $wp_cli['reported_at'] ),
+											$wp_cli['mcp_server_version'] ? $wp_cli['mcp_server_version'] : 'unknown'
+										)
+									);
+									?>
+								</span>
+							<?php endif; ?>
+						</li>
+					</ul>
+					<p class="description" style="margin-top:8px;">
+						WP-CLI is executed by the MCP server, not this plugin, so its
+						availability can only be reported by the client. See
+						<code>diviops_meta_info</code> for the full allowlist.
+					</p>
 				</div>
 
 				<?php // ── Design Library ── ?>

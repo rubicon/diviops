@@ -8004,7 +8004,9 @@ async function main() {
   // module activation). On Free-only sites the Pro fields are
   // normalized to `false` / `{}` by wp-client.
   try {
-    const hs = await wp.handshake(SERVER_VERSION);
+    // Report what this server can see and the plugin cannot: WP-CLI runs
+    // in THIS process, so only we know whether it is wired up (#123).
+    const hs = await wp.handshake(SERVER_VERSION, { wp_cli: wpCli !== null });
     handshakeState = {
       kind: "ok",
       capabilities: hs.capabilities,
