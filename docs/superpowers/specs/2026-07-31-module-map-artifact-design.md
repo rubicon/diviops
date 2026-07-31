@@ -58,7 +58,7 @@ All primary Divi/DiviFlash source; `diviops-agent-pro` is never read.
 |---|---|---|---|
 | 1 | `diviops_schema_get_module` `mode=dump_all` | Per-module element structure, decoration groups, component props, `innerContent`/`advanced` presence | **all 194** |
 | 2 | Divi core `Module/Options/<Group>/<Group>PresetAttrsMap.php` (**46 files**) | Shared decoration-family subfield vocabulary | **universal**, incl. `difl/*` |
-| 3 | Divi core `ModuleLibrary/<Module>/<Module>PresetAttrsMap.php` (**65 files**) | Module-specific leaf paths | **65 of 85 `divi/*`** |
+| 3 | Divi core `ModuleLibrary/<Module>/<Module>PresetAttrsMap.php` (**65 files**) | Module-specific leaf paths | **65 of 85 `divi/*`** — **deferred, blocked on [#119](https://github.com/rubicon/diviops/issues/119)** |
 | 4 | DiviFlash `Builder/Server/modules-json/*/module.json` (112 files) | DiviFlash element names, component props, selectors | 108 `difl/*` |
 | 5 | DiviFlash `Builder/Server/PresetAttrsMapGlobal.php` | How DiviFlash composes preset attrs from Divi groups | `difl/*` |
 | 6 | `df_active_modules` option | Which DiviFlash modules are actually registered | `difl/*` |
@@ -217,18 +217,56 @@ let `schema-route.ts` ship untested until #120.
 
 Review flagged the combined scope as too broad for one PR. Three phases, each shippable:
 
-1. **Generator + provenance model.** Source readers, composition, multi-source stamps,
-   fixture-based tests. No committed artifact yet.
+**Gate: PR [#117](https://github.com/rubicon/diviops/pull/117) merges first.** It is
+currently CONFLICTING and touches `module-formats.md`, which phase 3 also touches.
+
+1. **Generator + provenance model.** Sources 1, 2, 4, 5, 6; composition; multi-source
+   stamps; fixture-based tests. **No source 3** (blocked on #119). No committed artifact
+   yet.
 2. **Artifact + CI.** Commit the generated artifact, wire the integrity gate and
-   `check:schema-drift`.
+   `check:schema-drift`. Size becomes a measured acceptance criterion here.
 3. **Skill prose.** Generated pages for frequently-used modules; reconcile
-   `module-formats.md`'s existing index.
+   `module-formats.md`'s existing index with whatever #117 lands.
+4. **Source 3 backfill** *(after #119)*. Add module-specific leaf paths for the 65
+   `divi/*` modules that have them; flip their `coverage.depth` to `module_specific`.
+   Purely additive.
 
-## What this absorbs
+## Relationship to in-flight work — corrected
 
-`regen-module-formats.mjs` becomes phase 1's generator (all namespaces, not `divi/*`);
-the PresetAttrsMap depth work becomes source 3. Both were separately-spawned tasks whose
-sessions have ended.
+An earlier draft claimed this design "absorbs" two background efforts whose sessions had
+ended. **That was wrong.** Those sessions filed real issues and opened a PR, and one of
+them found a defect that invalidates a mitigation this spec relied on. Re-checked
+2026-07-31:
+
+| Work | Status | Relationship |
+|---|---|---|
+| [#116](https://github.com/rubicon/diviops/issues/116) / **PR [#117](https://github.com/rubicon/diviops/pull/117)** — rebuild `regen-module-formats.mjs` | **Open, CONFLICTING** | **Not absorbed.** It rebuilds the *shallow* group-level generator reproducing today's index byte-identically. This artifact is a different, deeper output. Both touch `module-formats.md`, so **#117 lands first** and this builds after. |
+| [#118](https://github.com/rubicon/diviops/issues/118) — remaining shared decoration families (Tier 2) | Open, not started | **Overlaps source 2.** #118 clean-rooms the families beyond the 7 in `advanced-attributes.md`; this artifact consumes that vocabulary. #118 improves source 2's completeness; neither blocks the other. |
+| [#119](https://github.com/rubicon/diviops/issues/119) — merge-aware leaf-path extractor | Open, not started | **Hard prerequisite for source 3.** See below. |
+
+### Why source 3 is deferred, not merely sequenced
+
+This spec previously proposed mitigating generator drift by "parsing only the `get_map()`
+return shape already proven stable by `scripts/extract-decoration-paths.php` (#62)."
+**That mitigation does not hold**, and #119 documents exactly why:
+
+A per-module `PresetAttrsMap.php`'s `get_map( array $map, string $module_name )` **both
+adds and removes** keys from a base map. `CTAPresetAttrsMap.php` unsets ~150 keys shaped
+like `button.decoration.button.decoration.background__color` and replaces them with the
+real shallow form `button.decoration.background`. **An extractor reading quoted strings
+out of the file would document paths the module's own source explicitly says are wrong** —
+including strings inside the unset list.
+
+`extract-decoration-paths.php`'s per-module mode avoids this only by accident: it is
+hardcoded to paths starting with the literal `module.` prefix, so it never looks at the
+`button.*` paths where the unset keys live. It cannot produce a module's full leaf-path
+set at all.
+
+So source 3 needs #119's add/remove resolution before it can be trusted. **Phases 1–2 ship
+without it**, which costs less than it sounds: source 3 covers 65 `divi/*` modules, and
+none of the 108 `difl/*` modules this artifact primarily exists for have a module-specific
+map anyway. `coverage.depth` already encodes `composed` vs `module_specific`, so adding
+source 3 later is additive, not a rewrite.
 
 ## Risks
 
@@ -249,9 +287,10 @@ sessions have ended.
 - **Selectors matter for comp work.** `AdvancedButton` maps background to
   `.difl_advanced_button_container`. For matching a comp, the target selector is as
   relevant as the attr path.
-- **Generator drift from Divi internals.** Sources 2/3 parse PHP. Parse only the
-  `get_map()` shape already proven stable by `scripts/extract-decoration-paths.php` (#62),
-  and fail loudly on an unrecognized shape rather than silently emitting fewer paths.
+- **Generator drift from Divi internals.** Source 2 parses PHP. Fail loudly on an
+  unrecognized `get_map()` shape rather than silently emitting fewer paths. **Do not
+  reuse this reasoning for source 3** — per-module maps add *and remove* keys, so shape
+  stability is not enough there; that is #119's problem and why source 3 is deferred.
 - **Artifact size is unmeasured.** DiviFlash raw module JSON alone is ~6.4 MB. Collapsing
   repeated vocabulary should shrink it substantially, but that is a prediction — size
   becomes a measured acceptance criterion in phase 2, not a design assumption.
