@@ -10,6 +10,21 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.14.0](https://github.com/rubicon/diviops/compare/v1.13.0...v1.14.0) (2026-07-31)
+
+
+### Features
+
+* **#116:** rebuild diviops-server skill-doc regen tooling ([#117](https://github.com/rubicon/diviops/issues/117)) ([c51b788](https://github.com/rubicon/diviops/commit/c51b7882571d10aaa382a2a9deef8ffc83d158a7))
+* **#63:** clean-room element map + exceptions for CTA, Accordion, Toggle ([#115](https://github.com/rubicon/diviops/issues/115)) ([d32b51d](https://github.com/rubicon/diviops/commit/d32b51df61c54f4f0fda95aab8d2cb555e4eb1ae))
+
+
+### Bug Fixes
+
+* **#120:** reach every module namespace in schema_get_module ([#121](https://github.com/rubicon/diviops/issues/121)) ([b6269e9](https://github.com/rubicon/diviops/commit/b6269e91fa9ca2eac84ca1b78544b5344ff265be))
+* **#123:** stop the dashboard claiming a WP-CLI capability it cannot see ([#124](https://github.com/rubicon/diviops/issues/124)) ([4a77df8](https://github.com/rubicon/diviops/commit/4a77df8312d0d3d5364801eff6160925b11aacc6))
+* **validate:** close coverage gaps found in [#99](https://github.com/rubicon/diviops/issues/99)'s own review ([#111](https://github.com/rubicon/diviops/issues/111)) ([f379cd0](https://github.com/rubicon/diviops/commit/f379cd0b2f70d842ca17831a0180e64368351e0e))
+
 ## [1.13.0](https://github.com/rubicon/diviops/compare/v1.12.0...v1.13.0) (2026-07-30)
 
 
