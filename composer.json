@@ -12,6 +12,6 @@
         "sort-packages": true
     },
     "scripts": {
-        "phpstan": "phpstan analyse"
+        "phpstan": "phpstan analyse --memory-limit=2G"
     }
 }
