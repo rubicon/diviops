@@ -154,3 +154,8 @@ jobs:
       # running.
       - name: Run WP-CLI allowlist / filesystem path validator tests
         run: npm run test:server-security
+
+      # Plain ESM, no tsc involved, so it doesn't inherit index.ts's broken
+      # build either -- see #116.
+      - name: Run regen-module-formats tests
+        run: npm run test:regen-skill

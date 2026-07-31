@@ -23,6 +23,7 @@
     "dev": "tsc --watch",
     "test": "npm run build && node --test dist/__tests__/*.test.js dist/preset-cli/__tests__/*.test.js dist/cross-env-preflight/__tests__/*.test.js",
     "test:server-security": "tsc -p tsconfig.test.json && env -u DIVIOPS_WP_CLI_ALLOW node --test dist-test/__tests__/*.test.js",
+    "test:regen-skill": "node --test scripts/regen-module-formats.test.mjs",
     "prepublishOnly": "npm run build",
     "regen:skill": "node scripts/regen-module-formats.mjs"
   },
