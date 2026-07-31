@@ -1046,7 +1046,8 @@ registerPluginTool(
         ),
       dry_run: DRY_RUN_FIELD,
     },
-    annotations: { idempotentHint: false },
+    annotations: { idempotentHint: true },
+    _meta: { idempotent: "true" },
   },
   async ({ menu_id, item_id, cascade, dry_run }) => {
     const body: Record<string, unknown> = { menu_id, item_id };
