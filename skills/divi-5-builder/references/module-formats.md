@@ -340,19 +340,23 @@ The Pro version includes per-module element maps (elements, innerContent shapes,
 
 Upgrade to Pro: https://diviops.com
 
+### About the generated index
+
+*This section is hand-maintained and sits outside the generated region on purpose —
+anything between the `GENERATED:header` sentinels is overwritten on every regen.*
+
+> Regenerate with `node scripts/regen-module-formats.mjs` from `diviops-server/` (tests: `npm run test:regen-skill`). **The script only regenerates modules that already have a sentinel pair — it does not auto-discover newly-released modules.** Adding a module to this index is still a deliberate manual first step: hand-add its empty sentinel pair at the correct alphabetical position, then regenerate. See `diviops-server/CONTRIBUTING.md` for the full convention (#116).
+
+> **Verification history.** Spot-verified against live Divi `5.9.0` for `divi/accordion`, `divi/blurb`, `divi/button`, `divi/image`, `divi/text`, `divi/toggle`, and `divi/video` (2026-07-30, #63) — byte-for-byte identical to the prior `5.8.0`-generated content, so the 5.8.0 → 5.9.0 move produced no drift in those blocks. The `divi/cta` block was authored fresh (previously absent from this index entirely) and cross-checked against `CTAPresetAttrsMap.php`, Divi's own preset-registration source: every element (`button`/`content`/`module`/`title`) and every decoration group listed for CTA below is independently confirmed present there, with zero contradictions.
+
+> **Depth limit.** That source reaches full leaf-level paths (e.g. `button.decoration.button__icon.enable`); this index, like every block below, reaches only group level (`button.decoration.button`). Re-deriving at leaf depth needs merge-aware extraction (#119) — a per-module `PresetAttrsMap`'s `get_map()` both **adds and removes** keys, so reading it as a flat list of quoted strings would document paths the module's own source explicitly unsets.
 <!-- BEGIN GENERATED:header -->
 
 ## Generated path index
 
 > Generated mechanically by `diviops-server/scripts/regen-module-formats.mjs` from `diviops_schema_get_module` dump-all output. Each module block lives between `BEGIN GENERATED:module:divi/<slug>` / `END GENERATED:module:divi/<slug>` HTML-comment sentinels (see `diviops-server/CONTRIBUTING.md` for the full convention). Do **not** edit between sentinels — edits are clobbered on regen.
->
-> Regenerate with `node scripts/regen-module-formats.mjs` from `diviops-server/` (tests: `npm run test:regen-skill`). **The script only regenerates modules that already have a sentinel pair — it does not auto-discover newly-released modules.** Adding a module to this index is still a deliberate manual first step: hand-add its empty sentinel pair at the correct alphabetical position, then regenerate. See `diviops-server/CONTRIBUTING.md` for the full convention (#116).
 
 > Generated against Divi `5.9.0`, schema `3b1ecaf27925…`.
->
-> **Verification history.** Spot-verified against live Divi `5.9.0` for `divi/accordion`, `divi/blurb`, `divi/button`, `divi/image`, `divi/text`, `divi/toggle`, and `divi/video` (2026-07-30, #63) — byte-for-byte identical to the prior `5.8.0`-generated content, so the 5.8.0 → 5.9.0 move produced no drift in those blocks. The `divi/cta` block was authored fresh (previously absent from this index entirely) and cross-checked against `CTAPresetAttrsMap.php`, Divi's own preset-registration source: every element (`button`/`content`/`module`/`title`) and every decoration group listed for CTA below is independently confirmed present there, with zero contradictions.
->
-> **Depth limit.** That source reaches full leaf-level paths (e.g. `button.decoration.button__icon.enable`); this index, like every block below, reaches only group level (`button.decoration.button`). Re-deriving at leaf depth needs merge-aware extraction (#119) — a per-module `PresetAttrsMap`'s `get_map()` both **adds and removes** keys, so reading it as a flat list of quoted strings would document paths the module's own source explicitly unsets.
 
 Per CLAUDE.md "Suite architecture coherence": schema dump is the canonical index; VB-verified prose above is the canonical interpretation. The two sections are complementary, not competing — prose explains surprises, this index enumerates paths exhaustively. On conflicts, the prose above wins (per `feedback_vb_first_verification`).
 
