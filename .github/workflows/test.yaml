@@ -119,7 +119,9 @@ jobs:
       # issue's own "start permissive, ratchet up" plan. Level and baseline
       # both live in phpstan.neon.dist, not duplicated here.
       - name: Run PHPStan
-        run: vendor/bin/phpstan analyse --no-progress --memory-limit=2G
+        # Runs the same composer script a developer runs locally, so the
+        # memory limit cannot drift between here and a workstation (#125).
+        run: composer phpstan -- --no-progress
 
   server-security-test:
     name: diviops-server security tests (node ${{ matrix.node }})
