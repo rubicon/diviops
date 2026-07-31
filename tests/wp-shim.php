@@ -426,6 +426,21 @@ if ( ! class_exists( 'WP_REST_Response' ) ) {
 	}
 }
 
+if ( ! function_exists( 'rest_ensure_response' ) ) {
+	/**
+	 * Mirrors core: a WP_Error passes through untouched, an existing
+	 * WP_REST_Response is returned as-is, anything else is wrapped. Handlers
+	 * return all three shapes, so a shim that always wrapped would hide the
+	 * difference between an error and a successful payload.
+	 */
+	function rest_ensure_response( $response ) {
+		if ( $response instanceof WP_Error || $response instanceof WP_REST_Response ) {
+			return $response;
+		}
+		return new WP_REST_Response( $response );
+	}
+}
+
 if ( ! isset( $GLOBALS['diviops_test_posts'] ) ) {
 	$GLOBALS['diviops_test_posts'] = array();
 }
@@ -628,8 +643,51 @@ if ( ! function_exists( 'current_time' ) ) {
 	}
 }
 
+// WordPress' own time constants (wp-includes/default-constants.php). Values
+// match core exactly — a shim that redefined them would let a test pass on a
+// duration the real site would never use.
+if ( ! defined( 'MINUTE_IN_SECONDS' ) ) {
+	define( 'MINUTE_IN_SECONDS', 60 );
+}
+if ( ! defined( 'HOUR_IN_SECONDS' ) ) {
+	define( 'HOUR_IN_SECONDS', 60 * MINUTE_IN_SECONDS );
+}
+if ( ! defined( 'DAY_IN_SECONDS' ) ) {
+	define( 'DAY_IN_SECONDS', 24 * HOUR_IN_SECONDS );
+}
+if ( ! defined( 'WEEK_IN_SECONDS' ) ) {
+	define( 'WEEK_IN_SECONDS', 7 * DAY_IN_SECONDS );
+}
+if ( ! defined( 'MONTH_IN_SECONDS' ) ) {
+	define( 'MONTH_IN_SECONDS', 30 * DAY_IN_SECONDS );
+}
+
+// In-memory transient store. delete_transient() predates this and returned a
+// bare true, which was fine while nothing read transients back; the
+// client-runtime report (#123) round-trips through set/get, so the three now
+// share real storage and delete actually deletes.
+if ( ! isset( $GLOBALS['diviops_test_transients'] ) ) {
+	$GLOBALS['diviops_test_transients'] = [];
+}
+
+if ( ! function_exists( 'set_transient' ) ) {
+	function set_transient( $transient, $value, $expiration = 0 ) {
+		$GLOBALS['diviops_test_transients'][ $transient ] = $value;
+		return true;
+	}
+}
+
+if ( ! function_exists( 'get_transient' ) ) {
+	function get_transient( $transient ) {
+		// WordPress returns false for a missing transient, which is why callers
+		// must not store a literal false and expect to read it back.
+		return $GLOBALS['diviops_test_transients'][ $transient ] ?? false;
+	}
+}
+
 if ( ! function_exists( 'delete_transient' ) ) {
 	function delete_transient( $transient ) {
+		unset( $GLOBALS['diviops_test_transients'][ $transient ] );
 		return true;
 	}
 }
