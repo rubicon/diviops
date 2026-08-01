@@ -22,8 +22,8 @@ The published `@diviops/mcp-server` npm package ships the real compiled
 output — `dist/cross-env-preflight/*.{js,d.ts}` — even though the `.ts`
 source is not public anywhere. That package is **MIT-licensed**
 (`"license": "MIT"` in its own `package.json`), publicly and freely
-distributed on the npm registry to every installer, so vendoring its already
--compiled, already-public output here is using our own project's own
+distributed on the npm registry to every installer, so vendoring its
+already-compiled, already-public output here is using our own project's own
 published distribution — not a clean-room concern, and unrelated to the
 `diviops-agent-pro` WordPress plugin (a separate, commercial, non-MIT
 component this fork never reads from).

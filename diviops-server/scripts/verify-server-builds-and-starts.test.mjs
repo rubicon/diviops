@@ -76,17 +76,24 @@ describe('server build', () => {
       timeout: 15_000,
     });
 
+    assert.equal(
+      result.error,
+      undefined,
+      `server process did not run to completion: ${result.error?.message}`,
+    );
+    const stderr = result.stderr ?? '';
+
     assert.ok(
-      result.stderr.includes('Missing required environment variable'),
-      `expected the graceful missing-credentials message, got:\n${result.stderr}`,
+      stderr.includes('Missing required environment variable'),
+      `expected the graceful missing-credentials message, got:\n${stderr}`,
     );
     assert.ok(
-      !result.stderr.includes('ERR_MODULE_NOT_FOUND'),
-      `#41 regression: server crashed on module resolution:\n${result.stderr}`,
+      !stderr.includes('ERR_MODULE_NOT_FOUND'),
+      `#41 regression: server crashed on module resolution:\n${stderr}`,
     );
     assert.ok(
-      !result.stderr.includes('_meta.idempotent'),
-      `#128 regression: a tool is missing its idempotent declaration:\n${result.stderr}`,
+      !stderr.includes('_meta.idempotent'),
+      `#128 regression: a tool is missing its idempotent declaration:\n${stderr}`,
     );
   });
 });
