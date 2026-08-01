@@ -18,7 +18,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-vendored-cross-env-preflight.mjs",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
     "test": "npm run build && node --test dist/__tests__/*.test.js dist/preset-cli/__tests__/*.test.js dist/cross-env-preflight/__tests__/*.test.js",
