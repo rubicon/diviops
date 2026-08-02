@@ -256,6 +256,41 @@ if ( ! function_exists( 'current_user_can' ) ) {
 	}
 }
 
+if ( ! function_exists( 'get_current_user_id' ) ) {
+	/**
+	 * Fixed-zero stub — the natural "no auth context" value in this CLI
+	 * harness. No test asserts on this value; it exists only so calls like
+	 * handshake() (trait-meta.php) don't fatal on an undefined function.
+	 */
+	function get_current_user_id() {
+		return 0;
+	}
+}
+
+if ( ! function_exists( 'wp_get_current_user' ) ) {
+	/**
+	 * Fixed stub exposing the `user_login` property real callers read
+	 * (e.g. handshake()'s `wp_get_current_user()->user_login`). No test
+	 * asserts on this value.
+	 */
+	function wp_get_current_user() {
+		return (object) array(
+			'ID'         => 0,
+			'user_login' => '',
+		);
+	}
+}
+
+if ( ! function_exists( 'get_site_url' ) ) {
+	/**
+	 * Fixed placeholder stub, matching get_permalink()/admin_url()'s
+	 * example.test convention below. No test asserts on this value.
+	 */
+	function get_site_url() {
+		return 'http://example.test';
+	}
+}
+
 if ( ! function_exists( 'apply_filters' ) ) {
 	/**
 	 * Real filter runner over the registry add_filter() above builds: runs every
