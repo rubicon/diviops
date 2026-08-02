@@ -10,6 +10,13 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.14.1](https://github.com/rubicon/diviops/compare/v1.14.0...v1.14.1) (2026-08-01)
+
+
+### Bug Fixes
+
+* **#41, #128:** diviops-server builds and starts from a clean checkout ([#129](https://github.com/rubicon/diviops/issues/129)) ([c6d72d0](https://github.com/rubicon/diviops/commit/c6d72d081d6b685c13f2af795e6da55f7c45e121))
+
 ## [1.14.0](https://github.com/rubicon/diviops/compare/v1.13.0...v1.14.0) (2026-07-31)
 
 

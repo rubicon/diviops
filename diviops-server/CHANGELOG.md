@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/rubicon/diviops/compare/mcp-server-v1.6.0...mcp-server-v1.6.1) (2026-08-01)
+
+
+### Bug Fixes
+
+* **#41, #128:** diviops-server builds and starts from a clean checkout ([#129](https://github.com/rubicon/diviops/issues/129)) ([c6d72d0](https://github.com/rubicon/diviops/commit/c6d72d081d6b685c13f2af795e6da55f7c45e121))
+
 ## [1.6.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.5.38...mcp-server-v1.6.0) (2026-07-31)
 
 
