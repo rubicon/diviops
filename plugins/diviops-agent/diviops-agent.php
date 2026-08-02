@@ -582,6 +582,89 @@ class DiviOps_Agent {
 		return self::page_create_permission_result( $request );
 	}
 
+	/**
+	 * Resolve page status-transition authority before a plan or mutation.
+	 *
+	 * DIVERGES from upstream deliberately (owner decision 2026-08-02):
+	 * (1) does NOT narrow to page-type posts — the route keeps accepting any
+	 * post type the id resolves to, matching page_update_status()'s existing
+	 * behavior; (2) resolves the publish capability from the ACTUAL post's
+	 * post_type, not a hardcoded 'page', so a non-page post's publish
+	 * transition is gated against its own type's publish_posts capability
+	 * rather than page's (the same post_type-blindness class of bug this PR
+	 * fixes in page_create). See the PR 2 implementation plan, Task 3.
+	 *
+	 * @param WP_REST_Request|ArrayAccess $request REST-like request.
+	 * @return true|WP_Error
+	 */
+	private static function page_update_status_permission_result( $request ) {
+		$post_id = absint( $request['id'] ?? 0 );
+		$status  = sanitize_key( (string) $request->get_param( 'status' ) );
+
+		if ( ! in_array( $status, self::supported_page_statuses(), true ) ) {
+			return new WP_Error(
+				'rest_invalid_param',
+				'Status is not supported for DiviOps page status updates.',
+				[ 'status' => 400 ]
+			);
+		}
+
+		$post = get_post( $post_id );
+		if ( ! $post ) {
+			return new WP_Error(
+				'rest_cannot_edit',
+				'Sorry, you are not allowed to edit this content.',
+				[ 'status' => 403 ]
+			);
+		}
+
+		if ( ! current_user_can( 'edit_post', $post_id ) ) {
+			return new WP_Error(
+				'rest_cannot_edit',
+				'Sorry, you are not allowed to edit this content.',
+				[ 'status' => 403 ]
+			);
+		}
+
+		$post_type = get_post_type_object( (string) $post->post_type );
+		if ( ! $post_type ) {
+			return new WP_Error(
+				'rest_cannot_edit',
+				'This content type does not expose the capability required for status updates.',
+				[ 'status' => 403, 'post_type' => (string) $post->post_type ]
+			);
+		}
+
+		$publish_capability = isset( $post_type->cap->publish_posts ) ? (string) $post_type->cap->publish_posts : '';
+		if (
+			self::page_status_requires_publish_capability( $status )
+			&& ( '' === $publish_capability || ! current_user_can( $publish_capability ) )
+		) {
+			return new WP_Error(
+				'rest_cannot_publish',
+				'Sorry, you are not allowed to publish this content or make it private.',
+				[
+					'status'              => 403,
+					'post_type'           => (string) $post->post_type,
+					'required_capability' => $publish_capability,
+					'requested_status'    => $status,
+				]
+			);
+		}
+
+		return true;
+	}
+
+	/**
+	 * Request-aware REST permission callback for POST /page/update-status/{id}.
+	 *
+	 * @param WP_REST_Request $request Current REST request.
+	 * @return true|WP_Error
+	 */
+	public static function check_page_update_status_permission( $request ) {
+		return self::page_update_status_permission_result( $request );
+	}
+
 	public static function check_authenticated_permission() {
 		return get_current_user_id() > 0;
 	}
