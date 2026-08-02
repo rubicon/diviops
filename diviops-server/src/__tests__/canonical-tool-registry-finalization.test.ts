@@ -8,9 +8,11 @@
  * the test that actually verifies the refactor's behavior: that the
  * finalized registry contains the expected tools, that idempotent metadata
  * still agrees between _meta and annotations (the #128 invariant, now under
- * a different registration path), that Pro tools only register when the
- * handshake state says Pro is active, and that a duplicate registration
- * throws instead of silently overwriting.
+ * a different registration path), that Free-mode (proActive:false)
+ * finalization excludes Pro-gated tools (the Pro-active path is out of
+ * scope here — the one-shot finalize guard prevents a second finalization
+ * in the same process), and that a duplicate registration throws instead
+ * of silently overwriting.
  *
  * Imports index.ts directly with no WP_URL/WP_USER/WP_APP_PASSWORD set —
  * this only works because requireCredentials() now runs inside main(),
@@ -100,6 +102,15 @@ describe('CanonicalToolRegistry finalization', () => {
       );
     }
     assert.ok(checked > 0, 'at least one registered tool should carry both _meta.idempotent and annotations.idempotentHint to check');
+  });
+
+  it('excludes Pro-gated tools from the Free-mode (proActive:false) catalog', () => {
+    // OK_STATE has proActive:false, so registerProTool's internal gate should
+    // register zero Pro tools. Assert a representative Pro-only tool is absent.
+    assert.ok(
+      !productionToolNames.includes('diviops_cross_env_header_apply'),
+      'a Pro-gated tool must not appear in the Free-mode catalog',
+    );
   });
 
   it('a duplicate tool registration throws instead of silently overwriting', () => {
