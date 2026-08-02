@@ -424,24 +424,6 @@ class DiviOps_Agent {
 	}
 
 	/**
-	 * Convert a route-style capability error into the canonical DiviOps refusal.
-	 *
-	 * @param WP_Error $error Permission error from a request-aware guard.
-	 * @return WP_REST_Response
-	 */
-	private static function post_type_permission_refusal( $error ) {
-		$data = is_array( $error->get_error_data() ) ? $error->get_error_data() : [];
-		unset( $data['status'] );
-		return self::envelope_error(
-			'forbidden',
-			(string) $error->get_error_message(),
-			'Authenticate as a user with the required content capability, then retry.',
-			403,
-			empty( $data ) ? null : $data
-		);
-	}
-
-	/**
 	 * Require mapped creation and publishing capabilities for fixed-publish CPT writes.
 	 *
 	 * @param string[] $post_types Post types the operation will create.
