@@ -406,6 +406,104 @@ class DiviOps_Agent {
 		return current_user_can( 'edit_pages' );
 	}
 
+	/**
+	 * Statuses intentionally supported by DiviOps page create/status routes.
+	 *
+	 * WordPress core can register additional workflow statuses, but accepting
+	 * every non-internal status here would bypass the status-specific contract
+	 * enforced by WP_REST_Posts_Controller::handle_status_param().
+	 *
+	 * @return string[]
+	 */
+	private static function supported_page_statuses(): array {
+		return [ 'draft', 'pending', 'publish', 'future', 'private' ];
+	}
+
+	private static function page_status_requires_publish_capability( string $status ): bool {
+		return in_array( $status, [ 'publish', 'future', 'private' ], true );
+	}
+
+	/**
+	 * Convert a route-style capability error into the canonical DiviOps refusal.
+	 *
+	 * @param WP_Error $error Permission error from a request-aware guard.
+	 * @return WP_REST_Response
+	 */
+	private static function post_type_permission_refusal( $error ) {
+		$data = is_array( $error->get_error_data() ) ? $error->get_error_data() : [];
+		unset( $data['status'] );
+		return self::envelope_error(
+			'forbidden',
+			(string) $error->get_error_message(),
+			'Authenticate as a user with the required content capability, then retry.',
+			403,
+			empty( $data ) ? null : $data
+		);
+	}
+
+	/**
+	 * Require mapped creation and publishing capabilities for fixed-publish CPT writes.
+	 *
+	 * @param string[] $post_types Post types the operation will create.
+	 * @return true|WP_Error
+	 */
+	private static function published_post_types_permission_result( array $post_types ) {
+		foreach ( array_values( array_unique( $post_types ) ) as $post_type_name ) {
+			$post_type = get_post_type_object( $post_type_name );
+			if ( ! $post_type || ! isset( $post_type->cap->create_posts, $post_type->cap->publish_posts ) ) {
+				return new WP_Error(
+					'rest_cannot_create',
+					'Sorry, this content type does not expose the capabilities required for creation.',
+					[ 'status' => 403, 'post_type' => $post_type_name ]
+				);
+			}
+			foreach ( [ 'create_posts', 'publish_posts' ] as $cap_key ) {
+				$capability = (string) $post_type->cap->{$cap_key};
+				if ( '' === $capability || ! current_user_can( $capability ) ) {
+					return new WP_Error(
+						'create_posts' === $cap_key ? 'rest_cannot_create' : 'rest_cannot_publish',
+						'Sorry, you are not allowed to create published content of this type.',
+						[
+							'status'              => 403,
+							'post_type'           => $post_type_name,
+							'required_capability' => $capability,
+						]
+					);
+				}
+			}
+		}
+
+		return true;
+	}
+
+	private static function fixed_publish_route_permission( string $base_capability, array $post_types ) {
+		if ( ! current_user_can( $base_capability ) ) {
+			return new WP_Error( 'rest_forbidden', 'Sorry, you are not allowed to perform this operation.', [ 'status' => 403 ] );
+		}
+		return self::published_post_types_permission_result( $post_types );
+	}
+
+	public static function check_canvas_create_permission() {
+		return self::fixed_publish_route_permission( 'edit_pages', [ 'et_pb_canvas' ] );
+	}
+
+	public static function check_library_save_permission() {
+		return self::fixed_publish_route_permission( 'manage_options', [ 'et_pb_layout' ] );
+	}
+
+	public static function check_tb_template_create_permission( $request ) {
+		$post_types = [ 'et_theme_builder', 'et_template' ];
+		$header_content = $request->get_param( 'header_content' );
+		$footer_content = $request->get_param( 'footer_content' );
+		if ( is_string( $header_content ) && '' !== $header_content ) {
+			$post_types[] = 'et_header_layout';
+		}
+		if ( is_string( $footer_content ) && '' !== $footer_content ) {
+			$post_types[] = 'et_footer_layout';
+		}
+		return self::fixed_publish_route_permission( 'manage_options', $post_types );
+	}
+
 	public static function check_authenticated_permission() {
 		return get_current_user_id() > 0;
 	}
