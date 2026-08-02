@@ -1730,6 +1730,11 @@ trait DiviOps_Agent_Meta {
 			'compatible'     => true,
 			'plugin_version' => self::VERSION,
 			'min_server'     => self::MIN_SERVER_VERSION,
+			'authenticated_user' => [
+				'id'    => get_current_user_id(),
+				'login' => wp_get_current_user()->user_login,
+			],
+			'site_url'       => get_site_url(),
 			'divi'           => [
 				'active'  => $divi_active,
 				'version' => $divi_version,
