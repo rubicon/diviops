@@ -1200,7 +1200,7 @@ class DiviOps_Agent {
 		register_rest_route( self::REST_NAMESPACE, '/library/save', [
 			'methods'             => 'POST',
 			'callback'            => [ __CLASS__, 'library_save' ],
-			'permission_callback' => [ __CLASS__, 'check_admin_permission' ],
+			'permission_callback' => [ __CLASS__, 'check_library_save_permission' ],
 			'args'                => [
 				'title'       => [ 'required' => true, 'type' => 'string' ],
 				'content'     => [ 'required' => true, 'type' => 'string' ],
@@ -1428,7 +1428,7 @@ class DiviOps_Agent {
 		register_rest_route( self::REST_NAMESPACE, '/theme-builder/template/create', [
 			'methods'             => 'POST',
 			'callback'            => [ __CLASS__, 'tb_template_create' ],
-			'permission_callback' => [ __CLASS__, 'check_admin_permission' ],
+			'permission_callback' => [ __CLASS__, 'check_tb_template_create_permission' ],
 			'args'                => [
 				'title'          => [ 'required' => true, 'type' => 'string' ],
 				'condition'      => [ 'required' => true, 'type' => 'string' ],
@@ -1655,7 +1655,7 @@ class DiviOps_Agent {
 		register_rest_route( self::REST_NAMESPACE, '/page/update-status/(?P<id>\d+)', [
 			'methods'             => 'POST',
 			'callback'            => [ __CLASS__, 'page_update_status' ],
-			'permission_callback' => [ __CLASS__, 'check_write_permission' ],
+			'permission_callback' => [ __CLASS__, 'check_page_update_status_permission' ],
 			'args'                => [
 				'id'       => [ 'required' => true ],
 				'status'   => [
@@ -2019,12 +2019,18 @@ class DiviOps_Agent {
 		register_rest_route( self::REST_NAMESPACE, '/page/create', [
 			'methods'             => 'POST',
 			'callback'            => [ __CLASS__, 'page_create' ],
-			'permission_callback' => [ __CLASS__, 'check_write_permission' ],
+			'permission_callback' => [ __CLASS__, 'check_page_create_permission' ],
 			'args'                => [
 				'title'     => [ 'required' => true, 'type' => 'string' ],
 				'content'   => [ 'required' => false, 'type' => 'string', 'default' => '' ],
-				'status'    => [ 'required' => false, 'type' => 'string', 'default' => 'draft' ],
+				'status'    => [
+					'required' => false,
+					'type'     => 'string',
+					'default'  => 'draft',
+					'enum'     => [ 'draft', 'pending', 'publish', 'future', 'private' ],
+				],
 				'post_type' => [ 'required' => false, 'type' => 'string', 'default' => 'page' ],
+				'dry_run'   => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
 			],
 		] );
 
@@ -2061,7 +2067,7 @@ class DiviOps_Agent {
 		register_rest_route( self::REST_NAMESPACE, '/canvas/create', [
 			'methods'             => 'POST',
 			'callback'            => [ __CLASS__, 'canvas_create' ],
-			'permission_callback' => [ __CLASS__, 'check_write_permission' ],
+			'permission_callback' => [ __CLASS__, 'check_canvas_create_permission' ],
 			'args'                => [
 				'title'          => [ 'required' => true, 'type' => 'string' ],
 				'parent_page_id' => [ 'required' => true, 'type' => 'integer' ],
@@ -2124,7 +2130,7 @@ class DiviOps_Agent {
 		register_rest_route( self::REST_NAMESPACE, '/canvas/duplicate/(?P<id>\d+)', [
 			'methods'             => 'POST',
 			'callback'            => [ __CLASS__, 'canvas_duplicate' ],
-			'permission_callback' => [ __CLASS__, 'check_write_permission' ],
+			'permission_callback' => [ __CLASS__, 'check_canvas_create_permission' ],
 			'args'                => [
 				'title'   => [ 'required' => false, 'type' => 'string' ],
 				'dry_run' => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
