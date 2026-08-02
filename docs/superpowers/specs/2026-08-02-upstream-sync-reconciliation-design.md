@@ -43,6 +43,12 @@ Status: design — pending owner review
   [#133](https://github.com/rubicon/diviops/pull/133) before these decisions; the low-priority
   cancellation-wiring ceiling it surfaced is tracked as
   [#134](https://github.com/rubicon/diviops/issues/134).
+- 2026-08-02, third PR-2 divergence added during execution — Codex adversarial review caught
+  that `page_create`/`page_update_status` dropped the historical `edit_pages` floor (a
+  privilege expansion for non-page post types); owner approved restoring it (see PR 2 §third
+  divergence below). The task reviewer had approved the same diff, explicitly mis-checking the
+  base-capability supersets — the finding is entirely the parallel Codex pass's. Also removed
+  the dead `post_type_permission_refusal()` helper in the same fix.
 
 ## Problem
 
@@ -280,6 +286,26 @@ its own type's). So the fork's `page_update_status_permission_result()` diverges
 in two deliberate ways: no type narrowing, and a post_type-aware publish check. This is a
 larger, intentional divergence than the original plan's "adopt the narrowing" — recorded here
 as the governing decision.
+
+**Third divergence — the `edit_pages` base floor (found during PR 2 execution by Codex
+adversarial review, owner-approved 2026-08-02).** Upstream's `page_create_permission_result()`
+and `page_update_status_permission_result()` have **no** base-capability floor — they gate
+purely on the target post type's own caps. But the routes they replace the callback for
+(`/page/create`, `/page/update-status`) were previously gated by `check_write_permission()`
+(`edit_pages`). Adopting upstream's floor-less functions verbatim silently dropped that floor:
+for `post_type=post` (whose `create_posts` maps to `edit_posts`), an Author/Contributor with
+`edit_posts`-but-not-`edit_pages` gained create/status-change access they never had — a real
+privilege expansion, not one of the intended divergences, and asymmetric with the sibling
+routes (canvas/library/theme-builder keep their floor via `fixed_publish_route_permission()`).
+Owner decision: **restore the `edit_pages` floor** as an additive base check (first statement,
+before the per-type checks) in both functions, matching the sibling routes. Result: both page
+routes now require `edit_pages` AND the target type's own caps — a strict superset of both the
+old behavior and upstream's, with zero privilege expansion (`post_type=page` unchanged from
+today). This gap traces to the original plan's code, which mirrored upstream's floor-less
+structure for these two functions while the sibling routes correctly routed through the
+floor-carrying helper — a single-reviewer blind spot the parallel Codex pass caught. Also
+removed in the same fix: the unused `post_type_permission_refusal()` helper (dead code
+inherited from upstream's permission scaffolding, never wired to any callback).
 
 **PR 3 — `CanonicalToolRegistry` hand-port + `health-tools.ts`'s production exports.**
 Sequenced last since it's central plumbing best applied after PR 1/PR 2 are merged and
