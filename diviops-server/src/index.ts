@@ -75,20 +75,6 @@ const WP_URL = process.env.WP_URL ?? "";
 const WP_USER = process.env.WP_USER ?? "";
 const WP_APP_PASSWORD = process.env.WP_APP_PASSWORD ?? "";
 
-if (!WP_URL || !WP_USER || !WP_APP_PASSWORD) {
-  const missing = [
-    !WP_URL && "WP_URL",
-    !WP_USER && "WP_USER",
-    !WP_APP_PASSWORD && "WP_APP_PASSWORD",
-  ].filter(Boolean);
-  console.error(
-    `Error: Missing required environment variable(s): ${missing.join(", ")}.\n` +
-      "Set WP_URL to your WordPress site URL (e.g. http://mysite.local).\n" +
-      "Generate an Application Password at: WP Admin → Users → Profile → Application Passwords",
-  );
-  process.exit(1);
-}
-
 const wp = new WPClient({
   siteUrl: WP_URL,
   username: WP_USER,
@@ -8002,9 +7988,46 @@ function registerProTools(): void {
   );
 }
 
+let productionRegistryFinalized = false;
+
+/**
+ * Complete the canonical registry after the connected site's handshake has
+ * settled. Production startup and any future credential-free compatibility
+ * fixture deliberately share this seam so a test materializes the real
+ * Free/Pro-gated catalog instead of maintaining a second set of definitions.
+ */
+export function finalizeProductionRegistryForHandshake(
+  state: HandshakeState,
+): CanonicalToolRegistry {
+  if (productionRegistryFinalized) {
+    throw new Error("Production MCP registry has already been finalized");
+  }
+  handshakeState = state;
+  registerCrossEnvEvidenceTools();
+  registerProTools();
+  productionRegistryFinalized = true;
+  return registry;
+}
+
 // ── Start ────────────────────────────────────────────────────────────
 
+function requireCredentials(): void {
+  if (WP_URL && WP_USER && WP_APP_PASSWORD) return;
+  const missing = [
+    !WP_URL && "WP_URL",
+    !WP_USER && "WP_USER",
+    !WP_APP_PASSWORD && "WP_APP_PASSWORD",
+  ].filter(Boolean);
+  console.error(
+    `Error: Missing required environment variable(s): ${missing.join(", ")}.\n` +
+      "Set WP_URL to your WordPress site URL (e.g. http://mysite.local).\n" +
+      "Generate an Application Password at: WP Admin → Users → Profile → Application Passwords",
+  );
+  process.exit(1);
+}
+
 async function main() {
+  requireCredentials();
   // Capability handshake — populate the per-tool gate map (#486)
   // and the ADR-003 / ADR-007 Pro-extension surface (target presence,
   // module activation). On Free-only sites the Pro fields are
@@ -8057,24 +8080,34 @@ async function main() {
     console.error(`Handshake warning (gate disabled): ${msg}`);
   }
 
-  // The cross-env evidence schema is additive-capability aware: older Free
-  // plugins retain the existing header-only enum, while current plugins prove
-  // footer support through cross_env_footer_layout_evidence.
-  registerCrossEnvEvidenceTools();
+  // Cross-env evidence and Pro coverage-slice registration must run AFTER
+  // the handshake so capability and tier gates reflect the connected site.
+  const finalizedRegistry =
+    finalizeProductionRegistryForHandshake(handshakeState);
 
-  // Pro coverage-slice registration must run AFTER the handshake so the
-  // gates (`pro_active`, `available_targets`, `active_modules`,
-  // capability map) reflect the connected site's actual state. On Free
-  // sites — or when the handshake failed — registerProTool's internal
-  // gates short-circuit so no Pro tools register.
-  registerProTools();
-
+  const server = new McpServer({
+    name: "diviops-mcp",
+    version: SERVER_VERSION,
+  });
+  finalizedRegistry.install(server);
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Divi MCP Server running on stdio");
 }
 
-main().catch((error) => {
-  console.error("Fatal error:", error);
-  process.exit(1);
-});
+function isDirectEntryPoint(): boolean {
+  const entryPoint = process.argv[1];
+  if (!entryPoint) return false;
+  try {
+    return realpathSync(entryPoint) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectEntryPoint()) {
+  main().catch((error) => {
+    console.error("Fatal error:", error);
+    process.exit(1);
+  });
+}
