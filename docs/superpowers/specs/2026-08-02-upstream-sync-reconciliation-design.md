@@ -22,6 +22,18 @@ Status: design — pending owner review
   even on `upstream/main` itself, confirmed via `git cat-file -e`. All three corrected
   below in place; nothing removed from the review's findings without a verification step
   first.
+- 2026-08-02, corrected during implementation planning (`writing-plans`, PR 2): the
+  "TDD, failing-first" step this spec originally specified for the `page_create` `post_type`
+  bug is not achievable — `current_user_can()`/`get_post_type_object()` are unshimmed in this
+  repo's test harness, so a controlling test would be mocked-behavior, which this project's
+  engineering policy prohibits outright, not merely discourages. Caught before any test was
+  written, per the same policy's explicit "STOP and warn Dax" instruction. Corrected to
+  inspection + full-regression-suite verification, matching PR 1's already-established
+  precedent for the same class of unshimmed-primitive change. Also newly found in the same
+  pass: `page_update_status_permission_result()` narrows that route to `page`-type posts only,
+  a real (if likely desirable) behavior change the original research pass didn't surface —
+  now called out explicitly in PR 2 rather than folded silently into "adopt with
+  modification."
 
 ## Problem
 
@@ -223,10 +235,16 @@ one PR. No design decisions of our own required; existing test suite (`php tests
 
 **PR 2 — Permission-hardening package, with the post_type gap fixed and upstream informed.**
 
-1. TDD, failing-first: add a test asserting `page_create` with `post_type=post` is gated
-   against `post`'s own registered capabilities, not `page`'s. Run it against upstream's
-   `page_create_permission_result()` verbatim first, to confirm it fails before any fix is
-   applied — proof of the bug, not an assumption of it.
+1. **Verification approach corrected** (see Revision history): `current_user_can()` and
+   `get_post_type_object()` — everything this permission family depends on — are not shimmed
+   in `tests/wp-shim.php`, the same boundary `trait-core.php`'s registry helpers hit in PR 1.
+   A "failing-first unit test" for the `post_type` bug would require faking
+   `current_user_can()`'s return value to control which capability check passes, which is a
+   mocked-behavior test — prohibited outright ("NEVER write tests that 'test' mocked
+   behavior — if you find some, STOP and warn Dax"), not a judgment call to make unilaterally.
+   Verification for this PR is **inspection + full regression suite**, matching PR 1's already-
+   established precedent for every other unshimmed-primitive change in this reconciliation —
+   not a new unit test.
 2. Fix `page_create_permission_result()` to resolve `$post_type` from the request, mirroring
    the correct pattern upstream's own `published_post_types_permission_result()` already
    uses for canvas/library/theme-builder in the same diff.
@@ -237,6 +255,15 @@ one PR. No design decisions of our own required; existing test suite (`php tests
 5. File a good-citizen issue on `oaris-dev/diviops` (same precedent as our existing
    `oaris-dev/diviops#11`): report the gap concretely, with the fix, once merged on our
    side, cited as a reference implementation.
+
+**Also found during implementation planning, not in the original research pass**:
+`page_update_status_permission_result()` adds `'page' !== (string) $post->post_type` to the
+not-found check. Today `page_update_status()` accepts any post type the id resolves to; this
+narrows it to pages only. Given the route (`/page/update-status`) and its MCP tool
+(`diviops_page_update_status`) are both explicitly page-scoped, and no known caller relies on
+using this route for non-page types, this narrowing is adopted — but it is a real behavior
+change, not a no-op refactor like the rest of this PR, and is called out explicitly here
+rather than folded silently into "adopt with modification."
 
 **PR 3 — `CanonicalToolRegistry` hand-port + `health-tools.ts`'s production exports.**
 Sequenced last since it's central plumbing best applied after PR 1/PR 2 are merged and
@@ -251,9 +278,15 @@ the existing test alone is not sufficient for this PR.
 
 - PR 1: existing suites are sufficient (pure refactors + additive fields, no new behavior
   to specify).
-- PR 2: new test written failing-first against unmodified upstream code (see step 1 above),
-  proving the regression before the fix exists — not a test written after the fix to
-  rubber-stamp it.
+- PR 2: no new unit test — `current_user_can()`/`get_post_type_object()` are unshimmed (same
+  boundary as PR 1's `trait-core.php` helpers), so a test controlling their return values
+  would be mocked-behavior, prohibited outright. Verified by inspection (the fix reads
+  `$post_type` from the request instead of a hardcoded string, mirroring the already-correct
+  sibling pattern in the same upstream diff) plus a full `php tests/run.php` regression run
+  confirming #31's existing tests still pass unmodified. A live `tests-live/` test against
+  colleyvillelions.local remains a real option for later, deliberately deferred rather than
+  bundled into this PR (needs a second, lower-capability WP user provisioned first — a site
+  change requiring separate confirmation per this repo's site-constraints).
 - PR 3: `verify-server-builds-and-starts.test.mjs` still gates the "builds and starts from a
   clean checkout" guarantee (catches `isDirectEntryPoint()`/registry-indirection regressions
   in that specific path), but does not exercise `CanonicalToolRegistry` behavior at all — a
