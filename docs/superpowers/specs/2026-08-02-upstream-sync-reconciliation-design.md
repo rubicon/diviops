@@ -338,7 +338,14 @@ the existing test alone is not sufficient for this PR.
   under the new path), Pro-gating correctness, and duplicate-registration failure. Written
   failing-first against the pre-refactor registration code where meaningful (e.g. duplicate-
   registration detection didn't exist before this PR, so that assertion should fail against
-  `main` prior to the hand-port and pass after).
+  `main` prior to the hand-port and pass after). **CI-lane note (found during PR 3 execution
+  by Codex adversarial review):** this new test imports the built `index.js`, which needs the
+  vendored cross-env-preflight JS present at runtime — so it must run on the full `npm run
+  build` path (copy-vendored included), NOT the scoped `test:server-security` lane
+  (`tsconfig.test.json` → `dist-test`), which deliberately skips copy-vendored and would fail
+  it with `ERR_MODULE_NOT_FOUND`. The test is therefore excluded from `tsconfig.test.json` and
+  given its own CI step on the full build. This is why the scoped security lane stays
+  independent of the full server building (the FORK.md rationale for that lane existing).
 
 ## Out of scope
 
