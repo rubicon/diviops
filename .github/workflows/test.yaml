@@ -172,3 +172,10 @@ jobs:
       # runs as a process -- no prior job in this file exercised that.
       - name: Run server build + startup regression test (#41, #128)
         run: node --test scripts/verify-server-builds-and-starts.test.mjs
+
+      # The registry-finalization test imports the built index.js, which needs
+      # the vendored cross-env-preflight JS present -- so it runs against the
+      # full `npm run build` output (copy-vendored included), not the scoped
+      # dist-test lane above (#137).
+      - name: Run CanonicalToolRegistry finalization test (#137)
+        run: npm run build && node --test dist/__tests__/canonical-tool-registry-finalization.test.js
