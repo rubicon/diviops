@@ -519,6 +519,10 @@ class DiviOps_Agent {
 	 * @return true|WP_Error
 	 */
 	private static function page_create_permission_result( $request ) {
+		if ( ! current_user_can( 'edit_pages' ) ) {
+			return new WP_Error( 'rest_forbidden', 'Sorry, you are not allowed to perform this operation.', [ 'status' => 403 ] );
+		}
+
 		$status = sanitize_key( (string) ( $request->get_param( 'status' ) ?? 'draft' ) );
 		if ( ! in_array( $status, self::supported_page_statuses(), true ) ) {
 			return new WP_Error(
@@ -598,6 +602,10 @@ class DiviOps_Agent {
 	 * @return true|WP_Error
 	 */
 	private static function page_update_status_permission_result( $request ) {
+		if ( ! current_user_can( 'edit_pages' ) ) {
+			return new WP_Error( 'rest_forbidden', 'Sorry, you are not allowed to perform this operation.', [ 'status' => 403 ] );
+		}
+
 		$post_id = absint( $request['id'] ?? 0 );
 		$status  = sanitize_key( (string) $request->get_param( 'status' ) );
 
