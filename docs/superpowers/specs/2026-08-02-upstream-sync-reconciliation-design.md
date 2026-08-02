@@ -6,6 +6,23 @@ Related: [#88](https://github.com/rubicon/diviops/issues/88) (closed — announc
 upstream sync PR [#114](https://github.com/rubicon/diviops/pull/114) (not merged as-is — reconciled piecemeal instead)
 Status: design — pending owner review
 
+## Revision history
+
+- 2026-08-02, initial draft.
+- 2026-08-02, amended after a Codex adversarial review (`/codex:adversarial-review`,
+  verdict `needs-attention`) surfaced three findings, all independently verified against
+  the actual upstream diff before being accepted: (1) `health-tools.ts` was wrongly
+  classified as entirely launcher-only and deferred — three of its exports
+  (`META_PING_CONFIG`/`META_INFO_CONFIG`/`requestAbortSignal`) are consumed by upstream's
+  own production `diviops_meta_ping`/`diviops_meta_info` registrations and needed to move
+  into PR 3; (2) PR 3's stated test gate (`verify-server-builds-and-starts.test.mjs`) does
+  not exercise `CanonicalToolRegistry` behavior at all — a new registry-specific test is
+  now required; (3) the `package.json` "adopt as-is" scope was ambiguous — upstream's own
+  `test` script hunk references `scripts/check-release-boundary.mjs`, which does not exist
+  even on `upstream/main` itself, confirmed via `git cat-file -e`. All three corrected
+  below in place; nothing removed from the review's findings without a verification step
+  first.
+
 ## Problem
 
 Upstream (`oaris-dev/diviops`) landed real code on 2026-07-30 (`ba008d2`, sync commit
@@ -87,12 +104,25 @@ underlying per-file evidence.
   above. Purely additive; confirmed absent from `main` today (clean insert).
 - `diviops-server/src/wp-client.ts`: `AbortSignal` plumbing for request cancellation.
   Additive, low-risk, useful independent of anything else in this sync.
-- `@modelcontextprotocol/{client,core,server}@2.0.0` as **devDependencies only** (not
+- `diviops-server/package.json`, **scoped to exactly one sub-hunk**: add
+  `@modelcontextprotocol/{client,core,server}@2.0.0` as **devDependencies only** (not
   shipped in the npm tarball — confirmed excluded from `package.json`'s `files` array).
   Cost is near-zero (dev-time only); having it available means a future verification test
   for `CanonicalToolRegistry`'s multi-target claim (PR 3) doesn't need its own
   dependency-bump PR later. Does not imply building the v2 target itself — that stays
   #131-scoped.
+
+  **Explicitly do NOT adopt the rest of this file's upstream hunk**, verified line-by-line:
+  the version bump (`1.5.38`→`1.5.39`, upstream's own version — irrelevant, we run
+  release-please), the `files` array's `launcher-bootstrap`/`launcher-sidecar` exclusions
+  (moot — we don't have those files), and — this is the one that would actually break
+  something — the `test` script's added `&& node scripts/check-release-boundary.mjs`.
+  Confirmed via `git cat-file -e`: **that script does not exist even on `upstream/main`
+  itself**, in this same sync commit. Adopting the script line verbatim would break `npm
+  test` immediately (`ENOENT`) with no such file anywhere to reconcile it against —
+  this isn't an integration gap on our side, upstream's own sync commit references a file
+  it never shipped. Do not adopt this line under any circumstance until upstream actually
+  publishes the script (revisit opportunistically on the next sync, not tracked separately).
 
 ### Adopt with modification (real value, but upstream's code has a gap our fork's own
 additions expose — must be fixed as part of adoption, not after)
@@ -123,20 +153,61 @@ additions expose — must be fixed as part of adoption, not after)
   function bodies, the entry-point guard), but it touches the three functions
   (`registerPluginTool`/`registerLocalTool`/`registerProTool`) that essentially every one of
   our ~30 feature PRs calls into, in the file our own #41/#128 fix (PR #129) just repaired.
-  Re-apply by hand against current `main` — not upstream's stale base — and re-run
-  `verify-server-builds-and-starts.test.mjs` afterward to confirm `isDirectEntryPoint()`
-  doesn't regress the "builds and starts from a clean checkout" guarantee that test
-  establishes.
+  Re-apply by hand against current `main` — not upstream's stale base.
+- **Also part of this PR** (moved here from the deferred bucket, see correction above):
+  `health-tools.ts`'s production-consumed exports — `META_PING_CONFIG`, `META_INFO_CONFIG`,
+  `requestAbortSignal()` — wired into the existing `diviops_meta_ping`/`diviops_meta_info`
+  registrations exactly as upstream's own diff does it. The file's launcher-only exports
+  (`LAUNCHER_HEALTH_TOOL_NAMES`, `modelVisibleHealthResult`, `registerLauncherHealthTools`)
+  are NOT part of this PR — vendor only the three production-consumed exports (as a new
+  `health-tools.ts` containing just those three, or inline into `index.ts` — implementer's
+  call, either is fine as long as `target-evidence.ts`/`TargetEvidence` is not introduced as
+  a dependency here).
+
+**Acceptance gate — corrected.** The existing `verify-server-builds-and-starts.test.mjs`
+(from PR #129) is necessary but **not sufficient** here, verified by reading the test
+directly: its three assertions are build success, the vendored cross-env-preflight files
+existing in `dist/`, and the server reaching the missing-credentials refusal message. It
+never reaches handshake finalization, `CanonicalToolRegistry.install()`, Pro-conditional
+registration, resource registration, or duplicate-registration detection — none of the
+actual behavior this refactor changes. A hand-port could compile, pass this test, and still
+silently drop tools/resources or mis-gate Pro tools against the wrong handshake state.
+
+This PR needs its **own new test** (in addition to re-running `verify-server-builds-and-
+starts.test.mjs` for the build/startup regression it does cover) that: imports the built
+module directly, finalizes the registry against both a synthetic "ok" and a synthetic
+"failed" handshake state, installs into a recording/fake registrar, and asserts — by name —
+that the expected tool and resource sets are present, `_meta.idempotent` metadata matches
+`annotations.idempotentHint` for every registered tool (the #128 invariant, re-verified
+under the new registration path), Pro-gated tools register only under the "ok" +
+Pro-capable state, and a deliberately duplicated registration throws instead of silently
+overwriting.
 
 ### Already decided, out of scope here
 
-- `target-evidence.ts`, `health-tools.ts` (the launcher-profile/drift-detection sidecar):
-  deferred to [#131](https://github.com/rubicon/diviops/issues/131) with an explicit trigger
-  condition ("if/when this fork builds or adopts a multi-site launcher"). Not a lazy skip —
-  these files implement drift detection for a multi-profile launcher concept this fork
-  doesn't have (we run one target off `WP_URL`/`WP_USER`/`WP_APP_PASSWORD` env vars); there
-  is no consumer to adopt them into and no way to verify they'd even function correctly for
-  us. Issue #88 closed in favor of #131 carrying this forward.
+- `target-evidence.ts` in full, and **only the launcher-specific exports of
+  `health-tools.ts`** — `LAUNCHER_HEALTH_TOOL_NAMES`, `modelVisibleHealthResult()` (takes a
+  `TargetEvidence`, which doesn't exist without adopting `target-evidence.ts` too), and
+  `registerLauncherHealthTools()` (the stripped-down 2-tool launcher-mode server). Deferred
+  to [#131](https://github.com/rubicon/diviops/issues/131) with an explicit trigger condition
+  ("if/when this fork builds or adopts a multi-site launcher"). Not a lazy skip — these
+  implement drift detection for a multi-profile launcher concept this fork doesn't have (we
+  run one target off `WP_URL`/`WP_USER`/`WP_APP_PASSWORD` env vars); there is no consumer to
+  adopt them into and no way to verify they'd even function correctly for us.
+
+  **Correction from an earlier version of this spec** (caught by adversarial review, verified
+  against the actual diff before amending): the earlier draft classified the *entire*
+  `health-tools.ts` file as launcher-only and deferred it wholesale. That was wrong.
+  `health-tools.ts` also exports `META_PING_CONFIG`, `META_INFO_CONFIG`, and
+  `requestAbortSignal()` — plain tool-metadata objects and a context-unwrapping utility with
+  no `TargetEvidence`/launcher dependency — and upstream's own `index.ts` diff imports
+  exactly those three into its **existing production** `diviops_meta_ping`/`diviops_meta_info`
+  registrations (confirmed: `git show upstream/main:diviops-server/src/index.ts` — those
+  registrations still call plain `serializeEnvelope()`, never `modelVisibleHealthResult()` or
+  anything `TargetEvidence`-shaped). Those three exports are genuinely production-consumed by
+  the `CanonicalToolRegistry` refactor and move to **PR 3** (below), not #131. #131's issue
+  body needs a one-line update reflecting this split before PR 3 starts. Issue #88 closed in
+  favor of #131 carrying the genuinely-deferred pieces forward.
 - FluentCart `diviops_fc_order_mark_paid` tool description rewrite (describes a different
   underlying upstream method, `StatusHelper::syncOrderStatuses` vs. the prior
   `OrderController::markAsPaid`): unrelated payload riding in the same sync commit. Flagged,
@@ -167,10 +238,14 @@ one PR. No design decisions of our own required; existing test suite (`php tests
    `oaris-dev/diviops#11`): report the gap concretely, with the fix, once merged on our
    side, cited as a reference implementation.
 
-**PR 3 — `CanonicalToolRegistry` hand-port.** Sequenced last since it's central plumbing
-best applied after PR 1/PR 2 are merged and stable, not because it's deferred. Re-apply the
-~5 edit points against current `main`; re-run the #41/#128 regression test
-(`verify-server-builds-and-starts.test.mjs`) as the acceptance gate.
+**PR 3 — `CanonicalToolRegistry` hand-port + `health-tools.ts`'s production exports.**
+Sequenced last since it's central plumbing best applied after PR 1/PR 2 are merged and
+stable, not because it's deferred. Re-apply the ~5 `index.ts` edit points against current
+`main`, plus the `META_PING_CONFIG`/`META_INFO_CONFIG`/`requestAbortSignal` wiring. Update
+#131's issue body to reflect that only `health-tools.ts`'s launcher-only exports remain
+deferred. Acceptance gate is the existing `verify-server-builds-and-starts.test.mjs` (build/
+startup regression) **plus** a new registry-behavior test — see "Testing approach" below;
+the existing test alone is not sufficient for this PR.
 
 ## Testing approach
 
@@ -179,9 +254,16 @@ best applied after PR 1/PR 2 are merged and stable, not because it's deferred. R
 - PR 2: new test written failing-first against unmodified upstream code (see step 1 above),
   proving the regression before the fix exists — not a test written after the fix to
   rubber-stamp it.
-- PR 3: the existing `verify-server-builds-and-starts.test.mjs` (from PR #129) is the
-  regression gate; if `isDirectEntryPoint()` or the registry indirection breaks the "starts
-  from a clean checkout" guarantee, that test already catches it.
+- PR 3: `verify-server-builds-and-starts.test.mjs` still gates the "builds and starts from a
+  clean checkout" guarantee (catches `isDirectEntryPoint()`/registry-indirection regressions
+  in that specific path), but does not exercise `CanonicalToolRegistry` behavior at all — a
+  new, PR-3-specific test is required: finalize the registry against synthetic ok/failed
+  handshake states, install into a recording registrar, and assert tool/resource names,
+  `_meta.idempotent`/`annotations.idempotentHint` agreement (the #128 invariant, re-verified
+  under the new path), Pro-gating correctness, and duplicate-registration failure. Written
+  failing-first against the pre-refactor registration code where meaningful (e.g. duplicate-
+  registration detection didn't exist before this PR, so that assertion should fail against
+  `main` prior to the hand-port and pass after).
 
 ## Out of scope
 
