@@ -34,6 +34,15 @@ Status: design — pending owner review
   a real (if likely desirable) behavior change the original research pass didn't surface —
   now called out explicitly in PR 2 rather than folded silently into "adopt with
   modification."
+- 2026-08-02, two owner decisions recorded before PR 2 execution (asked via AskUserQuestion,
+  answered): (1) **do NOT adopt upstream's `page_update_status` page-type narrowing** — keep
+  the route accepting any post type, which additionally requires the publish-capability check
+  to be post_type-aware rather than hardcoding `'page'` (see PR 2 §page_update_status below);
+  (2) **do NOT file the good-citizen issue** on `oaris-dev/diviops` for the `page_create`
+  hardcoded-`'page'` bug — fix in-fork only. PR 1 (safe refactors) shipped and merged as
+  [#133](https://github.com/rubicon/diviops/pull/133) before these decisions; the low-priority
+  cancellation-wiring ceiling it surfaced is tracked as
+  [#134](https://github.com/rubicon/diviops/issues/134).
 
 ## Problem
 
@@ -252,18 +261,25 @@ one PR. No design decisions of our own required; existing test suite (`php tests
    upstream's `status` enum + `dry_run`.
 4. Full `php tests/run.php`, with explicit re-confirmation that #31's existing tests still
    pass unmodified.
-5. File a good-citizen issue on `oaris-dev/diviops` (same precedent as our existing
-   `oaris-dev/diviops#11`): report the gap concretely, with the fix, once merged on our
-   side, cited as a reference implementation.
+5. ~~File a good-citizen issue on `oaris-dev/diviops`.~~ **Owner decision 2026-08-02: do NOT
+   file.** Upstream takes no outside PRs and left our existing `oaris-dev/diviops#11` report
+   unanswered for weeks; the fix lands in our fork only.
 
-**Also found during implementation planning, not in the original research pass**:
-`page_update_status_permission_result()` adds `'page' !== (string) $post->post_type` to the
-not-found check. Today `page_update_status()` accepts any post type the id resolves to; this
-narrows it to pages only. Given the route (`/page/update-status`) and its MCP tool
-(`diviops_page_update_status`) are both explicitly page-scoped, and no known caller relies on
-using this route for non-page types, this narrowing is adopted — but it is a real behavior
-change, not a no-op refactor like the rest of this PR, and is called out explicitly here
-rather than folded silently into "adopt with modification."
+**`page_update_status` — owner decision 2026-08-02: preserve any-type behavior, do NOT adopt
+upstream's page-type narrowing.** Upstream's `page_update_status_permission_result()` adds
+`'page' !== (string) $post->post_type` to the not-found check, narrowing the route to pages
+only. Today `page_update_status()` accepts any post type the id resolves to. Owner chose to
+keep that: adopt upstream's capability-hardening (the `publish_posts` check for
+publish/future/private statuses) but strip the type narrowing. **Correctness consequence,
+non-negotiable**: because the route keeps accepting any post type, the publish-capability
+check must resolve the *actual* post's `post_type` (`get_post_type_object( $post->post_type )`),
+NOT upstream's hardcoded `get_post_type_object( 'page' )` — hardcoding `'page'` here would
+reintroduce the exact post_type-blindness bug this PR fixes in `page_create` (editing a
+non-page post to a published status would be gated against `page`'s `publish_posts` instead of
+its own type's). So the fork's `page_update_status_permission_result()` diverges from upstream
+in two deliberate ways: no type narrowing, and a post_type-aware publish check. This is a
+larger, intentional divergence than the original plan's "adopt the narrowing" — recorded here
+as the governing decision.
 
 **PR 3 — `CanonicalToolRegistry` hand-port + `health-tools.ts`'s production exports.**
 Sequenced last since it's central plumbing best applied after PR 1/PR 2 are merged and

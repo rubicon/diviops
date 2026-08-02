@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Adopt upstream's per-post-type capability gating (`published_post_types_permission_result()` family) on `page_create`, `page_update_status`, `canvas_create`, `canvas_duplicate`, `library_save`, `tb_template_create` — replacing today's blanket `edit_pages`/`manage_options` checks — with the `post_type`-blind gap in `page_create_permission_result()` fixed as part of adoption, and a good-citizen issue filed on `oaris-dev/diviops` reporting that gap.
+**Goal:** Adopt upstream's per-post-type capability gating (`published_post_types_permission_result()` family) on `page_create`, `page_update_status`, `canvas_create`, `canvas_duplicate`, `library_save`, `tb_template_create` — replacing today's blanket `edit_pages`/`manage_options` checks — with the `post_type`-blind gap in `page_create_permission_result()` fixed as part of adoption. Two owner decisions (2026-08-02) shape this PR: `page_update_status` keeps accepting **any** post type (upstream's page-type narrowing is NOT adopted), and **no** good-citizen issue is filed upstream.
 
 **Architecture:** New private static helper methods added to the main `DiviOps_Agent` class (`diviops-agent.php`), wired in as `permission_callback` on 6 existing REST routes. No new files, no new REST routes — only tightening the gate on routes that already exist. See `docs/superpowers/specs/2026-08-02-upstream-sync-reconciliation-design.md` §"Adopt with modification" for the source-of-truth rationale.
 
@@ -13,7 +13,8 @@
 - Never rename or alter behavior of the four frozen identifiers: plugin slug `diviops-agent`, class `DiviOps_Agent`, REST namespace `diviops/v1`, filter `diviops_agent_handshake_extensions`. Nothing in this PR touches any of them.
 - **Verification boundary** (see the spec's Revision history and PR 1's plan): `current_user_can()` and `get_post_type_object()` are not shimmed in `tests/wp-shim.php`. No task in this plan writes a unit test that controls their return values — that would be a mocked-behavior test, prohibited outright by this project's engineering policy. Every task here verifies via `php -l` + inspection, with a full `php tests/run.php` regression run at the end confirming zero regressions (specifically re-confirming #31's existing `page_create` tests still pass).
 - `page_create()`'s current status validation uses `get_post_stati( [ 'internal' => false ] )` (dynamic — reflects any custom public statuses registered on the site). Upstream's `supported_page_statuses()` is a hardcoded 5-value list (`draft`, `pending`, `publish`, `future`, `private`) — the same 5 values `get_post_stati` returns on a stock WP install with no custom statuses registered, but NOT dynamically equivalent on a site with additional registered public statuses. This PR adopts the hardcoded list at the **permission** layer (matching upstream) while leaving the handler's own dynamic check in `page_create()` untouched — the permission check runs first and is stricter-or-equal in the stock case; a site with genuinely custom statuses would see the permission layer reject before the handler's own (looser) check ever runs. This is a real, if narrow, behavior interaction — documented here rather than silently accepted.
-- `page_update_status_permission_result()` narrows `page_update_status()` to `page`-type posts only (today it accepts any post type). Adopted deliberately — the route and its MCP tool are both explicitly page-scoped — but this is a genuine behavior change, not a no-op refactor. Flagged again at Task 3 below.
+- **`page_update_status` — owner decision 2026-08-02: preserve any-type behavior, do NOT adopt upstream's page-type narrowing.** Upstream's `page_update_status_permission_result()` adds `'page' !== (string) $post->post_type` to reject non-page posts; this PR does NOT. The route keeps accepting any post type the id resolves to, exactly as today. **Correctness consequence, non-negotiable**: because any type is accepted, the publish-capability check MUST resolve the actual post's `post_type` via `get_post_type_object( $post->post_type )`, NOT the hardcoded `get_post_type_object( 'page' )` upstream uses — hardcoding `'page'` would reintroduce the same post_type-blindness bug this PR fixes in `page_create`. See Task 3 for the exact implementation.
+- **No good-citizen issue** (owner decision 2026-08-02). Task 6 is removed from this plan. The `page_create` hardcoded-`'page'` bug is fixed in-fork only.
 - Signed commits, no `--no-verify`.
 
 ---
@@ -354,7 +355,7 @@ adoption, not left for a later patch. Not yet wired to the route
 
 ---
 
-### Task 3: `page_update_status_permission_result()` — adopted with the type-narrowing called out
+### Task 3: `page_update_status_permission_result()` — any-type preserved, post_type-aware publish check
 
 **Files:**
 - Modify: `plugins/diviops-agent/diviops-agent.php` (same insertion region, after Task 2's block)
@@ -365,12 +366,23 @@ adoption, not left for a later patch. Not yet wired to the route
   `DiviOps_Agent::check_page_update_status_permission( $request )` (`public static`) —
   consumed by Task 4.
 
-**Behavior change, called out per the Global Constraints note above:** today
-`page_update_status()` accepts any post type the `id` resolves to (its only type-related check
-is `! $post`, no `post_type` comparison at all). This adds `'page' !== (string) $post->post_type`
-to the not-found check, narrowing the route to pages only. Adopted deliberately — the route
-(`/page/update-status`) and its MCP tool (`diviops_page_update_status`) are both explicitly
-page-scoped — but this is a real behavior change, not a no-op.
+**Owner decision (2026-08-02) — DIVERGES from upstream in two deliberate ways:**
+1. **No page-type narrowing.** Upstream's version rejects non-page posts
+   (`'page' !== (string) $post->post_type`). This fork does NOT — the route keeps accepting any
+   post type the id resolves to, exactly as `page_update_status()` does today (its only
+   type-related check is `! $post`). The `if ( ! $post )` check below therefore does NOT add a
+   `post_type` comparison.
+2. **Post_type-aware publish check.** Because any type is accepted, the publish-capability
+   check resolves the ACTUAL post's `post_type` via `get_post_type_object( $post->post_type )`,
+   NOT the hardcoded `get_post_type_object( 'page' )` upstream uses. Hardcoding `'page'` here
+   would gate a non-page post's publish transition against `page`'s `publish_posts` capability —
+   the identical post_type-blindness bug Task 2 fixes in `page_create`. Adopting the
+   capability-hardening correctly means making it type-aware.
+
+The hardening this DOES add over today's behavior: today `page_update_status()` gates only on
+`current_user_can( 'edit_post', $post_id )`. This adds, on top of that, a `publish_posts`-family
+capability check (resolved from the post's own type) for the publish/future/private statuses —
+which is upstream's capability-hardening, minus the narrowing.
 
 - [ ] **Step 1: Insert the permission function**
 
@@ -392,11 +404,14 @@ Replace with:
 	/**
 	 * Resolve page status-transition authority before a plan or mutation.
 	 *
-	 * NOTE: this narrows page_update_status() to page-type posts only — today
-	 * it accepts any post type the id resolves to. Adopted deliberately since
-	 * the route and its MCP tool are both explicitly page-scoped; this is a
-	 * real behavior change, documented in the PR 2 implementation plan rather
-	 * than folded in silently.
+	 * DIVERGES from upstream deliberately (owner decision 2026-08-02):
+	 * (1) does NOT narrow to page-type posts — the route keeps accepting any
+	 * post type the id resolves to, matching page_update_status()'s existing
+	 * behavior; (2) resolves the publish capability from the ACTUAL post's
+	 * post_type, not a hardcoded 'page', so a non-page post's publish
+	 * transition is gated against its own type's publish_posts capability
+	 * rather than page's (the same post_type-blindness class of bug this PR
+	 * fixes in page_create). See the PR 2 implementation plan, Task 3.
 	 *
 	 * @param WP_REST_Request|ArrayAccess $request REST-like request.
 	 * @return true|WP_Error
@@ -414,10 +429,10 @@ Replace with:
 		}
 
 		$post = get_post( $post_id );
-		if ( ! $post || 'page' !== (string) $post->post_type ) {
+		if ( ! $post ) {
 			return new WP_Error(
 				'rest_cannot_edit',
-				'Sorry, you are not allowed to edit this page.',
+				'Sorry, you are not allowed to edit this content.',
 				[ 'status' => 403 ]
 			);
 		}
@@ -425,17 +440,17 @@ Replace with:
 		if ( ! current_user_can( 'edit_post', $post_id ) ) {
 			return new WP_Error(
 				'rest_cannot_edit',
-				'Sorry, you are not allowed to edit this page.',
+				'Sorry, you are not allowed to edit this content.',
 				[ 'status' => 403 ]
 			);
 		}
 
-		$post_type = get_post_type_object( 'page' );
+		$post_type = get_post_type_object( (string) $post->post_type );
 		if ( ! $post_type ) {
 			return new WP_Error(
 				'rest_cannot_edit',
-				'The page post type does not expose the capability required for status updates.',
-				[ 'status' => 403 ]
+				'This content type does not expose the capability required for status updates.',
+				[ 'status' => 403, 'post_type' => (string) $post->post_type ]
 			);
 		}
 
@@ -446,9 +461,10 @@ Replace with:
 		) {
 			return new WP_Error(
 				'rest_cannot_publish',
-				'Sorry, you are not allowed to publish pages or make pages private.',
+				'Sorry, you are not allowed to publish this content or make it private.',
 				[
 					'status'              => 403,
+					'post_type'           => (string) $post->post_type,
 					'required_capability' => $publish_capability,
 					'requested_status'    => $status,
 				]
@@ -480,12 +496,15 @@ Expected: `No syntax errors detected`
 
 ```bash
 git add plugins/diviops-agent/diviops-agent.php
-git commit -m "feat(perms): add check_page_update_status_permission (narrows to page type)
+git commit -m "feat(perms): add check_page_update_status_permission (any-type, post_type-aware)
 
-Real behavior change, not a no-op: page_update_status previously
-accepted any post type the id resolved to; this narrows it to pages
-only, matching the route's and MCP tool's page-scoped naming. Not yet
-wired to the route (Task 4)."
+Adopts upstream's publish-capability hardening for page_update_status
+but DIVERGES deliberately (owner decision): (1) no page-type narrowing —
+the route keeps accepting any post type the id resolves to, as today;
+(2) the publish check resolves the actual post's post_type instead of a
+hardcoded 'page', so a non-page post is gated against its own type's
+publish_posts, not page's — the same post_type-blindness class of bug
+fixed in page_create. Not yet wired to the route (Task 4)."
 ```
 
 ---
@@ -670,35 +689,10 @@ Confirm by reading the diff:
 
 ---
 
-### Task 6: File the good-citizen issue on `oaris-dev/diviops`
+### Task 6: ~~File the good-citizen issue~~ — REMOVED (owner decision 2026-08-02)
 
-**Files:** none (GitHub issue only).
-
-- [ ] **Step 1: Open the issue**
-
-Title: `page_create_permission_result() hardcodes get_post_type_object('page'), ignoring a caller-supplied post_type`
-
-Body should cover, concretely (mirror the tone/structure of our existing
-`oaris-dev/diviops#11`):
-- What the function does today (quote the hardcoded `get_post_type_object( 'page' )` line).
-- Why it's a gap: any consumer that lets a caller specify a target post type for page-create-
-  shaped routes would silently gate against `page`'s capabilities regardless of the actual
-  type being created.
-- The fix: resolve the post type from the request (default `'page'` when absent), the same
-  pattern `published_post_types_permission_result()` already uses correctly for
-  canvas/library/theme-builder in the same commit.
-- Reference this fork's own fixed version (link the merged PR from Task 4) as a concrete
-  implementation, once merged — do not link an unmerged PR.
-
-Run:
-```bash
-gh issue create --repo oaris-dev/diviops \
-  --title "page_create_permission_result() hardcodes get_post_type_object('page'), ignoring a caller-supplied post_type" \
-  --body-file <path-to-drafted-body>
-```
-
-- [ ] **Step 2: Link it back**
-
-Add a comment to the design spec's "Related" section (or a follow-up commit to the spec file)
-noting the filed issue's URL, matching how `oaris-dev/diviops#11` is already referenced
-throughout this fork's docs.
+Owner decided not to file a good-citizen issue on `oaris-dev/diviops` for the `page_create`
+hardcoded-`'page'` bug. Upstream takes no outside PRs and left our existing
+`oaris-dev/diviops#11` report unanswered; the fix lands in our fork only. No action — this
+task is intentionally empty and kept as a numbered placeholder so Task references elsewhere
+don't shift. The final task of this PR is therefore Task 5 (regression suite + PR).
