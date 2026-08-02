@@ -504,6 +504,84 @@ class DiviOps_Agent {
 		return self::fixed_publish_route_permission( 'manage_options', $post_types );
 	}
 
+	/**
+	 * Resolve the request-aware page-create capability refusal, if any.
+	 *
+	 * Resolves the TARGET post type from the request (default 'page', mirroring
+	 * page_create()'s own default) rather than hardcoding 'page' — this fork's
+	 * page_create() (#31) accepts a caller-supplied post_type, and a caller
+	 * creating a non-page type must be gated against that type's own
+	 * capabilities, not page's. This is the one place this fork's own #31
+	 * addition and upstream's new permission function intersect; upstream's
+	 * verbatim version does not know about post_type at all.
+	 *
+	 * @param WP_REST_Request|ArrayAccess $request REST-like request.
+	 * @return true|WP_Error
+	 */
+	private static function page_create_permission_result( $request ) {
+		$status = sanitize_key( (string) ( $request->get_param( 'status' ) ?? 'draft' ) );
+		if ( ! in_array( $status, self::supported_page_statuses(), true ) ) {
+			return new WP_Error(
+				'rest_invalid_param',
+				'Status is not supported for DiviOps page creation.',
+				[ 'status' => 400 ]
+			);
+		}
+
+		$post_type_param = $request->get_param( 'post_type' );
+		$post_type_name  = ( null === $post_type_param ) ? 'page' : sanitize_key( (string) $post_type_param );
+
+		$post_type = get_post_type_object( $post_type_name );
+		if ( ! $post_type || ! isset( $post_type->cap->create_posts ) ) {
+			return new WP_Error(
+				'rest_cannot_create',
+				"The {$post_type_name} post type does not expose the capabilities required for creation.",
+				[ 'status' => 403, 'post_type' => $post_type_name ]
+			);
+		}
+
+		if ( ! current_user_can( $post_type->cap->create_posts ) ) {
+			return new WP_Error(
+				'rest_cannot_create',
+				"Sorry, you are not allowed to create {$post_type_name} content.",
+				[
+					'status'              => 403,
+					'post_type'           => $post_type_name,
+					'required_capability' => (string) $post_type->cap->create_posts,
+				]
+			);
+		}
+
+		$publish_capability = isset( $post_type->cap->publish_posts ) ? (string) $post_type->cap->publish_posts : '';
+		if (
+			self::page_status_requires_publish_capability( $status )
+			&& ( '' === $publish_capability || ! current_user_can( $publish_capability ) )
+		) {
+			return new WP_Error(
+				'rest_cannot_publish',
+				"Sorry, you are not allowed to publish {$post_type_name} content or create private {$post_type_name} content.",
+				[
+					'status'              => 403,
+					'post_type'           => $post_type_name,
+					'required_capability' => $publish_capability,
+					'requested_status'    => $status,
+				]
+			);
+		}
+
+		return true;
+	}
+
+	/**
+	 * Request-aware REST permission callback for POST /page/create.
+	 *
+	 * @param WP_REST_Request $request Current REST request.
+	 * @return true|WP_Error
+	 */
+	public static function check_page_create_permission( $request ) {
+		return self::page_create_permission_result( $request );
+	}
+
 	public static function check_authenticated_permission() {
 		return get_current_user_id() > 0;
 	}
