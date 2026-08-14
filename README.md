@@ -2,7 +2,7 @@
 
 **An AI harness for WordPress site authoring — Divi-native today, WordPress-wide by design.**
 
-[![npm](https://img.shields.io/npm/v/@rubicontv/diviops-mcp.svg?label=%40diviops%2Fmcp-server)](https://www.npmjs.com/package/@rubicontv/diviops-mcp)
+[![npm](https://img.shields.io/npm/v/@rubicontv/diviops-mcp.svg?label=%40rubicontv%2Fdiviops-mcp)](https://www.npmjs.com/package/@rubicontv/diviops-mcp)
 [![License: MIT & GPL-2.0](https://img.shields.io/badge/License-MIT%20%26%20GPL--2.0-yellow.svg)](LICENSE)
 [![Divi 5](https://img.shields.io/badge/Divi-5.1.0%2B-7E3DD3.svg)](https://www.elegantthemes.com/gallery/divi/)
 
