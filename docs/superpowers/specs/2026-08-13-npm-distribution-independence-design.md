@@ -32,6 +32,16 @@ Status: design — pending owner review
   work-item list **contradicted itself** on which rename rides which release train, and
   understated what gates first publish. Restructured by release train with the gating made
   explicit.
+- 2026-08-13, corrected again after a second Codex round, which confirmed the three fixes
+  above (independently re-deriving the license defect via `npm pack --dry-run`) and raised
+  three more, all verified and accepted. The rename inventory's headline total was
+  **mis-added** — 51 matching lines and 55 occurrences, not 40 — so the section now states
+  both figures and the exact command. The constraints section claimed **157** tool
+  registrations, which was a naive line-match; the real figure is 145 call sites (104
+  plugin + 11 local + 30 Pro), of which 104 + 11 = the 115 always-on tools the smoke probe
+  observes. And `FORK.md` divergence rows were **deferred to a trailing work item**, which
+  contradicts `CLAUDE.md`'s requirement that intentional changes to upstream-originated
+  files be recorded as part of the change; the rows are now folded into each item.
 
 ## Problem
 
@@ -89,7 +99,12 @@ comment while asserting nothing about it. Renaming is permitted. The `bin` name 
 likewise not among the four.
 
 **MCP tool names are a first-class stability constraint.** `diviops-server/src/index.ts`
-carries 157 `registerPluginTool` / `registerLocalTool` / `registerProTool` calls. Eight
+carries 145 tool registrations: 104 `registerPluginTool`, 11 `registerLocalTool`, and 30
+`registerProTool` call sites. The first two are the 115 always-on tools, which is exactly
+the count the credential-free smoke probe below observes and the figure `README.md`
+documents; the 30 Pro tools register conditionally. (An earlier draft said 157, from a
+naive line-match that also counted the 12 definition sites and comment mentions. Count
+call sites, not matching lines.) Eight
 files under `skills/` reference `diviops_*` tool names, and `skills/` contains **zero**
 references to the npm package name. A package rename therefore does not touch skills, so
 long as every tool name stays byte-identical. This matters more than it sounds: a tool
@@ -375,21 +390,26 @@ publish (or `publishConfig.access` in `package.json`).
 
 ## The rename blast radius
 
-Eighteen files reference `@diviops/mcp-server`, carrying 40 references between them. They
-are **not** all the same kind of reference, and conflating them would introduce a real
-error.
+Eighteen files reference `@diviops/mcp-server` across **51 matching lines** and **55
+occurrences** (some lines carry the name twice). They are **not** all the same kind of
+reference, and conflating them would introduce a real error.
 
-Counts below are from `git grep -c '@diviops/mcp-server'` and exclude this spec itself.
-Use that command rather than the counts here when the time comes: an earlier draft of this
-inventory was built from a `grep` filtered on `npx`, which silently missed every reference
-that names the package without invoking it — six of them, including a global-install
-instruction and two JSON config blocks. Counts rot; the command does not.
+The per-file figures below are matching *lines*, from:
+
+```bash
+git grep -c '@diviops/mcp-server' -- . ':(exclude)docs/superpowers/specs/2026-08-13-npm-distribution-independence-design.md'
+```
+
+Run that command rather than trusting the numbers here. This inventory has now been wrong
+twice: first built from a `grep` filtered on `npx`, which silently missed every reference
+that names the package without invoking it, and then published with a headline total that
+was simply mis-added. Counts rot and arithmetic slips; the command does neither.
 
 **Self-references — these must be renamed.** They describe the package this repository
 produces, and every one of them is currently wrong.
 
-| File | Refs | Nature |
-| ---- | ---- | ------ |
+| File | Lines | Nature |
+| ---- | ----- | ------ |
 | `diviops-server/package.json` | 1 | The `name` field itself |
 | `diviops-server/package-lock.json` | 2 | Regenerated, not hand-edited |
 | `release-please-config.json` | 1 | `package-name` for the `diviops-server` package |
@@ -543,11 +563,19 @@ package having to exist before the plugin can point at it.
    (`plugins/diviops-agent/diviops-agent.php` and `plugins/diviops-agent/readme.txt`,
    which ride item 6). Leave the provenance references untouched. Regenerate
    `package-lock.json`; update `release-please-config.json`'s `package-name`.
+   **Includes the `FORK.md` rows for everything in this item** — `CLAUDE.md` requires
+   intentional changes to upstream-originated files be recorded in the divergence table as
+   part of the change, so this is not a later cleanup. That covers the amended
+   `diviops-server/package.json` row, new rows for `CONTRIBUTING.md`, `SUPPORT.md`, and
+   `.github/ISSUE_TEMPLATE/bug_report.md` (all converting from pure-upstream to diverged),
+   and the note that the `cross-env-preflight` references are provenance and must never be
+   renamed.
 3. **Add `scripts/smoke.mjs`** modeled on `forgejo-mcp`'s, asserting the tool count and the
-   registered tool-name set. CI-only; no source change (see the smoke-gate section).
+   registered tool-name set. CI-only; no source change (see the smoke-gate section). Add
+   its `FORK.md` row (fork-owned file, absent upstream).
 4. **Add `.github/workflows/publish.yaml`** modeled on `forgejo-mcp`'s, **guarded on the
    `mcp-server-v` tag prefix** so plugin releases do not trigger it, and gated on
-   `npm run smoke`.
+   `npm run smoke`. Add its `FORK.md` row.
 
 **First publish:**
 
@@ -557,17 +585,21 @@ package having to exist before the plugin can point at it.
 **After the package exists (plugin release train, `v*`):**
 
 6. **Plugin-side rename** for `diviops-agent.php:2770` (wp-admin dashboard) and
-   `readme.txt` (including the WordPress.org third-party-service disclosure), riding a
-   plugin release. Deliberately after item 5: until the package exists, pointing the
-   admin UI at it would be pointing users at a 404.
+   `readme.txt` (including the WordPress.org third-party-service disclosure), with their
+   `FORK.md` rows in the same change, riding a plugin release. Deliberately after item 5:
+   until the package exists, pointing the admin UI at it would be pointing users at a 404.
 
 **Then:**
 
 7. **Client migration** per the sequence above (maintainer action).
 8. **Phase 2** — configure the trusted publisher, drop `NODE_AUTH_TOKEN` and the
    `--provenance` flag, revoke the bootstrap token. File as its own issue when item 5
-   lands, so it does not survive only as an intention recorded here.
-9. **`FORK.md` divergence rows** for everything above.
+   lands, so it does not survive only as an intention recorded here. Amend the item-4
+   `FORK.md` row for the workflow's changed credential model.
+
+`FORK.md` is deliberately **not** a trailing item. Each change carries its own divergence
+row, because a fork record written after the release it describes is a record that was
+wrong for the whole window in between.
 
 There is an unavoidable window between items 5 and 6 where the shipped plugin's admin UI
 names the old package. It is short, it affects only the dashboard hint rather than any
