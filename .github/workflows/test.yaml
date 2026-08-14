@@ -179,3 +179,11 @@ jobs:
       # dist-test lane above (#137).
       - name: Run CanonicalToolRegistry finalization test (#137)
         run: npm run build && node --test dist/__tests__/canonical-tool-registry-finalization.test.js
+
+      # Same reason as the step above -- this one imports the built index.js
+      # too, so it runs against the full build output rather than the scoped
+      # dist-test lane. It asserts the MCP request's AbortSignal actually
+      # reaches (read tools) or is deliberately withheld from (mutating tools)
+      # the injected fetch (#134).
+      - name: Run plugin-tool cancellation test (#134)
+        run: node --test dist/__tests__/tool-cancellation.test.js

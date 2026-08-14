@@ -16,6 +16,8 @@
  * normalizer that maps both branches to the typed `DiviopsResponse<T>`.
  */
 
+import { getRequestContext } from "./request-context.js";
+
 export type DiviopsSuccess<T> = { ok: true; data: T };
 
 export type DiviopsErrorBody = {
@@ -144,6 +146,13 @@ export async function wrapResponse<T>(
     }
     return { ok: true, data: result as T };
   } catch (e) {
+    // A cancelled request surfaces as a cancellation, not as a soft
+    // `wp_error` envelope the client would read as a retryable connection
+    // failure (#134). The discriminator is the signal's own `aborted` flag
+    // rather than the thrown error's shape, because an aborted `fetch` can
+    // reject with whatever value was passed as the abort reason — including
+    // a bare string, which carries no recognizable name.
+    if (getRequestContext()?.signal?.aborted) throw e;
     if (e instanceof DiviopsError) {
       const error: DiviopsErrorBody = { code: e.code, message: e.message };
       if (e.hint) error.hint = e.hint;
