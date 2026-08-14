@@ -80,9 +80,21 @@ trait DiviOps_Agent_ModuleSchema {
 	 * can short-circuit when nothing changed.
 	 *
 	 * `schema_version` is SHA-1 over the concatenated contents of
-	 * every `*PresetAttrsMap.php` file in `Packages/ModuleLibrary/`.
-	 * That set is the canonical attr-path index — its byte-stable
-	 * hash is what changes only when canonical paths change.
+	 * every `*PresetAttrsMap.php` file under `Packages/` — both the
+	 * shared option maps in `Packages/Module/Options/` and the
+	 * per-module maps in `Packages/ModuleLibrary/`, since the former
+	 * are imported by the latter (TextPresetAttrsMap pulls in
+	 * LoopPresetAttrsMap). That set is the canonical attr-path index —
+	 * its byte-stable hash is what changes only when canonical paths
+	 * change.
+	 *
+	 * Divi core only. The walk roots at `get_theme_file_path()`, the
+	 * Divi theme, so it covers no third-party module source: a module
+	 * plugin such as DiviFlash ships its own modules from
+	 * `wp-content/plugins/`, and updating it cannot move
+	 * `schema_version`. Do not read this as a general "some module's
+	 * schema changed" signal — on a site with third-party modules
+	 * installed it answers that question for the core ones only.
 	 *
 	 * Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.
 	 */
