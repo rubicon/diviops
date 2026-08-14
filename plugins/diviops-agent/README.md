@@ -2,7 +2,7 @@
 
 **REST API bridge inside the DiviOps AI harness for WordPress — Divi-native today, WordPress-wide by design.**
 
-The WordPress companion plugin for `@diviops/mcp-server`. Pairs with the MCP server to expose Divi 5 page authoring, SCF management, CPT/post population, data model introspection, and site auditing as `/diviops/v1/*` REST endpoints behind Application Password auth.
+The WordPress companion plugin for `@diviops/mcp-server`. Pairs with the MCP server to expose Divi 5 page authoring, CPT/post population, data model introspection, and site auditing as `/diviops/v1/*` REST endpoints behind Application Password auth. The MCP server separately layers in SCF tools that shell out to this site's `wp` binary directly — this plugin implements no SCF code at all; see [Capabilities](#capabilities) below.
 
 Divi is a registered trademark of Elegant Themes, Inc. DiviOps Agent is not affiliated with or endorsed by Elegant Themes.
 
@@ -98,11 +98,22 @@ See the [DiviOps MCP Server README](../../../diviops-server/) for full setup and
 The plugin advertises 98 capability keys through the handshake (full MCP endpoint reference, 91 always-on tools: [docs/server-reference.md](../../../docs/server-reference.md)):
 
 - **Page building** — Divi page/section/module/canvas CRUD; Theme Builder layouts + templates
-- **SCF setup + management** — field group provisioning, sync, export/import
 - **CPT + post population** — wp-cli-routed post type registration + bulk post operations
-- **Data model reasoning** — module schema introspection, SCF field group inspection, post meta surveys
+- **Data model reasoning** — module schema introspection, post meta surveys
 - **Site auditing** — preset audits, design-token usage scans, orphan detection (presets, variables, dangling references)
 - **Hybrid site harmonization** — design token APIs (`variable_*`, `global_color_*`, `global_font_*`) for cross-surface design system management between Divi pages and custom PHP templates
+
+SCF (Secure Custom Fields) is not one of this plugin's capability domains — there is
+no `trait-scf.php`, no `/diviops/v1/scf/*` route, and no `scf_*` handshake key. The
+six `diviops_scf_*` MCP tools are `registerLocalTool` wrappers in the MCP server
+itself (`diviops-server/src/index.ts`) that shell out to `wp scf json …` / `wp post`
+via wp-cli, the same way the CPT tools above are wp-cli-routed. That difference is
+behavioral, not cosmetic: the SCF tools are never gated by this plugin's capability
+handshake, so they appear in the tool list even against a site with no SCF installed
+at all; a missing SCF surfaces per call (`scf.command_failed`) rather than as an
+absent tool; and they depend on wp-cli reachability, not on this plugin being active.
+See [skills/divi-5-builder/references/scf-fields.md](../../skills/divi-5-builder/references/scf-fields.md)
+for the full SCF tool reference.
 
 ## Authentication & permissions
 
