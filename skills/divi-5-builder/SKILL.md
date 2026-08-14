@@ -27,6 +27,7 @@ Read the right file for the task at hand — don't load everything.
 | Copy-paste minimum-valid block snippets | [minimal-snippets.md](references/minimal-snippets.md) (Heading, Text, Button, Blurb, Icon, Image) |
 | Module attribute paths | [module-formats.md](references/module-formats.md) (Tier 1 free — Tier 2 patterns + Tier 3 per-module are Pro) |
 | Advanced decoration attributes (shadows, filters, transform, sticky, transition, scroll, animation) | [advanced-attributes.md](references/advanced-attributes.md) |
+| `$variable()$` bindings — token grammar, and the five namespaces sharing it (dynamic content, global colors, design tokens, gradients, images/shortcodes) | [variable-bindings.md](references/variable-bindings.md) |
 | Adding CSS classes to modules | [design-effects.md](references/design-effects.md) — uses `module.decoration.attributes`, NOT `className` |
 | CSS effects & WebGL shaders | [design-effects.md](references/design-effects.md) |
 | Mega menus & navigation | [mega-menu-pattern.md](references/mega-menu-pattern.md) |
@@ -175,7 +176,7 @@ Write `.claude/instructions/design-system.md` with brand-specific guidance: aest
 4. **HTML in innerContent**: Use unicode escapes: `\u003cp\u003e` not `<p>`
 5. **Layout display on containers**: Section, Row, Column, Group need `"module":{"decoration":{"layout":{"desktop":{"value":{"display":"block"}}}}}` — content modules (Text, Button, Icon) don't require it
 6. **Admin labels on important modules**: `"meta":{"adminLabel":{"desktop":{"value":"My Label"}}}` — required for granular editing
-7. **`$variable()$` trailing `$` is load-bearing**: tokens must end with `)$`, not just `)`. Writing `$variable({...})` (no trailing `$`) silently fails to resolve at render time. Full payload format + examples: [presets.md → Variable Tokens](references/presets.md#variable-tokens).
+7. **`$variable()$` trailing `$` is load-bearing**: tokens must end with `)$`, not just `)`. Writing `$variable({...})` (no trailing `$`) silently fails to resolve at render time. Full payload format + examples: [presets.md → Variable Tokens](references/presets.md#variable-tokens); token grammar and every namespace sharing the wrapper: [variable-bindings.md](references/variable-bindings.md).
 8. **Module attrs must not contain `var(--<custom-alias>)`**: attr values hold literal CSS or canonical `$variable({...})$` tokens. Hand-authored `var()` refs to non-Divi aliases depend on external CSS that may not exist — if the alias is undeclared, CSS spec falls through to the property's initial value (0 for padding, browser default for color) and the page silently breaks. Full rule + tolerated patterns: [module-formats.md → Design Token References in Attrs](references/module-formats.md#design-token-references-in-attrs-canonical-variable-only).
 
 ## Module Gotchas (Silent Failures)
