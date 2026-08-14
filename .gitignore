@@ -13,6 +13,8 @@ Thumbs.db
 # Local agent scratch
 .remember/
 .claude/settings.local.json
+# Codex review transcripts. The codex-review skill hardcodes this path (#144).
+.jez/
 
 # Node build artifacts (diviops-server)
 node_modules/
