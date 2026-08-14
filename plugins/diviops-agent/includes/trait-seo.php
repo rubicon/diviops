@@ -3,7 +3,8 @@
  * Trait DiviOps_Agent_SEO
  *
  * Provider-neutral, allowlisted SEO metadata operations. The first adapter is
- * intentionally limited to The SEO Framework and two explicit text fields.
+ * intentionally limited to The SEO Framework and six explicit text fields
+ * (title/description, each in the plain, Open Graph, and Twitter card variants).
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -24,8 +25,12 @@ final class DiviOps_SEO_TSF_Adapter {
 	const MAX_VERSION_EXCLUSIVE = '6.0.0';
 
 	private const FIELD_KEYS = [
-		'seo_title'       => '_genesis_title',
-		'meta_description' => '_genesis_description',
+		'seo_title'           => '_genesis_title',
+		'meta_description'    => '_genesis_description',
+		'og_title'            => '_open_graph_title',
+		'og_description'      => '_open_graph_description',
+		'twitter_title'       => '_twitter_title',
+		'twitter_description' => '_twitter_description',
 	];
 
 	/**
@@ -185,11 +190,23 @@ final class DiviOps_SEO_TSF_Adapter {
 
 	/**
 	 * Read provider-computed output. This is evidence only and is never written.
+	 *
+	 * og_title/og_description/twitter_title/twitter_description are sourced from
+	 * TSF's own tsf()->open_graph()/tsf()->twitter() accessors rather than
+	 * recomputed here: those accessors already implement TSF's real custom-value/
+	 * generated-title fallback (and, for Twitter, its own fallback to the Open
+	 * Graph value when Twitter's field is unset) -- the adapter calls into that
+	 * logic, it does not reimplement it.
 	 */
 	public static function effective_fields( int $post_id ): array {
+		$args = [ 'id' => $post_id ];
 		return [
-			'seo_title'       => (string) tsf()->title()->get_title( [ 'id' => $post_id ] ),
-			'meta_description' => (string) tsf()->description()->get_description( [ 'id' => $post_id ] ),
+			'seo_title'           => (string) tsf()->title()->get_title( $args ),
+			'meta_description'    => (string) tsf()->description()->get_description( $args ),
+			'og_title'            => (string) tsf()->open_graph()->get_title( $args ),
+			'og_description'      => (string) tsf()->open_graph()->get_description( $args ),
+			'twitter_title'       => (string) tsf()->twitter()->get_title( $args ),
+			'twitter_description' => (string) tsf()->twitter()->get_description( $args ),
 		];
 	}
 
@@ -621,7 +638,7 @@ trait DiviOps_Agent_SEO {
 		return [
 			'code'    => 'seo.field_unsupported',
 			'message' => "changes[{$index}].field is outside the V1 semantic allowlist.",
-			'hint'    => 'Use only seo_title or meta_description. Raw metadata keys are forbidden.',
+			'hint'    => 'Use only seo_title, meta_description, og_title, og_description, twitter_title, or twitter_description. Raw metadata keys are forbidden.',
 			'data'    => [ 'field' => is_scalar( $field ) ? (string) $field : null, 'allowed' => self::seo_fields() ],
 		];
 	}
@@ -740,7 +757,13 @@ trait DiviOps_Agent_SEO {
 			] ];
 		}
 
-		$limits = 'seo_title' === $field
+		// Title-shaped fields (seo_title, og_title, twitter_title) share one limit
+		// class; description-shaped fields (meta_description, og_description,
+		// twitter_description) share the other. These are DiviOps's own transport
+		// safety ceilings, not a TSF-specific limit -- TSF's sanitizer applies no
+		// per-field character cap itself -- so grouping by field shape rather than
+		// by provider quirk is the correct split.
+		$limits = '_title' === substr( $field, -6 )
 			? [ 'characters' => 512, 'bytes' => 2048 ]
 			: [ 'characters' => 2048, 'bytes' => 8192 ];
 		$chars  = function_exists( 'mb_strlen' ) ? mb_strlen( $value, 'UTF-8' ) : preg_match_all( '/./us', $value, $unused );
@@ -993,6 +1016,6 @@ trait DiviOps_Agent_SEO {
 	}
 
 	private static function seo_fields(): array {
-		return [ 'seo_title', 'meta_description' ];
+		return [ 'seo_title', 'meta_description', 'og_title', 'og_description', 'twitter_title', 'twitter_description' ];
 	}
 }
