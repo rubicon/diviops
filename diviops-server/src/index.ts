@@ -59,6 +59,10 @@ import {
 } from "./health-tools.js";
 import { CanonicalToolRegistry } from "./canonical-tool-registry.js";
 import {
+  runWithRequestContext,
+  type RequestContext,
+} from "./request-context.js";
+import {
   isolationFailure,
   scanValueForForeignVarRefs,
   writerIsolationErrorResult,
@@ -456,10 +460,56 @@ function backupCapabilityError(
 // `never`). Restating its Zod-driven generics in this thin wrapper buys
 // no real safety — the per-callsite `inputSchema` Zod object at every
 // usage site below is what enforces actual argument shape; this helper
-// only adds a capability-check + an error envelope on top, both shape-
-// independent. Scope: 4 narrow suppressions, all in this 25-line block.
+// only adds a capability-check, an error envelope, and the per-request
+// cancellation context on top, all three shape-independent. Scope: the
+// registration helpers in this block and nothing else.
 /* eslint-disable @typescript-eslint/no-explicit-any */
-function registerPluginTool<H extends (args: any) => Promise<any>>(
+
+/**
+ * Whether this tool's WordPress request may be aborted mid-flight (#134).
+ *
+ * Reads and idempotent operations leave nothing partial behind when torn
+ * down. Everything else is treated as a mutation, whose in-flight request is
+ * allowed to finish because WordPress has no rollback for a write cut off
+ * halfway. Read from the same registration metadata the tool already declares
+ * for `tools/list`, so the policy cannot drift from what clients are told.
+ */
+function toolTransportAbortable(config: any): boolean {
+  const annotations = config?.annotations;
+  return (
+    annotations?.readOnlyHint === true ||
+    annotations?.idempotentHint === true ||
+    config?._meta?.idempotent === "true"
+  );
+}
+
+/**
+ * Run `handler` inside a request context carrying the SDK's per-request abort
+ * signal (#134), preserving the SDK's exact call arity.
+ *
+ * `RequestHandlerExtra` is always the LAST argument the SDK passes, but not
+ * always the second: a tool whose config carries an `inputSchema` is called
+ * `handler(args, extra)`, and a tool without one is called `handler(extra)`.
+ * Reading a fixed position would silently disable cancellation for every
+ * no-`inputSchema` tool, so the arguments are passed through verbatim and the
+ * signal is taken from the end.
+ */
+function withRequestContext(
+  config: any,
+  handler: (...args: any[]) => Promise<any>,
+): (...args: any[]) => Promise<any> {
+  const abortTransport = toolTransportAbortable(config);
+  return async (...callArgs: any[]) => {
+    const extra = callArgs[callArgs.length - 1];
+    const ctx: RequestContext = {
+      signal: extra?.signal instanceof AbortSignal ? extra.signal : undefined,
+      abortTransport,
+    };
+    return runWithRequestContext(ctx, () => handler(...callArgs));
+  };
+}
+
+function registerPluginTool<H extends (...args: any[]) => Promise<any>>(
   name: string,
   config: any,
   handler: H,
@@ -471,7 +521,7 @@ function registerPluginTool<H extends (args: any) => Promise<any>>(
     registered: true,
     capability_key: key,
   });
-  const wrapped = (async (args: any) => {
+  const wrapped = withRequestContext(config, async (...callArgs: any[]) => {
     try {
       requireCapability(key);
     } catch (e) {
@@ -482,7 +532,7 @@ function registerPluginTool<H extends (args: any) => Promise<any>>(
       }
       throw e;
     }
-    return handler(args);
+    return handler(...callArgs);
   }) as any;
   recordIdempotent(name, config?._meta);
   registry.registerTool(name, config, wrapped);
@@ -504,7 +554,7 @@ function registerLocalTool<
 ): void {
   recordToolCatalog({ name, kind: "server_local", registered: true });
   recordIdempotent(name, config?._meta);
-  registry.registerTool(name, config, handler);
+  registry.registerTool(name, config, withRequestContext(config, handler));
 }
 
 /**
@@ -544,7 +594,7 @@ function registerLocalTool<
  * are defined inside `registerProTools()` precisely so they can read
  * the resolved handshakeState.
  */
-function registerProTool<H extends (args: any) => Promise<any>>(
+function registerProTool<H extends (...args: any[]) => Promise<any>>(
   name: string,
   config: any,
   handler: H,
@@ -562,7 +612,7 @@ function registerProTool<H extends (args: any) => Promise<any>>(
 
   catalogEntry.registered = true;
   recordIdempotent(name, config?._meta);
-  registry.registerTool(name, config, handler);
+  registry.registerTool(name, config, withRequestContext(config, handler));
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -1145,7 +1195,7 @@ registerPluginTool(
   "diviops_schema_get_module",
   {
     description:
-      "Get the attribute schema for a Divi module. Default mode 'single' returns one module's schema (optimized, ~70% smaller; pass raw: true for full). Mode 'dump_all' snapshots every Divi module in one call and includes a `schema_version` hash over the canonical *PresetAttrsMap.php files — build-time entry point for the skill regen pipeline; ignores `module_name` and `raw`. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.",
+      "Get the attribute schema for a Divi module. Default mode 'single' returns one module's schema (optimized, ~70% smaller; pass raw: true for full). Mode 'dump_all' snapshots every Divi module in one call and includes a `schema_version` hash over the canonical *PresetAttrsMap.php files under the Divi theme's Packages/ directory (both Module/Options/ and ModuleLibrary/) — Divi core only, so a third-party module plugin update does not move it — build-time entry point for the skill regen pipeline; ignores `module_name` and `raw`. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.",
     inputSchema: {
       mode: z
         .enum(["single", "dump_all"])
