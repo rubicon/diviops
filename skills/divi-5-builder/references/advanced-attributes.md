@@ -1,16 +1,27 @@
 # Divi 5 Advanced Attributes — Shared Decoration System
 
-Reference for the "advanced" `module.decoration.*` families that live outside Tier 1's
-everyday border/background/spacing set: box shadow, filters, transform, sticky,
-transition, scroll, and animation. This file documents them family-by-family, in the
-same shape [module-formats.md](module-formats.md) uses for the common set.
+Reference for the shared decoration families that live outside Tier 1's everyday
+border/background/spacing set. Two groups, documented in the same shape
+[module-formats.md](module-formats.md) uses for the common set:
+
+- **The advanced `module.decoration.*` set** — box shadow, filters, transform, sticky,
+  transition, scroll, animation.
+- **Tier 2 element families** — button, font, text effects, text shadow, icon. These
+  attach to an element rather than the module wrapper, so their paths start with the
+  element name (`button.…`, `title.decoration.font.…`) rather than `module.`.
+
+Every other shared family Divi ships is listed and classified in
+[Shared family inventory](#shared-family-inventory-46-maps) below, so the ones that are
+not documented here are visibly not documented rather than silently missing.
 
 **Clean-room provenance**: every path and value shape below is derived from Divi 5's
 own source — the shared `Module/Options/<Group>/<Group>PresetAttrsMap.php` classes, the
 matching `StyleLibrary/Declarations/<Group>/<Group>.php` CSS-emission classes, and (for
 enums/units not exposed in either) Divi's own compiled Visual Builder JS
-(`visual-builder/build/*.js`) — cross-referenced against `scripts/extract-decoration-paths.php
-<builder5> --shared`, which reads those same `PresetAttrsMap` classes programmatically.
+(`visual-builder/build/*.js`) — cross-referenced against the repo's own extractors
+(`scripts/extract-shared-preset-paths.php` for the Tier 2 families,
+`scripts/extract-decoration-paths.php <builder5> --shared` for the seven advanced ones),
+which read those same `PresetAttrsMap` classes programmatically.
 None of this was read from, derived from, or cross-checked against
 `diviops-agent-pro` — that plugin was never opened while authoring this file. See
 `SKILL.md`'s [Verification convention](../SKILL.md#verification-convention) for what the
@@ -64,6 +75,98 @@ subfield vocabulary entirely. The shared
 `Module/Options/<Group>/<Group>PresetAttrsMap.php` classes are the one place that
 vocabulary is guaranteed complete for every family, independent of which modules
 register it for presets and under what prefix.
+
+### Two shapes of family map — and why they have to be run, not read
+
+The seven advanced families (Box Shadow through Entrance Animation, documented below)
+are all *flat*: their `get_map()` writes out every key it contributes as a literal
+`"{$attr_name}__<subField>"` string, so reading the strings out of the file gives the
+right answer. That is what `scripts/extract-decoration-paths.php --shared` does, and it
+stays correct for those seven.
+
+The Tier 2 families are not flat. `ButtonPresetAttrsMap::get_map()` spells six of the
+149 keys it contributes and gets the other 143 by calling seven sibling family maps
+(`Background`, `Border`, `Font`, `Sizing`, `Spacing`, `BoxShadow`, `AttributesRel`),
+none of whose keys appear anywhere in its own source. `FontPresetAttrsMap` does the same
+with `TextEffects` and `TextShadow`. A text scan of either file reports a vocabulary
+that is missing most of itself, so those families are resolved by *running* `get_map()`:
+
+```bash
+php scripts/extract-shared-preset-paths.php <builder5> --family Button --attr button
+php scripts/extract-shared-preset-paths.php <builder5> --list
+```
+
+Families also differ in arity. Most take the element prefix they are keyed on as their
+one argument. Three (`FieldDecoration`, `PositionSettings`, `VisibilitySettings`) take
+none and return absolute `module.decoration.*` paths, because they serve exactly one
+element. The extractor refuses a prefix for those rather than ignoring it.
+
+### Shared family inventory (46 maps)
+
+Every `Module/Options/<Group>/<Group>PresetAttrsMap.php` file Divi 5.9.0 ships, with the
+key count `get_map()` actually resolves to and where (if anywhere) it is documented.
+"Keys" is the resolved count under a single prefix, delegated keys included — counted by
+`php scripts/extract-shared-preset-paths.php <builder5> --family <Name> --attr x`.
+
+Status values: **documented** — full leaf-path depth in this file; **Tier 1 (group
+level)** — [module-formats.md](module-formats.md) documents the family and its everyday
+leaves, but not every leaf at this file's depth; **deferred** — a genuine decoration
+family still undocumented at either depth; **not a decoration family** — content, query,
+or behavior configuration, out of this document's scope.
+
+| Family | Keys | Status | What it is |
+|---|---|---|---|
+| AdminLabel | 1 | not a decoration family | The builder-only label shown on the module in the VB. |
+| Animation | 12 | documented — [Entrance Animation](#entrance-animation) | Entrance animation. |
+| Attributes | 1 | not a decoration family | Arbitrary HTML attributes bag. |
+| AttributesRel | 1 | documented — [Button](#button) | The `rel` list for a link; reached through Button. |
+| Background | 50 | Tier 1 (group level) | Color, gradient, image, video, pattern, mask. |
+| Border | 17 | Tier 1 (group level) | Radius and per-side width/style/color. |
+| BoxShadow | 7 | documented — [Box Shadow](#box-shadow) | Drop and inner shadow. |
+| Button | 149 | documented — [Button](#button) | A whole button element: its own icon group plus seven delegated families. |
+| Conditions | 1 | not a decoration family | Display-conditions rule set. |
+| DisabledOn | 1 | Tier 1 (group level) | Per-breakpoint visibility toggle. |
+| Dividers | 12 | Tier 1 (group level) | Section top/bottom divider shapes. |
+| Elements | 1 | not a decoration family | Which sub-elements a module renders (`structure`). |
+| EmailService | 2 | not a decoration family | Email-provider account binding for opt-in modules. |
+| FieldDecoration | 209 | deferred | Form-field styling, absolute-path variant of FormField. |
+| Filters | 9 | documented — [Filters](#filters) | CSS filter stack plus blend mode. |
+| Fit | 2 | deferred | `object-fit` / `object-position` for media. |
+| Font | 44 | documented — [Font](#font) | Typography, plus delegated TextEffects and TextShadow. |
+| FontBody | 246 | deferred | The body-text font group: body/link/ul/ol/quote/dropCap sub-elements, each a full Font family. |
+| FontHeader | 264 | deferred | The heading font group: h1–h6, each a full Font family. |
+| FormField | 178 | deferred | Form-field styling under an element prefix. |
+| Gutter | 2 | deferred | Column gutter width and alignment. |
+| Html | 3 | not a decoration family | Element tag plus raw before/after HTML. |
+| Icon | 3 | documented — [Icon](#icon) | Icon color and custom size. |
+| IdClasses | 2 | not a decoration family | CSS id and class attributes. |
+| Image | 55 | deferred | An image element: border, box shadow, filters, spacing, sizing. |
+| Interactions | 1 | not a decoration family | The interactions rule set. |
+| Layout | 25 | deferred | Flex and grid container layout. |
+| LinkUtils | 2 | not a decoration family | Module-level link url and target. |
+| Loop | 14 | not a decoration family | Query-loop configuration. |
+| Meta | 3 | not a decoration family | Admin label, force-visible, ToC heading. |
+| Overflow | 2 | Tier 1 (group level) | `overflow-x` / `overflow-y`. |
+| Position | 6 | deferred | Positioning mode, origin, offset. |
+| PositionSettings | 7 | deferred | Absolute-path variant of Position for the module wrapper. |
+| Scroll | 13 | documented — [Scroll Effects](#scroll-effects) | Scroll-triggered motion effects. |
+| ScrollSettings | 20 | deferred | Absolute-path variant of Scroll plus its `.enable` siblings. |
+| Sizing | 20 | Tier 1 (group level) | Width, height, alignment, flex and grid placement. |
+| Spacing | 2 | Tier 1 (group level) | Margin and padding. |
+| SpamProtection | 5 | not a decoration family | Captcha provider binding. |
+| Sticky | 7 | documented — [Sticky Position](#sticky-position) | Sticky positioning. |
+| Text | 7 | deferred | Module text color and orientation, plus a text shadow. |
+| TextEffects | 19 | documented — [Text Effects](#text-effects) | Gradient, image fill, and stroke on text. |
+| TextShadow | 5 | documented — [Text Shadow](#text-shadow) | Text shadow presets. |
+| Transform | 5 | documented — [Transform](#transform) | Scale, translate, rotate, skew, origin. |
+| Transition | 3 | documented — [Transition](#transition) | State-change timing. |
+| VisibilitySettings | 3 | Tier 1 (group level) | Absolute-path pairing of DisabledOn and Overflow. |
+| ZIndex | 1 | Tier 1 (group level) | Stacking order. |
+
+Counts and family names produced by
+`php scripts/extract-shared-preset-paths.php <builder5> --list` plus one
+`--family <Name>` run each; 46 files, matching the count asserted in
+`tests/test-shared-preset-attrs-map.php`.
 
 ---
 
@@ -935,3 +1038,643 @@ to a scratch Text module (page 900592, trashed after); all 12 paths round-trippe
 identically through `diviops_module_get` and an independent raw
 `wp post get --field=post_content` read — no rewrite, no dropped keys, no renamed
 keys. Matches every documented path exactly.
+
+---
+
+## Button
+
+The largest shared family Divi ships: 149 preset-attribute keys under a single element
+prefix <!-- UNVERIFIED --> *(paths extractor-corroborated 2026-08-14, not VB round-tripped; see [Round-trip status](#round-trip-status))*.
+
+Unlike every family above, Button is a **composite**. Its own `get_map()` contributes
+six keys — five `icon.*` subfields and one alignment subfield — and obtains the other
+143 by calling seven sibling family maps. The element prefix is the bare element name,
+not a `.decoration.` path:
+
+```
+php scripts/extract-shared-preset-paths.php <builder5> --family Button --attr button
+```
+
+| Delegate | Keys | Prefix it lands under |
+|---|---|---|
+| Background | 50 | `button.decoration.background__*` |
+| Sizing | 20 | `button.decoration.sizing__*` |
+| Font | 44 | `button.decoration.font.font__*`, `.textEffects__*`, `.textShadow__*` |
+| Border | 17 | `button.decoration.border__*` |
+| BoxShadow | 7 | `button.decoration.boxShadow__*` |
+| Spacing | 2 | `button.decoration.spacing__*` |
+| AttributesRel | 1 | `button.innerContent__rel` |
+
+50 + 20 + 44 + 17 + 7 + 2 + 1 = 141 delegated, plus Button's own 6 and its three
+`innerContent` keys = 150 — but the resolved total is **149**, not 150, because
+`button.decoration.sizing__alignment` is contributed twice (once by Button's own group,
+once by the Sizing delegate) and `array_merge` collapses it to one key. That is the
+whole discrepancy; there is no dropped path.
+
+### Button's own keys
+
+| Path | Value shape | Notes |
+|---|---|---|
+| `button.decoration.button__icon.enable` | enum: `"on"` \| `"off"` | Master switch for the button icon. **No hover, no sticky, no responsive** — the VB field config sets `features:{hover:false,sticky:false,responsive:false}`. Every other field in this group is hidden in the VB until this is `"on"` — the group's shared `visible` predicate reads `desktop.value.icon.enable`, with one escape hatch: while a preset is being edited the whole group is shown regardless. |
+| `button.decoration.button__icon.settings` | object `{unicode, type, weight}` | The glyph itself. `type` is `"divi"` or `"fa"`; `weight` is a numeric string such as `"400"`; `unicode` is the glyph's code point as stored in Divi's own icon list. All three must be present or `IconFont\Utils::find_icon_in_list()` returns null and no icon renders. **No hover**; responsive *is* supported and genuinely rendered — `ButtonComponent::component()` emits separate `data-icon`, `data-icon-tablet`, and `data-icon-phone` attributes and the breakpoint CSS resolves `content: attr(data-icon-tablet)`. |
+| `button.decoration.button__icon.color` | color string | Icon color, independent of the button's text color. Hover supported. |
+| `button.decoration.button__icon.placement` | enum: `"right"` \| `"left"` | Default `"right"` (the PHP `?? 'right'` fallback, matching the VB's two-entry option map). `"left"` moves the glyph to the `:before` pseudo-element, emits `margin-left: -1.3em`, and hides the right-side glyph with `display: none`. |
+| `button.decoration.button__icon.onHover` | enum: `"on"` \| `"off"` | **Reads backwards from its name.** The VB labels it "Only Show Icon On Hover"; `"on"` is Divi's default reveal-on-hover behavior, and `"off"` is what pins the icon permanently visible (it emits `opacity: 1`). Setting `onHover` to `"off"` shows the icon *more*, not less. |
+| `button.decoration.sizing__alignment` | enum: `"left"` \| `"center"` \| `"right"` | Emitted by `StyleLibrary/Declarations/Button/Button.php` as plain `text-align` — that class emits nothing else at all. `features:{hover:false,sticky:false}`; responsive is supported. Shared with the Sizing family, which is why it is one key rather than two. |
+| `button.innerContent__text` | string | The button label. May carry an HTML tag, in which case `ButtonComponent` extracts the title text from it. |
+| `button.innerContent__linkUrl` | URL string | **No hover, no sticky, no responsive.** With no `text` and no `linkUrl`, the component renders nothing at all unless the module passes `allowEmptyUrl` or `forceRender`. |
+| `button.innerContent__linkTarget` | enum: `"off"` \| `"on"` | `"on"` opens in a new tab. Default `"off"`. No hover/sticky/responsive. When `linkTarget` is `"on"` and `rel` is empty, the component adds `rel="noreferrer"` on its own. |
+| `button.innerContent__rel` | array of strings | Any of `bookmark`, `external`, `nofollow`, `noreferrer`, `noopener`. A list, not a single value. No hover/sticky/responsive. |
+
+**The `enable`-only case emits no CSS.** `ButtonIcon::style_declaration()` returns an
+empty string unless `enable` is `"on"` *and* at least one of: a glyph is chosen, a color
+is set, `placement` is `"left"`, or `onHover` is `"off"`. Divi's theme stylesheet already
+carries the baseline button-icon appearance, so writing `enable: "on"` and nothing else
+is a no-op at the module-CSS level rather than a bug.
+
+**Hover inherits `enable` and `settings` from the value state.** Where Box Shadow and
+Filters route inheritance through `ModuleUtils::use_attr_value( mode: 'getAndInheritAll' )`,
+Button's icon does it inline: the hover state's `icon.enable` and `icon.settings` fall
+back through `defaultAttrValue`, then the current breakpoint's `value` state, then
+`desktop.value`. A hover fragment that sets only `icon.color` therefore keeps the glyph
+rather than losing it.
+
+Minimal copy-paste `attrs` fragment (labelled link button, always-visible left icon,
+hover color swap):
+
+```json
+{
+  "button": {
+    "innerContent": {
+      "desktop": {
+        "value": {
+          "text": "Read the case study",
+          "linkUrl": "https://example.com/case-study",
+          "linkTarget": "on",
+          "rel": ["noopener", "noreferrer"]
+        }
+      }
+    },
+    "decoration": {
+      "button": {
+        "desktop": {
+          "value": {
+            "icon": {
+              "enable": "on",
+              "settings": {"unicode": "&#x24;", "type": "divi", "weight": "400"},
+              "color": "#6366f1",
+              "placement": "left",
+              "onHover": "off"
+            }
+          },
+          "hover": {"icon": {"color": "#f59e0b"}}
+        }
+      },
+      "sizing": {"desktop": {"value": {"alignment": "center"}}}
+    }
+  }
+}
+```
+
+**Provenance**: composition, the six own keys, and the delegate list from
+`server/Packages/Module/Options/Button/ButtonPresetAttrsMap.php::get_map()` (`:40-130`,
+own group at `:70-101`, delegates at `:103-127`); the `rel` key from
+`server/Packages/Module/Options/AttributesRel/AttributesRelPresetAttrsMap.php`; icon CSS
+emission, the `enable`+custom-styles gate, the value-state fallback chain, the `left`
+placement's `-1.3em` margin and `display:none` sibling rule, and the
+`onHover: "off"` → `opacity: 1` rule from
+`server/Packages/StyleLibrary/Declarations/ButtonIcon/ButtonIcon.php`
+(`style_declaration()` `:46-169`, `hover_style_declaration()` `:192-219`,
+`right_style_declaration()` `:241-269`, `disable_style_declaration()` `:291-317`);
+`alignment` → `text-align` (and nothing else) from
+`server/Packages/StyleLibrary/Declarations/Button/Button.php:44-69`; the
+`data-icon` / `data-icon-tablet` / `data-icon-phone` responsive rendering and the
+empty-`rel` + new-tab `noreferrer` behavior from
+`server/Packages/Module/Options/Button/ButtonComponent.php` (`:183-194`); the
+`{unicode, type, weight}` requirement and the `divi`/`fa` type set from
+`server/Packages/IconLibrary/IconFont/Utils.php::find_icon_in_list()` (`:60-81`),
+`::process_font_icon()` (`:134-175`), and `::is_fa_icon()` (`:102-104`); the canonical
+`button.decoration.button` group attrName, the `icon.enable` visibility predicate, every
+`features` flag quoted above, the two-entry `placement` option map, the `linkTarget`
+option map, and the five-entry `rel` option list all confirmed in compiled
+`visual-builder/build/module.js`. Path list cross-verified against
+`php scripts/extract-shared-preset-paths.php <builder5> --family Button --attr button`
+(see [Path verification — Tier 2 families](#path-verification--tier-2-families)).
+
+---
+
+## Font
+
+44 keys under an element's font attribute <!-- UNVERIFIED --> *(paths extractor-corroborated 2026-08-14, not VB round-tripped; see
+[Round-trip status](#round-trip-status))*: 20 of its own plus 19 delegated to
+[Text Effects](#text-effects) and 5 to [Text Shadow](#text-shadow).
+
+**The doubled `font.font` is not a typo.** `FontPresetAttrsMap::get_map()` is handed the
+element's *font attribute* and appends its own `.font` segment, so the canonical leaf is:
+
+```
+<element>.decoration.font.font__<subField>
+```
+
+`title.decoration.font.font__size`, `button.decoration.font.font__color`,
+`module.decoration.font.font__lineHeight`. The VB's font group likewise defaults its
+attrName to `module.decoration.font`, and its fields append `.font` to it.
+
+The single-`font` form (`title.decoration.font__size`) is what this family never
+produces, and Divi's own module maps treat it as a mistake to clean up: of the 23
+single-`font` strings in the whole of `ModuleLibrary/`, 22 sit inside `unset()` or
+`$keys_to_unset` lists — Menu and Fullwidth Menu strip six between them, Pricing Tables
+another six. The lone survivor is Gallery's `pagination.decoration.font__textAlign`,
+which Gallery hand-registers with `attrName: 'pagination.decoration.font'` instead of
+routing that element through this family at all. Treat a single-`font` path as wrong
+unless the module's own map is where you read it.
+
+| Path (under `<element>.decoration.font`) | Value shape | Notes |
+|---|---|---|
+| `.font__family` | font-name string | `"none"` and `"default"` (case-insensitive) are treated as unset. A `$variable()$` global-font token is resolved first. Divi appends a websafe fallback stack (`Helvetica, Arial, Lucida, sans-serif` for sans-serif, `Georgia, "Times New Roman", serif` for serif, and so on) unless the name already ends in a CSS generic keyword. |
+| `.font__weight` | numeric string `"100"`–`"900"`, or `"variable"` | The VB's base option map is 100/200/…/900 (labels Thin … Heavy), narrowed at runtime to the weights the chosen family actually ships. `"variable"` is a mode switch, not a weight: it hands control to `weightFineTune` / the `WGHT` variable axis. |
+| `.font__weightFineTune` | numeric string | Variable-font weight on the `WGHT` axis, clamped to the family's own min/max. Visible in the VB only for families exposing `WGHT`. Setting it puts the field into variable-weight mode even if `weight` is a discrete number. |
+| `.font__opticalSizing` | enum: `"auto"` \| `"none"` | Only `"none"` (or the legacy `"off"`) emits anything — `font-optical-sizing: none`. Visible only for families exposing an `OPSZ` axis. |
+| `.font__style` | **array** of `"italic"` \| `"underline"` \| `"overline"` \| `"strikethrough"` | Multi-select, so the value is a list. `underline`/`overline`/`strikethrough` compose into one `text-decoration-line`. An **empty array is an explicit reset**, emitting `font-style: normal` and `text-decoration-line: none` to override an inherited or preset value — different from omitting the key. A bare string is tolerated and wrapped into a one-element array. |
+| `.font__capitalization` | enum: `"uppercase"` \| `"lowercase"` \| `"capitalize"` \| `"smallCaps"` \| `"allSmallCaps"` | Single-choice, despite sharing an icon map with `style`. The first three emit `text-transform`; the last two emit `font-variant-caps: small-caps` / `all-small-caps`. An **empty string is an explicit reset** to `text-transform: none` / `font-variant-caps: normal`, again only when an inherited or default value would otherwise apply. |
+| `.font__color` | color string | `color`. |
+| `.font__size` | length, e.g. `"18px"` | A **unitless numeric value gets `px` appended** by the renderer, which is how migrated Divi 4 layouts survive. Any of Divi's 12 allowed units otherwise (`%`, `em`, `rem`, `px`, `cm`, `mm`, `in`, `pt`, `pc`, `ex`, `vh`, `vw`). |
+| `.font__letterSpacing` | length, e.g. `"0.05em"` | `letter-spacing`. |
+| `.font__lineHeight` | length or unitless number, e.g. `"1.6em"` | VB `defaultUnit:"em"`, `step:0.1`. |
+| `.font__textAlign` | enum: `"left"` \| `"center"` \| `"right"` \| `"justify"` | **No hover, no sticky** (`features:{hover:false,sticky:false}`); responsive supported. |
+| `.font__textWrap` | enum: `"wrap"` \| `"balance"` \| `"pretty"` | CSS `text-wrap`. Labels are "Default" / "Balanced" / "Pretty"; the stored key for the default is `"wrap"`, not `"default"`. |
+| `.font__writingMode` | enum: `"horizontal-tb"` \| `"vertical-rl"` \| `"vertical-lr"` | **`"vertical-lr"` does not emit `writing-mode: vertical-lr`.** It emits `writing-mode: vertical-rl` plus `transform: rotate(180deg)`, which is how Divi fakes left-to-right vertical text. That rotation collides with anything else writing `transform` on the same element. |
+| `.font__hyphens` | enum: `"on"` \| `"off"` | `"on"` emits `hyphens: auto` **and** `word-wrap: break-word`; `"off"` emits `hyphens: none`. Any other string is passed through to `hyphens` verbatim. |
+| `.font__columnCount` | numeric string, e.g. `"2"` | Unitless (`allowedUnits:[""]`, `min:1`). **`"1"` normally emits nothing** — the single-column default is treated as UI-only; it emits `column-count: 1` only when an inherited or default value was greater than 1, i.e. as a deliberate override. |
+| `.font__columnGap` | length, e.g. `"2em"` | VB default `"1em"`. **A zero gap emits nothing**: `"0"`, `"0px"`, `"0em"`, `"0rem"`, and `"0%"` are all suppressed. |
+| `.font__lineColor` | color string | `text-decoration-color`. |
+| `.font__lineStyle` | enum: `"solid"` \| `"double"` \| `"dotted"` \| `"dashed"` \| `"wavy"` | `text-decoration-style`. **Only emitted when `style` contains one of `underline`/`overline`/`strikethrough`** — on its own it produces nothing. Defaults to `solid` when a decoration line is present and this key is absent. |
+| `.font__lineThickness` | length, e.g. `"2px"` | `text-decoration-thickness`, `minLimit:1`. |
+| `.font__underlineOffset` | length, e.g. `"3px"` | `text-underline-offset`. |
+
+**Hover and responsive**: `weight`, `style`, `capitalization`, `lineColor`, `lineStyle`,
+`lineThickness`, `underlineOffset`, `weightFineTune`, and `opticalSizing` carry explicit
+`features:{hover:true,sticky:true}`; `textAlign` is the one subfield with
+`features:{hover:false,sticky:false}`; the rest declare no restriction and so take both.
+Nothing in this family sets `responsive:false`.
+
+**Two sibling keys are rendered but not preset-registered.** `Font::style_declaration()`
+also reads `variationSettings` (an object keyed by four-letter variable-font axis tags —
+`WGHT`, `WDTH`, `SLNT`, and custom axes — emitted as `font-variation-settings`) and the
+`columnRuleWidth` / `columnRuleStyle` / `columnRuleColor` trio (emitted only while
+`columnCount > 1`). Neither appears in any of the 46 shared maps, so neither participates
+in preset save/load; they are still valid to write into a module's attrs.
+
+**Four opt-in flags add up to 8 more keys.** `get_map()` takes a second `$args` argument:
+`has_heading_level` adds `.font__headingLevel`, `has_list` adds four `.list__*` keys
+(`type`, `position`, `itemIndent`, `listSpacing`), `has_paragraph` adds
+`.list__paragraphSpacing`, and `has_border` adds `.border__styles.left.{width,color}`
+(the blockquote bar). All four default to false, which is why the base resolution is 44.
+The dropCap subfields (`.font__dropCapLineSize`, `.font__dropCapSpacing`) are not reached
+through this argument at all — they arrive through the `FontBody` group's own `dropCap`
+sub-element, which is [deferred](#shared-family-inventory-46-maps).
+
+Minimal copy-paste `attrs` fragment (module-wrapper font, hover color swap):
+
+```json
+{
+  "module": {
+    "decoration": {
+      "font": {
+        "font": {
+          "desktop": {
+            "value": {
+              "family": "Inter",
+              "weight": "600",
+              "style": ["italic"],
+              "capitalization": "uppercase",
+              "color": "#0f172a",
+              "size": "18px",
+              "letterSpacing": "0.04em",
+              "lineHeight": "1.6em",
+              "textAlign": "left",
+              "lineStyle": "solid",
+              "lineColor": "#6366f1",
+              "lineThickness": "2px",
+              "underlineOffset": "3px"
+            },
+            "hover": {"color": "#6366f1"}
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Provenance**: the 20-key vocabulary, the appended `.font` segment, the delegation to
+TextEffects and TextShadow, and the four `$args` flags from
+`server/Packages/Module/Options/Font/FontPresetAttrsMap.php::get_map()` (`:36-205`, own
+keys `:46-147`, flags `:149-199`, delegates `:201-204`); every CSS-emission rule quoted
+above from `server/Packages/StyleLibrary/Declarations/Font/Font.php::style_declaration()`
+(`:211-741`) — websafe fallback stacks `:120-188`, variable-axis clamping and
+`font-variation-settings` `:335-478`, `opticalSizing` `:480-487`, the array-valued
+`style` and its empty-array reset `:489-541`, capitalization and its empty-string reset
+`:543-579`, `lineStyle`'s decoration-line gate `:585-596`, `hyphens` `:610-619`, the
+zero-`columnGap` suppression `:621-626`, the `columnCount > 1` gate and the
+`columnRule*` trio `:628-668`, the unitless-`size` px fallback `:674-687`, and
+`writingMode`'s `vertical-rl` + `rotate(180deg)` substitution `:709-734`; the weight
+option map (100–900 with Thin…Heavy labels), the 12-entry allowed-unit list, the
+`style` and `capitalization` option maps, the `lineStyle` / `textWrap` / `writingMode` /
+`textAlign` / `opticalSizing` option maps, the `module.decoration.font` group default
+attrName, and every `features` flag quoted above all confirmed in compiled
+`visual-builder/build/module.js`. Path list cross-verified against
+`php scripts/extract-shared-preset-paths.php <builder5> --family Font --attr module.decoration.font`
+(see [Path verification — Tier 2 families](#path-verification--tier-2-families)).
+
+---
+
+## Text Effects
+
+19 keys under `<element>.decoration.font.textEffects__*` <!-- UNVERIFIED --> *(paths
+extractor-corroborated 2026-08-14, not VB round-tripped;
+see [Round-trip status](#round-trip-status))*. Reached through the Font family, which
+calls this map with the element's font attribute and lets it append its own
+`.textEffects` segment.
+
+Three independent capabilities share one map: a **fill** (gradient or image clipped to
+the glyphs), a **stroke**, and the `fillType` switch that selects between them.
+
+| Path (under `<element>.decoration.font`) | Value shape | Notes |
+|---|---|---|
+| `.textEffects__fillType` | enum: `"none"` \| `"gradient"` \| `"image"` \| `"transparent"` | The switch. `"transparent"` emits `-webkit-text-fill-color: transparent` with no fill behind it (invisible text, used with a stroke). Resolved through `getAndInheritAll`, so a breakpoint inherits the larger breakpoint's fill type. |
+| `.textEffects__gradient` | object | The whole gradient object, including its `stops` array. `stops` has **no leaf path of its own** — it round-trips only as part of this bare key. Fewer than two stops emits nothing. |
+| `.textEffects__gradient.type` | enum: `"linear"` \| `"circular"` \| `"elliptical"` \| `"conic"` | Renderer fallback `"linear"`. The VB labels them Linear / Circular / Elliptical / Conical; there is no `"radial"` key. |
+| `.textEffects__gradient.direction` | angle, e.g. `"180deg"` | Renderer fallback `"180deg"`. Linear and conic gradients. |
+| `.textEffects__gradient.directionRadial` | position keyword: `"center"` \| `"top left"` \| `"top"` \| `"top right"` \| `"right"` \| `"bottom right"` \| `"bottom"` \| `"bottom left"` \| `"left"` | Renderer fallback `"center"`. Note the two-word keys carry a literal space. Circular and elliptical gradients. |
+| `.textEffects__gradient.repeat` | enum: `"on"` \| `"off"` | Renderer fallback `"off"`. |
+| `.textEffects__gradient.length` | length/percentage, e.g. `"100%"` | Renderer fallback `"100%"`. |
+| `.textEffects__imageFill.url` | image URL string | Without a resolvable URL the whole image fill emits nothing. |
+| `.textEffects__imageFill.size` | enum/length | Fed to the same background-size helper the Background family uses. |
+| `.textEffects__imageFill.width` / `.height` | lengths | Only consulted for the custom size mode. |
+| `.textEffects__imageFill.position` | position keyword | Renderer fallback `"center"`. |
+| `.textEffects__imageFill.horizontalOffset` / `.verticalOffset` | percentages | Renderer fallback `"0%"` each. |
+| `.textEffects__imageFill.repeat` | CSS `background-repeat` keyword | Renderer fallback `"no-repeat"`. |
+| `.textEffects__imageFill.blend` | CSS `background-blend-mode` keyword | Emitted **only when it differs from the Background family's own default blend**; matching the default is treated as "not set". |
+| `.textEffects__strokeWidth` | length, e.g. `"2px"` | `-webkit-text-stroke-width`. Allowed units are a narrower set than the font family's: `px`, `em`, `rem`, `vh`, `vw`, default `px`. Independent of `fillType` — a stroke works with any fill, including `"none"`. |
+| `.textEffects__strokeColor` | color string | `-webkit-text-stroke-color`. |
+| `.textEffects__strokePosition` | enum: `"stroke-fill"` \| `"fill-stroke"` | **The stored keys read backwards from the VB labels**: key `"stroke-fill"` is labelled "Outside" and emits `paint-order: stroke`; key `"fill-stroke"` is labelled "Center" and emits `paint-order: fill`. With this key absent and `strokeWidth` numerically greater than 1, the renderer picks `paint-order: stroke` on its own. |
+
+**Fills clip to the text.** Both the gradient and image branches emit the same
+supporting declarations alongside the `background-image` — `background-repeat`,
+`-webkit-background-clip: text`, `background-clip: text`, and
+`-webkit-text-fill-color: transparent`. That last one is why a text effect overrides
+`font__color`: the glyph fill is switched off so the clipped background shows through.
+Switching `fillType` back to `"none"` **explicitly** (rather than omitting the key)
+emits the reset triple `background-image: none`, `background-clip: border-box`,
+`-webkit-text-fill-color: initial`.
+
+Minimal copy-paste `attrs` fragment (gradient fill plus an outside stroke):
+
+```json
+{
+  "module": {
+    "decoration": {
+      "font": {
+        "textEffects": {
+          "desktop": {
+            "value": {
+              "fillType": "gradient",
+              "gradient": {
+                "type": "linear",
+                "direction": "135deg",
+                "repeat": "off",
+                "length": "100%",
+                "stops": [
+                  {"position": "0", "color": "#6366f1"},
+                  {"position": "100", "color": "#f59e0b"}
+                ]
+              },
+              "strokeWidth": "1px",
+              "strokeColor": "#0f172a",
+              "strokePosition": "stroke-fill"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Provenance**: the 19-key vocabulary and the appended `.textEffects` segment from
+`server/Packages/Module/Options/TextEffects/TextEffectsPresetAttrsMap.php::get_map()`
+(`:32-130`); the `fillType` inheritance through
+`ModuleUtils::get_attr_subname_value( mode: 'getAndInheritAll' )`, the stroke
+declarations and the automatic `paint-order` at stroke width > 1, the two-stop minimum,
+the background-clip declarations, the image-fill renderer fallbacks
+(`position: center`, offsets `0%`, `repeat: no-repeat`), the differs-from-default blend
+gate, and the explicit-`none` reset triple all from
+`server/Packages/StyleLibrary/Declarations/TextEffects/TextEffects.php::style_declaration()`
+(`:80-225`); the gradient sub-field list and its renderer fallbacks (`linear`, `180deg`,
+`center`, `off`, `100%`) from the same file's `GradientUtils` call (`:148-187`); the
+`module.decoration.font.textEffects` group default attrName, the four-entry `fillType`
+option map, the two-entry `strokePosition` option map with its inverted "Outside" /
+"Center" labels, and the stroke-width unit list all confirmed in compiled
+`visual-builder/build/module.js`. Path list cross-verified against
+`php scripts/extract-shared-preset-paths.php <builder5> --family TextEffects --attr module.decoration.font`
+(see [Path verification — Tier 2 families](#path-verification--tier-2-families)).
+
+---
+
+## Text Shadow
+
+5 keys under `<element>.decoration.font.textShadow__*` <!-- UNVERIFIED --> *(paths extractor-corroborated 2026-08-14, not VB round-tripped; see
+[Round-trip status](#round-trip-status))*. The same preset-plus-overrides shape as
+[Box Shadow](#box-shadow), with five presets instead of seven and `em` units instead of
+`px`.
+
+| Path (under `<element>.decoration.font`) | Value shape | Notes |
+|---|---|---|
+| `.textShadow__style` | enum: `"none"` \| `"preset1"`–`"preset5"` | The gate. **With no `style` and no preset match, the family emits nothing at all**, whatever the other four keys hold — the one exception being a responsive breakpoint (below). `"none"` returns an empty string outright. **No hover, no sticky, no responsive**: `features:{hover:false,responsive:false,sticky:false}`. |
+| `.textShadow__horizontal` | length, e.g. `"0.08em"` | VB `divi/range`, `defaultUnit:"em"`, `min:-2`, `max:2`, `step:0.01`. Overrides the preset's own value. |
+| `.textShadow__vertical` | length, e.g. `"0.1em"` | Same range and unit as `horizontal`. |
+| `.textShadow__blur` | length, e.g. `"0.3em"` | Same unit and step, but `min:0` — blur cannot be negative. |
+| `.textShadow__color` | color string | **Omitting it is meaningful**: CSS `text-shadow` with no color falls back to the element's own `color`, and the renderer emits the three lengths with no color term rather than substituting one. |
+
+The five built-in presets (from `TextShadow::$_presets`, all
+`color: "rgba(0,0,0,0.4)"`):
+
+| Preset | horizontal | vertical | blur |
+|---|---|---|---|
+| preset1 | `0em` | `0.1em` | `0.1em` |
+| preset2 | `0.08em` | `0.08em` | `0.08em` |
+| preset3 | `0em` | `0em` | `0.3em` |
+| preset4 | `0em` | `0.08em` | `0em` |
+| preset5 | `0.08em` | `0.08em` | `0em` |
+
+**Responsive breakpoints break the style gate on purpose.** On tablet or phone, explicit
+`horizontal` / `vertical` / `blur` values emit CSS even with no `style` on that
+breakpoint, and all-zero dimensions emit `0em 0em 0em` rather than nothing — both so a
+smaller breakpoint can cancel the desktop shadow. On desktop the same input emits
+nothing. Since `style` itself is not responsive, cancelling a shadow at a breakpoint
+means writing explicit zero lengths there, not writing `style: "none"`.
+
+Minimal copy-paste `attrs` fragment (preset 3, custom color, cancelled on phone):
+
+```json
+{
+  "module": {
+    "decoration": {
+      "font": {
+        "textShadow": {
+          "desktop": {
+            "value": {
+              "style": "preset3",
+              "horizontal": "0em",
+              "vertical": "0.06em",
+              "blur": "0.25em",
+              "color": "rgba(15,23,42,0.45)"
+            }
+          },
+          "phone": {
+            "value": {"horizontal": "0em", "vertical": "0em", "blur": "0em"}
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Provenance**: the five-key vocabulary from
+`server/Packages/Module/Options/TextShadow/TextShadowPresetAttrsMap.php::get_map()`; the
+preset table, the merge-preset-then-override order, the no-style-no-CSS gate, the
+missing-color behavior, and both responsive-breakpoint exceptions from
+`server/Packages/StyleLibrary/Declarations/TextShadow/TextShadow.php` (`$_presets`
+`:40-71`, `value()` `:105-171`, `style_declaration()` `:212-231`); the
+`module.decoration.font.textShadow` group default attrName, the
+`none`/`preset1`–`preset5` option map (registered through the
+`divi.module.options.textShadow.styleOptions` filter), the `style` field's
+`hover:false,responsive:false,sticky:false` flags, and the `em` unit with its
+`min`/`max`/`step` bounds all confirmed in compiled `visual-builder/build/module.js`.
+Path list cross-verified against
+`php scripts/extract-shared-preset-paths.php <builder5> --family TextShadow --attr module.decoration.font.textShadow`
+(see [Path verification — Tier 2 families](#path-verification--tier-2-families)).
+
+---
+
+## Icon
+
+3 keys under `<element>.decoration.icon__*` <!-- UNVERIFIED --> *(paths extractor-corroborated 2026-08-14, not VB round-tripped; see
+[Round-trip status](#round-trip-status))*. The smallest documented family, and the one
+whose preset map most understates what the attribute actually holds.
+
+| Path | Value shape | Notes |
+|---|---|---|
+| `<element>.decoration.icon__color` | color string | Emitted as `color`, except on a default radio indicator (below), where it becomes `background-color`. Hover supported. |
+| `<element>.decoration.icon__useSize` | enum: `"on"` \| `"off"` | **`size` is ignored unless this is `"on"`.** `features:{sticky:false}`; hover and responsive supported. |
+| `<element>.decoration.icon__size` | length, e.g. `"32px"` | VB `divi/range`, `defaultUnit:"px"`, `min:1`, `max:120`. Emits **both** `font-size` and `line-height` at the same value, so an icon stays vertically centred in its own box. |
+
+**The glyph has no preset path — it lives at the attribute root.** The VB's icon-picker
+field for this group carries no `subName`, so it writes `unicode`, `type`, and `weight`
+as siblings of `color`/`useSize`/`size` inside the same value object.
+`IconPresetAttrsMap` even carries a commented-out `"{$attr_name}__style_html"` entry at
+exactly that spot. Consequences worth knowing:
+
+- A hand-written `attrs` fragment sets the glyph at
+  `<element>.decoration.icon.desktop.value.{unicode,type,weight}`, not under any
+  `__`-suffixed path.
+- Presets save and restore the icon's color and size but **not which glyph it is**,
+  because only the three `__` keys are registered.
+- `indicatorShape` is another such root-level sibling: the value `"radio-default"`
+  selects Divi's circle-based radio indicator, which styles `background-color` plus
+  `width`/`height` from `size` instead of `color` plus `font-size`. Choosing a glyph
+  alongside it overrides the circle (`background: none`, `border-radius: initial`,
+  `width`/`height`: `initial`).
+
+`Icon::style_declaration()` returns an empty string when `attrValue` is missing
+entirely, and emits `font-family: "ETmodules"` or `"FontAwesome"` plus the escaped
+`content` only when the glyph resolves against Divi's own icon list.
+
+Minimal copy-paste `attrs` fragment (module-wrapper icon, custom size, hover color):
+
+```json
+{
+  "module": {
+    "decoration": {
+      "icon": {
+        "desktop": {
+          "value": {
+            "unicode": "&#x24;",
+            "type": "divi",
+            "weight": "400",
+            "color": "#6366f1",
+            "useSize": "on",
+            "size": "32px"
+          },
+          "hover": {"color": "#f59e0b"}
+        }
+      }
+    }
+  }
+}
+```
+
+**Provenance**: the three-key vocabulary, and the commented-out fourth entry showing the
+glyph deliberately has no subfield path, from
+`server/Packages/Module/Options/Icon/IconPresetAttrsMap.php::get_map()` (`:32-55`); the
+`useSize` gate, the paired `font-size` + `line-height` emission, the `color` →
+`background-color` swap under `indicatorShape: "radio-default"`, the glyph-override
+reset, and the `ETmodules` / `FontAwesome` font-family selection from
+`server/Packages/StyleLibrary/Declarations/Icon/Icon.php::style_declaration()`
+(`:46-131`); the glyph's `{unicode, type, weight}` shape from
+`server/Packages/IconLibrary/IconFont/Utils.php::find_icon_in_list()` (`:60-81`); the
+`module.decoration.icon` group default attrName, the icon-picker field's absent
+`subName`, `useSize`'s `sticky:false` flag, and the size range's `px` unit with
+`min:1`/`max:120` all confirmed in compiled `visual-builder/build/module.js`. Path list
+cross-verified against
+`php scripts/extract-shared-preset-paths.php <builder5> --family Icon --attr module.decoration.icon`
+(see [Path verification — Tier 2 families](#path-verification--tier-2-families)).
+
+---
+
+## Path verification — Tier 2 families
+
+The seven advanced families above are cross-checked in
+[Path verification](#path-verification). The five Tier 2 families are cross-checked here,
+against `scripts/extract-shared-preset-paths.php`, which resolves a family by running its
+`get_map()` rather than reading it — the only way Button's and Font's delegated keys are
+visible at all.
+
+Every path in the Button section, and every one of the 44 Font paths, appears in the
+output below; none was invented. The three families Font delegates to are shown at their
+own canonical prefixes rather than repeated inside Font's listing.
+
+The extractor also prints four `#`-prefixed header lines (family, class, file, attr)
+ahead of the paths. Those are omitted below to keep the blocks readable; the paths and
+the trailing summary line are reproduced verbatim.
+
+```
+$ php scripts/extract-shared-preset-paths.php <builder5> --family Icon --attr module.decoration.icon
+module.decoration.icon__color
+module.decoration.icon__size
+module.decoration.icon__useSize
+resolved 3 preset attr key(s) for family Icon
+
+$ php scripts/extract-shared-preset-paths.php <builder5> --family TextShadow --attr module.decoration.font.textShadow
+module.decoration.font.textShadow__blur
+module.decoration.font.textShadow__color
+module.decoration.font.textShadow__horizontal
+module.decoration.font.textShadow__style
+module.decoration.font.textShadow__vertical
+resolved 5 preset attr key(s) for family TextShadow
+
+$ php scripts/extract-shared-preset-paths.php <builder5> --family Font --attr module.decoration.font
+module.decoration.font.font__capitalization
+module.decoration.font.font__color
+module.decoration.font.font__columnCount
+module.decoration.font.font__columnGap
+module.decoration.font.font__family
+module.decoration.font.font__hyphens
+module.decoration.font.font__letterSpacing
+module.decoration.font.font__lineColor
+module.decoration.font.font__lineHeight
+module.decoration.font.font__lineStyle
+module.decoration.font.font__lineThickness
+module.decoration.font.font__opticalSizing
+module.decoration.font.font__size
+module.decoration.font.font__style
+module.decoration.font.font__textAlign
+module.decoration.font.font__textWrap
+module.decoration.font.font__underlineOffset
+module.decoration.font.font__weight
+module.decoration.font.font__weightFineTune
+module.decoration.font.font__writingMode
+module.decoration.font.textEffects__fillType
+module.decoration.font.textEffects__gradient
+module.decoration.font.textEffects__gradient.direction
+module.decoration.font.textEffects__gradient.directionRadial
+module.decoration.font.textEffects__gradient.length
+module.decoration.font.textEffects__gradient.repeat
+module.decoration.font.textEffects__gradient.type
+module.decoration.font.textEffects__imageFill.blend
+module.decoration.font.textEffects__imageFill.height
+module.decoration.font.textEffects__imageFill.horizontalOffset
+module.decoration.font.textEffects__imageFill.position
+module.decoration.font.textEffects__imageFill.repeat
+module.decoration.font.textEffects__imageFill.size
+module.decoration.font.textEffects__imageFill.url
+module.decoration.font.textEffects__imageFill.verticalOffset
+module.decoration.font.textEffects__imageFill.width
+module.decoration.font.textEffects__strokeColor
+module.decoration.font.textEffects__strokePosition
+module.decoration.font.textEffects__strokeWidth
+module.decoration.font.textShadow__blur
+module.decoration.font.textShadow__color
+module.decoration.font.textShadow__horizontal
+module.decoration.font.textShadow__style
+module.decoration.font.textShadow__vertical
+resolved 44 preset attr key(s) for family Font
+```
+
+Button's own ten documented keys, filtered out of its 149-key resolution (the other 139
+belong to the seven delegates, each of which keeps its own prefix, listed in the
+[delegate table](#button)):
+
+```
+$ php scripts/extract-shared-preset-paths.php <builder5> --family Button --attr button
+button.decoration.button__icon.color
+button.decoration.button__icon.enable
+button.decoration.button__icon.onHover
+button.decoration.button__icon.placement
+button.decoration.button__icon.settings
+button.decoration.sizing__alignment
+button.innerContent__linkTarget
+button.innerContent__linkUrl
+button.innerContent__rel
+button.innerContent__text
+resolved 149 preset attr key(s) for family Button
+```
+
+The same 149-key resolution grouped by the attribute each key hangs off, which is where
+the delegate table's counts come from:
+
+```
+50  button.decoration.background
+20  button.decoration.sizing
+20  button.decoration.font.font
+19  button.decoration.font.textEffects
+17  button.decoration.border
+ 7  button.decoration.boxShadow
+ 5  button.decoration.font.textShadow
+ 5  button.decoration.button
+ 4  button.innerContent
+ 2  button.decoration.spacing
+```
+
+The path sets asserted here are also asserted mechanically in
+`tests/test-shared-preset-attrs-map.php`, which runs against a real Divi tree whenever
+`DIVIOPS_DIVI_BUILDER5_PATH` points at one.
+
+## Round-trip status
+
+The seven advanced families carry a **VB round-trip** line in their Provenance
+paragraphs: the documented paths were written to a scratch page through
+`diviops_module_update`, read back through both `diviops_module_get` and an independent
+`wp post get`, and the page trashed.
+
+The five Tier 2 families above have **not** been round-tripped, and carry
+`<!-- UNVERIFIED -->` accordingly — the tier
+[SKILL.md's verification convention](../SKILL.md#verification-convention) defines as
+"neither VB-tested nor render-confirmed", which is exactly what they are. That marker is
+the floor, not the whole story: every path, value shape, enum, unit, and feature flag
+here is traced to Divi's own PHP or compiled VB JS and cross-checked against the
+extractor, but none has been written to a live page and read back. Two consequences:
+
+- The **paths** are as solid as the advanced families' — same source, same extractor,
+  plus a test asserting them.
+- The **serialized round-trip** is unproven: nothing here rules out the write path
+  reshaping one of these fragments (the doubled `font.font` segment and Button's nested
+  `icon.settings` object are the two most plausible candidates).
+
+Round-tripping requires creating and trashing scratch pages on the maintainer's live
+working site, which this repository's `CLAUDE.md` gates behind the maintainer's explicit
+approval. That approval was not available in the session this was written, so the work
+was left undone rather than done unapproved. Promoting these five to *VB-verified* is a
+follow-up, not a rewrite.
