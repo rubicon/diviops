@@ -148,6 +148,14 @@ describe('summarizeDescription', () => {
     assert.equal(summarizeDescription('Accepts a|b.'), 'Accepts a\\|b.');
   });
 
+  it('escapes backslashes, which markdown would otherwise read as escaping the next character', () => {
+    assert.equal(summarizeDescription('Matches \\d in the path.'), 'Matches \\\\d in the path.');
+  });
+
+  it('escapes a backslash already followed by a pipe, rather than leaving the pipe unescaped', () => {
+    assert.equal(summarizeDescription('Matches a\\|b.'), 'Matches a\\\\\\|b.');
+  });
+
   it('returns the whole text when it carries no sentence-ending punctuation', () => {
     assert.equal(summarizeDescription('Read one widget'), 'Read one widget');
   });

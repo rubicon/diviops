@@ -254,8 +254,11 @@ export function extractTools(sources) {
   return calls.map((call) => toolFromCall(call, HELPER_KINDS.get(call.expression.text), constants));
 }
 
+// Both characters are escaped in one pass. Escaping the pipe alone would be
+// incomplete: a description already carrying a backslash would have it read as
+// escaping whatever followed, including an escape this function had just added.
 function escapeCell(text) {
-  return text.replace(/\|/g, '\\|');
+  return text.replace(/[\\|]/g, '\\$&');
 }
 
 /**
