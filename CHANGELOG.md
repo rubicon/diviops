@@ -10,6 +10,13 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.14.2](https://github.com/rubicon/diviops/compare/v1.14.1...v1.14.2) (2026-08-14)
+
+
+### Bug Fixes
+
+* **server:** ship LICENSE in the published npm tarball ([#150](https://github.com/rubicon/diviops/issues/150)) ([6065787](https://github.com/rubicon/diviops/commit/6065787b206f70c0c772a68c565fbba39e35beeb)), closes [#149](https://github.com/rubicon/diviops/issues/149)
+
 ## [1.14.1](https://github.com/rubicon/diviops/compare/v1.14.0...v1.14.1) (2026-08-01)
 
 
