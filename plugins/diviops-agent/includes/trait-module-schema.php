@@ -72,21 +72,6 @@ trait DiviOps_Agent_ModuleSchema {
 	}
 
 	/**
-	 * Dump every registered Divi module's schema in one call.
-	 *
-	 * Build-time call for the skill regen pipeline. Walks the
-	 * block-type registry once and returns each `divi/*` block's
-	 * full attributes alongside a `schema_version` hash so consumers
-	 * can short-circuit when nothing changed.
-	 *
-	 * `schema_version` is SHA-1 over the concatenated contents of
-	 * every `*PresetAttrsMap.php` file in `Packages/ModuleLibrary/`.
-	 * That set is the canonical attr-path index — its byte-stable
-	 * hash is what changes only when canonical paths change.
-	 *
-	 * Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.
-	 */
-	/**
 	 * Every native module's full schema (with attributes), keyed by name, read
 	 * from the `module.json` files in a given components directory. The bulk
 	 * counterpart of native_module_list() (which returns basic info only) — this
@@ -128,6 +113,21 @@ trait DiviOps_Agent_ModuleSchema {
 		return self::native_module_schemas_all_from_dir( self::native_module_components_dir() );
 	}
 
+	/**
+	 * Dump every registered Divi module's schema in one call.
+	 *
+	 * Build-time call for the skill regen pipeline. Walks the
+	 * block-type registry once and returns each `divi/*` block's
+	 * full attributes alongside a `schema_version` hash so consumers
+	 * can short-circuit when nothing changed.
+	 *
+	 * `schema_version` is SHA-1 over the concatenated contents of
+	 * every `*PresetAttrsMap.php` file in `Packages/ModuleLibrary/`.
+	 * That set is the canonical attr-path index — its byte-stable
+	 * hash is what changes only when canonical paths change.
+	 *
+	 * Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.
+	 */
 	public static function schema_get_module_dump_all( $request ) {
 		$registry = WP_Block_Type_Registry::get_instance();
 		$all      = $registry->get_all_registered();
