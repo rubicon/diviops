@@ -111,14 +111,11 @@ trait DiviOps_Agent_Media {
 				'data'    => array( 'filename' => $filename ),
 			);
 		}
-		if ( 'image/svg+xml' === ( $check['type'] ?? '' ) && ! self::media_svg_sideload_sanitizer_active() ) {
-			return array(
-				'code'    => 'svg_sanitizer_required',
-				'http'    => 415,
-				'message' => 'SVG uploads require an active SVG sanitizer that sanitizes sideloaded files.',
-				'hint'    => 'Install/enable Safe SVG (a recent version that hooks wp_handle_sideload_prefilter).',
-				'data'    => array( 'filename' => $filename ),
-			);
+		if ( 'image/svg+xml' === ( $check['type'] ?? '' ) ) {
+			$svg_error = self::media_svg_upload_error( $filename );
+			if ( null !== $svg_error ) {
+				return $svg_error;
+			}
 		}
 		$allowed = array_values( get_allowed_mime_types() );
 		if ( ! in_array( $check['type'], $allowed, true ) ) {
@@ -131,6 +128,115 @@ trait DiviOps_Agent_Media {
 			);
 		}
 		return null;
+	}
+
+	/**
+	 * The two SVG-specific upload gates, applied in order, for a file whose real
+	 * bytes were identified as image/svg+xml. Returns null when the upload may
+	 * proceed, else envelope-error args.
+	 *
+	 * The gates are independent and neither substitutes for the other: an active
+	 * sanitizer does not grant the capability, and holding the capability does not
+	 * excuse a missing sanitizer. The sanitizer is the primary defense; the
+	 * capability is defense in depth, because sanitizer bypasses have shipped
+	 * before (#73).
+	 *
+	 * Capability is checked first, so a caller who is not permitted to upload SVG
+	 * at all is told that rather than which security plugins the site runs.
+	 *
+	 * Reached from media_filetype_error(), i.e. after the bytes are in hand and
+	 * identified — the only point at which SVG can be recognized honestly, since a
+	 * declared filename can lie. A dry_run therefore returns its plan without
+	 * consulting either gate: it fetches nothing, so it has nothing to identify.
+	 *
+	 * @param string $filename Declared filename, for the error payload.
+	 * @return array|null
+	 */
+	private static function media_svg_upload_error( string $filename ): ?array {
+		$capability = self::media_svg_upload_capability();
+		if ( ! current_user_can( $capability ) ) {
+			return array(
+				'code'    => 'svg_capability_required',
+				'http'    => 403,
+				'message' => "SVG uploads on this site require the '{$capability}' capability.",
+				'hint'    => 'This site requires a specific capability for SVG uploads, set via the DIVIOPS_SVG_UPLOAD_CAPABILITY constant or environment variable.',
+				'data'    => array(
+					'filename'            => $filename,
+					'required_capability' => $capability,
+				),
+			);
+		}
+		if ( ! self::media_svg_sideload_sanitizer_active() ) {
+			return array(
+				'code'    => 'svg_sanitizer_required',
+				'http'    => 415,
+				'message' => 'SVG uploads require an active SVG sanitizer that sanitizes sideloaded files.',
+				'hint'    => 'Install/enable Safe SVG (a recent version that hooks wp_handle_sideload_prefilter).',
+				'data'    => array( 'filename' => $filename ),
+			);
+		}
+		return null;
+	}
+
+	/**
+	 * The capability an SVG upload requires, on top of the `upload_files` every
+	 * media upload already requires.
+	 *
+	 * Configuration follows this plugin's existing operator-settings surface (the
+	 * rate limits): a `DIVIOPS_SVG_UPLOAD_CAPABILITY` wp-config.php constant wins,
+	 * else the environment variable of the same name, else the shipped default
+	 * `upload_files`, which leaves the pre-#73 behavior exactly as it was. No
+	 * filter seam is offered on purpose: the rate limits are a tuning knob, this is
+	 * a security gate, and a filter would let any plugin on the site lower it.
+	 *
+	 * A blank env var falls through to the default rather than counting as a
+	 * setting, since containers and CI export empty variables routinely and that is
+	 * nobody expressing intent; the same value written as a constant does not,
+	 * because defining a constant is a deliberate act (see
+	 * media_normalize_svg_capability()).
+	 *
+	 * It can only ever ADD a requirement. media_upload() checks `upload_files`
+	 * before any of this runs, so configuring a weaker capability here cannot
+	 * unlock an upload for a caller who could not upload anyway.
+	 *
+	 * Setting it to `do_not_allow` disables SVG uploads through this plugin
+	 * outright, since WordPress denies that capability to everyone.
+	 *
+	 * @return string
+	 */
+	private static function media_svg_upload_capability(): string {
+		if ( defined( 'DIVIOPS_SVG_UPLOAD_CAPABILITY' ) ) {
+			return self::media_normalize_svg_capability( DIVIOPS_SVG_UPLOAD_CAPABILITY );
+		}
+		$configured = getenv( 'DIVIOPS_SVG_UPLOAD_CAPABILITY' );
+		if ( is_string( $configured ) && '' !== trim( $configured ) ) {
+			return self::media_normalize_svg_capability( $configured );
+		}
+		return 'upload_files';
+	}
+
+	/**
+	 * Normalize a configured capability value.
+	 *
+	 * A value that cannot be a capability name (empty, or non-string, or reduced to
+	 * nothing by sanitize_key) resolves to `do_not_allow` rather than back to the
+	 * default. Falling back to the default would answer an operator's typo in their
+	 * own hardening with a silent return to the permissive setting, which is the
+	 * one outcome a security control must never produce. `do_not_allow` is
+	 * WordPress's own deny-everyone capability: WP_User::has_cap() excludes it from
+	 * the multisite super-admin bypass and strips it from the resolved capability
+	 * map, so nobody holds it.
+	 *
+	 * Nothing sanitize_key() removes can turn a value into a weaker real
+	 * capability, and the gate is additive over `upload_files` regardless, so a
+	 * mangled value can only ever refuse an upload, never permit one.
+	 *
+	 * @param mixed $configured Raw configured value.
+	 * @return string
+	 */
+	private static function media_normalize_svg_capability( $configured ): string {
+		$normalized = is_string( $configured ) ? sanitize_key( $configured ) : '';
+		return '' !== $normalized ? $normalized : 'do_not_allow';
 	}
 
 	/**
