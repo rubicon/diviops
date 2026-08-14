@@ -25,14 +25,19 @@
  * @package DiviOps
  */
 
-$server_dir  = dirname( __DIR__ ) . '/diviops-server';
-$index_ts    = $server_dir . '/src/index.ts';
-$root_readme = dirname( __DIR__ ) . '/README.md';
-$srv_readme  = $server_dir . '/README.md';
+$server_dir     = dirname( __DIR__ ) . '/diviops-server';
+$index_ts       = $server_dir . '/src/index.ts';
+$root_readme    = dirname( __DIR__ ) . '/README.md';
+$srv_readme     = $server_dir . '/README.md';
+$plugin_dir     = dirname( __DIR__ ) . '/plugins/diviops-agent';
+$plugin_readme  = $plugin_dir . '/README.md';
+$plugin_main_php = $plugin_dir . '/diviops-agent.php';
 
 assert_true( is_file( $index_ts ), 'diviops-server/src/index.ts exists where this test expects it' );
 assert_true( is_file( $root_readme ), 'README.md exists where this test expects it' );
 assert_true( is_file( $srv_readme ), 'diviops-server/README.md exists where this test expects it' );
+assert_true( is_file( $plugin_readme ), 'plugins/diviops-agent/README.md exists where this test expects it' );
+assert_true( is_file( $plugin_main_php ), 'plugins/diviops-agent/diviops-agent.php exists where this test expects it' );
 
 $src = (string) file_get_contents( $index_ts );
 
@@ -121,3 +126,95 @@ assert_same(
 	count( $unique_pro_names ),
 	'the distinct diviops_* tool names in diviops-server/README.md\'s conditional-Pro-tools table match registerProTool call sites in index.ts'
 );
+
+/*
+ * The plugin README (#168) states the same always-on figure plus a capability-key
+ * count of its own, and #90 left it out of this guard — which is why it still read
+ * "91 always-on tools" and "98 capability keys" long after both were wrong. It also
+ * carried five links to `../../../docs/*.md`, a directory that has never existed in
+ * this repo's history, at a depth that escapes the repo root even for targets that
+ * do exist. Both classes are asserted below against the real source and filesystem.
+ */
+$plugin_readme_content = (string) file_get_contents( $plugin_readme );
+
+assert_same(
+	$always_on,
+	diviops_find_always_on_count( 'plugins/diviops-agent/README.md', $plugin_readme_content ),
+	'plugins/diviops-agent/README.md\'s stated always-on tool count matches registerPluginTool + registerLocalTool call sites in index.ts'
+);
+
+$plugin_backed_found = preg_match( '/gates its (\d+) plugin-backed tools/', $plugin_readme_content, $plugin_backed_match );
+assert_true( 1 === $plugin_backed_found, 'plugins/diviops-agent/README.md states a "gates its N plugin-backed tools" figure' );
+assert_same(
+	$plugin_count,
+	1 === $plugin_backed_found ? (int) $plugin_backed_match[1] : -1,
+	'plugins/diviops-agent/README.md\'s stated plugin-backed tool count matches registerPluginTool call sites in index.ts'
+);
+
+$server_local_found = preg_match( '/adds (\d+) server-local tools/', $plugin_readme_content, $server_local_match );
+assert_true( 1 === $server_local_found, 'plugins/diviops-agent/README.md states an "adds N server-local tools" figure' );
+assert_same(
+	$local_count,
+	1 === $server_local_found ? (int) $server_local_match[1] : -1,
+	'plugins/diviops-agent/README.md\'s stated server-local tool count matches registerLocalTool call sites in index.ts'
+);
+
+/*
+ * Capability keys are the plugin's own figure, derived from the CAPABILITIES const
+ * the handshake emits verbatim (trait-meta.php copies every entry into the response
+ * without filtering). Comments are stripped before counting so a commented-out key
+ * is not counted as live.
+ */
+$plugin_php    = (string) file_get_contents( $plugin_main_php );
+$const_matched = preg_match( '/const CAPABILITIES = \[(.*?)\n\t\];/s', $plugin_php, $const_match );
+assert_true( 1 === $const_matched, 'the CAPABILITIES const literal was located in diviops-agent.php' );
+
+$const_body    = 1 === $const_matched ? preg_replace( '~//[^\n]*~', '', $const_match[1] ) : '';
+$keys_matched  = preg_match_all( '/\'([a-z0-9_]+)\'/', (string) $const_body, $key_names );
+assert_true( is_int( $keys_matched ) && $keys_matched > 0, 'at least one capability key was found in the CAPABILITIES const' );
+assert_same(
+	$keys_matched,
+	count( array_unique( $key_names[1] ) ),
+	'every capability key in CAPABILITIES is distinct, so the stated count is not inflated by a duplicate'
+);
+
+$stated_keys_found = preg_match( '/advertises (\d+) capability keys/', $plugin_readme_content, $stated_keys_match );
+assert_true( 1 === $stated_keys_found, 'plugins/diviops-agent/README.md states an "advertises N capability keys" figure' );
+assert_same(
+	$keys_matched,
+	1 === $stated_keys_found ? (int) $stated_keys_match[1] : -1,
+	'plugins/diviops-agent/README.md\'s stated capability-key count matches the CAPABILITIES const in diviops-agent.php'
+);
+
+// No SCF capability key exists, which is the claim the README's own SCF section rests on.
+assert_same(
+	0,
+	preg_match( '/\'scf[a-z0-9_]*\'/', (string) $const_body ),
+	'CAPABILITIES contains no scf_* key, so the README is right that SCF is not a plugin capability'
+);
+
+/*
+ * Every relative markdown link in the plugin README must resolve on disk. Anchors are
+ * stripped before the existence check; external and absolute URLs are skipped. The
+ * matched-nothing guard matters here as much as the assertions: a regex that stops
+ * matching links would otherwise report a green "all links resolve" having checked none.
+ */
+$link_matched = preg_match_all( '/\]\(([^)]+)\)/', $plugin_readme_content, $link_matches );
+assert_true( is_int( $link_matched ) && $link_matched > 0, 'at least one markdown link was found in plugins/diviops-agent/README.md' );
+
+$relative_links_checked = 0;
+foreach ( $link_matches[1] as $link_target ) {
+	if ( preg_match( '~^([a-z][a-z0-9+.-]*:|//|#)~i', $link_target ) ) {
+		continue;
+	}
+	$path_only = (string) preg_replace( '/#.*$/', '', $link_target );
+	if ( '' === $path_only ) {
+		continue;
+	}
+	++$relative_links_checked;
+	assert_true(
+		file_exists( $plugin_dir . '/' . $path_only ),
+		"plugins/diviops-agent/README.md's link target '$link_target' resolves on disk"
+	);
+}
+assert_true( $relative_links_checked > 0, 'plugins/diviops-agent/README.md contains relative links for this guard to check' );
