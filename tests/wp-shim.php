@@ -291,6 +291,47 @@ if ( ! function_exists( 'get_site_url' ) ) {
 	}
 }
 
+if ( ! isset( $GLOBALS['diviops_test_options'] ) ) {
+	$GLOBALS['diviops_test_options'] = array();
+}
+if ( ! isset( $GLOBALS['diviops_test_site_options'] ) ) {
+	$GLOBALS['diviops_test_site_options'] = array();
+}
+
+if ( ! function_exists( 'get_option' ) ) {
+	/**
+	 * Model WP core's get_option(): the stored value, or $default when unset.
+	 */
+	function get_option( $option, $default = false ) {
+		return array_key_exists( $option, $GLOBALS['diviops_test_options'] )
+			? $GLOBALS['diviops_test_options'][ $option ]
+			: $default;
+	}
+}
+
+if ( ! function_exists( 'update_option' ) ) {
+	/**
+	 * Model WP core's update_option(): store the value, return true.
+	 */
+	function update_option( $option, $value, $autoload = null ) {
+		$GLOBALS['diviops_test_options'][ $option ] = $value;
+		return true;
+	}
+}
+
+if ( ! function_exists( 'get_site_option' ) ) {
+	/**
+	 * Model WP core's get_site_option(): the network-level counterpart of
+	 * get_option(), backed by its own store since a single-site value and a
+	 * network value are never the same row.
+	 */
+	function get_site_option( $option, $default = false ) {
+		return array_key_exists( $option, $GLOBALS['diviops_test_site_options'] )
+			? $GLOBALS['diviops_test_site_options'][ $option ]
+			: $default;
+	}
+}
+
 if ( ! function_exists( 'apply_filters' ) ) {
 	/**
 	 * Real filter runner over the registry add_filter() above builds: runs every
@@ -560,13 +601,15 @@ if ( ! function_exists( 'diviops_test_register_post' ) ) {
 			'post_title'   => $post_title,
 			// Defaulted so a caller reading these WP_Post columns (e.g.
 			// page_duplicate()'s byte-copy, which carries post_excerpt/
-			// post_parent/menu_order straight into wp_insert_post()) never
-			// hits an undefined-property warning on a fixture that didn't
-			// set them explicitly. Tests that care can still overwrite these
-			// on the returned object before calling the handler under test.
+			// post_parent/menu_order straight into wp_insert_post(); seo_post_evidence()'s
+			// published/canonical check, which reads post_status) never hits an
+			// undefined-property warning on a fixture that didn't set them
+			// explicitly. Tests that care can still overwrite these on the
+			// returned object before calling the handler under test.
 			'post_excerpt' => '',
 			'post_parent'  => 0,
 			'menu_order'   => 0,
+			'post_status'  => 'publish',
 		);
 		$GLOBALS['diviops_test_posts'][ $post_id ] = $post;
 		return $post;
