@@ -881,7 +881,8 @@ if ( ! class_exists( 'DiviOps_Test_Request' ) ) {
 			return isset( $this->params[ $offset ] );
 		}
 
-		public function offsetGet( $offset ): mixed {
+		#[\ReturnTypeWillChange]
+		public function offsetGet( $offset ) {
 			return $this->params[ $offset ] ?? null;
 		}
 
@@ -1649,7 +1650,8 @@ if ( ! class_exists( 'WP_REST_Request' ) ) {
 			return isset( $this->params[ $offset ] );
 		}
 
-		public function offsetGet( $offset ): mixed {
+		#[\ReturnTypeWillChange]
+		public function offsetGet( $offset ) {
 			return $this->params[ $offset ] ?? null;
 		}
 

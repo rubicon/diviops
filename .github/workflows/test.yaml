@@ -56,6 +56,21 @@ jobs:
           fi
           find tests-live -name '*.php' -type f -print0 | xargs -0 -n1 -P4 php -l
 
+      # tests/ is the harness the suite itself runs on, and it was linted nowhere:
+      # the two steps above cover plugins/ and tests-live/ only. PHP 8-only syntax
+      # here (a `: mixed` return type, #183) therefore parsed fine on every 8.x leg
+      # and stayed invisible until a 7.4 job tried to load it. Linting it across the
+      # whole matrix closes that blind spot at no cost.
+      - name: Lint every test-harness PHP file (syntax only)
+        run: |
+          count=$(find tests -name '*.php' -type f | wc -l | tr -d ' ')
+          echo "linting $count PHP file(s) under tests/"
+          if [ "$count" -lt 1 ]; then
+            echo "::error::found no PHP files to lint. The glob is wrong; this is a blind gate, not a pass."
+            exit 1
+          fi
+          find tests -name '*.php' -type f -print0 | xargs -0 -n1 -P4 php -l
+
   test:
     name: Test suite
     runs-on: ubuntu-latest
