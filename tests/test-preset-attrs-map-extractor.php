@@ -303,7 +303,7 @@ $cta_unset_paths = array(
 	'button.decoration.button.decoration.sizing__width',
 );
 
-$cta_shaped      = diviops_preset_attrs_map_resolve( $fixtures, 'divi/fixture-cta-shaped' );
+$cta_shaped       = diviops_preset_attrs_map_resolve( $fixtures, 'divi/fixture-cta-shaped' );
 $cta_shaped_final = $cta_shaped['final'];
 
 foreach ( $cta_unset_paths as $unset_path ) {
