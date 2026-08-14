@@ -4,5 +4,8 @@
     "outDir": "./dist-test"
   },
   "include": ["src/wp-cli.ts", "src/wp-cli-fs-validator.ts", "src/__tests__/**/*.ts"],
-  "exclude": ["src/__tests__/canonical-tool-registry-finalization.test.ts"]
+  "exclude": [
+    "src/__tests__/canonical-tool-registry-finalization.test.ts",
+    "src/__tests__/tool-cancellation.test.ts"
+  ]
 }

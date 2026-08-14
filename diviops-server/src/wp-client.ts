@@ -11,6 +11,7 @@ import {
   ErrorCodes,
   isEnveloped,
 } from './envelope.js';
+import { getRequestContext } from './request-context.js';
 
 /**
  * Normalize quote-escape pathologies inside `$variable(...)$` token regions only.
@@ -131,6 +132,33 @@ function normalizeBody(value: unknown, withinBlockTree = false): unknown {
   return value;
 }
 
+/**
+ * Resolve the AbortSignal this dispatch should hand to `fetch`, and refuse to
+ * dispatch at all when the request has already been cancelled (#134).
+ *
+ * An explicit `signal` from the caller always wins — the meta tools thread
+ * theirs directly and are not subject to the ambient policy. Otherwise the
+ * ambient MCP request signal applies, but only reaches `fetch` when the tool
+ * that established the context is transport-abortable (a read or an
+ * idempotent operation). A mutation deliberately gets `undefined` so a write
+ * already on the wire finishes rather than being torn open with no
+ * WordPress-side rollback.
+ *
+ * The already-aborted check applies to reads and mutations alike: nothing has
+ * been sent yet, so refusing costs nothing and leaves no partial state.
+ */
+function effectiveRequestSignal(
+  explicit: AbortSignal | undefined,
+): AbortSignal | undefined {
+  const ctx = getRequestContext();
+  const governing = explicit ?? ctx?.signal;
+  if (governing?.aborted) {
+    throw governing.reason ?? new Error('Request cancelled');
+  }
+  if (explicit) return explicit;
+  return ctx?.abortTransport ? ctx.signal : undefined;
+}
+
 export interface WPClientConfig {
   siteUrl: string;
   username: string;
@@ -168,6 +196,7 @@ export class WPClient {
     } = {}
   ): Promise<T> {
     const { method = 'GET', body, params, signal } = options;
+    const effectiveSignal = effectiveRequestSignal(signal);
 
     let url = `${this.baseUrl}/wp-json/diviops/v1${endpoint}`;
 
@@ -183,7 +212,7 @@ export class WPClient {
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      signal,
+      signal: effectiveSignal,
     };
 
     if (body && method !== 'GET') {
@@ -253,6 +282,7 @@ export class WPClient {
     } = {},
   ): Promise<DiviopsResponse<T>> {
     const { method = 'GET', body, params, signal } = options;
+    const effectiveSignal = effectiveRequestSignal(signal);
 
     let url = `${this.baseUrl}/wp-json/diviops/v1${endpoint}`;
     if (params) {
@@ -267,7 +297,7 @@ export class WPClient {
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      signal,
+      signal: effectiveSignal,
     };
     if (body && method !== 'GET') {
       const normalized = endpointSkipsNormalization(endpoint) ? body : normalizeBody(body);
@@ -399,7 +429,11 @@ export class WPClient {
         message: `Connected to Divi ${response.data.builder?.version ?? 'unknown'}`,
       };
     } catch (error) {
-      if (signal?.aborted) throw signal.reason ?? error;
+      // A cancelled call must surface as a cancellation rather than as a
+      // "connection failed" message the caller would read as a site problem.
+      // The ambient MCP request signal counts too, not just an explicit one.
+      const governing = signal ?? getRequestContext()?.signal;
+      if (governing?.aborted) throw governing.reason ?? error;
       return {
         ok: false,
         message: `Connection failed: ${error instanceof Error ? error.message : String(error)}`,
