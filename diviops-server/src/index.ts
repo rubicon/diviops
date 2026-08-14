@@ -51,7 +51,7 @@ import {
 } from "./cross-env-preflight/source-payload-ref.js";
 import { optimizeSchema } from "./schema-optimizer.js";
 import { schemaModuleRoute } from "./schema-route.js";
-import { createWpCli } from "./wp-cli.js";
+import { createWpCli, parseWpCliJson, WpCliJsonParseError } from "./wp-cli.js";
 import {
   META_INFO_CONFIG,
   META_PING_CONFIG,
@@ -4629,6 +4629,28 @@ function ensureScfWpCli(): NonNullable<typeof wpCli> {
   return wpCli;
 }
 
+/**
+ * Terminal handler for a `--format=json` stream that carried no parsable
+ * payload, shared by every `scf_*` site that reads structured wp-cli output.
+ *
+ * `parseWpCliJson` already tolerates the common cause — PHP startup noise
+ * written to stdout ahead of the JSON while the command still exits 0. What
+ * reaches here is a stream with no recoverable value at all: a truncated
+ * buffer, or a run that printed diagnostics instead of data. The offending
+ * stdout is quoted into the hint because without it the caller has no way to
+ * see what the command actually emitted — the envelope is all they get.
+ *
+ * `context` names which wp-cli call failed, since `field_group_get` makes two.
+ */
+function failScfJson(e: unknown, context: string): never {
+  if (!(e instanceof WpCliJsonParseError)) throw e;
+  withCode(
+    ErrorCodes.WP_ERROR,
+    `wp-cli returned non-JSON output for --format=json${context}.`,
+    `wp-cli exited successfully but its stdout carried no JSON payload. This usually means a PHP startup warning or plugin output polluted the stream beyond recovery, or the output was truncated. Re-run the same command with WP_CLI_DEBUG=1 to surface the PHP traceback. Offending stdout: ${e.excerpt}`,
+  );
+}
+
 function pushScfFlag(args: string[], name: string, value: string | undefined): void {
   if (!value) return;
   // Each `--name=value` becomes a single argv entry — execFile handles spaces
@@ -4905,7 +4927,7 @@ registerLocalTool(
   "diviops_scf_field_group_list",
   {
     description:
-      "List all SCF/ACF field groups in the database (post_name = ACF key, post_title, post_status, post_modified). Read-only. Queries the underlying `acf-field-group` post type via `wp post list` — works on both SCF 6.8.4+ (which dropped the legacy `wp acf field-group …` family in favor of the `wp scf json` namespace) and older ACF installs. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; success payload is `Array<{ ID, post_name, post_title, post_status, post_modified }>` parsed from wp-cli's JSON output (or an empty array on no results). wp-cli failures map to 'scf.command_failed'; missing wp-cli configuration surfaces as 'scf.not_configured'.",
+      "List all SCF/ACF field groups in the database (post_name = ACF key, post_title, post_status, post_modified). Read-only. Queries the underlying `acf-field-group` post type via `wp post list` — works on both SCF 6.8.4+ (which dropped the legacy `wp acf field-group …` family in favor of the `wp scf json` namespace) and older ACF installs. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; success payload is `Array<{ ID, post_name, post_title, post_status, post_modified }>` parsed from wp-cli's JSON output (or an empty array on no results). Non-JSON noise around the payload — a PHP startup warning, a plugin `echo` — is tolerated: the JSON value is extracted from the stream. A stream carrying no recoverable JSON (including one truncated at the 5MB buffer ceiling) returns 'wp_error' with the offending stdout quoted in the hint, rather than a silently empty list. wp-cli failures map to 'scf.command_failed'; missing wp-cli configuration surfaces as 'scf.not_configured'.",
     annotations: { idempotentHint: true },
     _meta: { idempotent: "true" },
   },
@@ -4923,17 +4945,12 @@ registerLocalTool(
       const result = await cli.runArgs(args);
       if (!result.success) failScfCommand(result, args);
       // wp-cli emits `[]` for no rows; parse so callers get structured data.
-      // Malformed JSON (shouldn't happen with --format=json on a successful
-      // run, but wp-cli has surprised us before) maps to wp_error so the
-      // failure is at least visible rather than silently empty.
+      // `parseWpCliJson` rather than `JSON.parse` because a successful run can
+      // still emit a PHP startup warning ahead of the payload (#167).
       try {
-        return JSON.parse(result.stdout || "[]");
+        return parseWpCliJson(result.stdout || "[]");
       } catch (e) {
-        withCode(
-          ErrorCodes.WP_ERROR,
-          `wp-cli returned non-JSON output for --format=json: ${(e as Error).message}`,
-          "Inspect wp-cli's stdout for malformed output. This usually indicates a wp-cli bootstrap warning bleeding into the JSON stream — re-run with WP_CLI_DEBUG=1 in the env.",
-        );
+        failScfJson(e, "");
       }
     });
     return {
@@ -4948,7 +4965,7 @@ registerLocalTool(
   "diviops_scf_field_group_get",
   {
     description:
-      "Fetch a single SCF/ACF field group from the `acf-field-group` post type — by ACF key (`group_abc123`, looked up via `post_name`) or by numeric WP post ID. Returns the WP post fields (post_name, post_title, post_content with serialized fields blob, post_status, post_modified). For the parsed/structured field tree including nested fields, use `diviops_scf_export --field-groups=<key> --stdout` instead. Read-only. SCF 6.8.4 dropped the legacy `wp acf field-group get` command, so this wrapper queries the post type directly via `wp post`. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; success payload is the parsed `wp post get --format=json` object. Unresolvable key (no row in the `acf-field-group` post type and not a numeric ID that wp-cli accepts) returns code 'not_found' with hint pointing to diviops_scf_field_group_list. wp-cli failures map to 'scf.command_failed'; missing wp-cli configuration surfaces as 'scf.not_configured'.",
+      "Fetch a single SCF/ACF field group from the `acf-field-group` post type — by ACF key (`group_abc123`, looked up via `post_name`) or by numeric WP post ID. Returns the WP post fields (post_name, post_title, post_content with serialized fields blob, post_status, post_modified). For the parsed/structured field tree including nested fields, use `diviops_scf_export --field-groups=<key> --stdout` instead. Read-only. SCF 6.8.4 dropped the legacy `wp acf field-group get` command, so this wrapper queries the post type directly via `wp post`. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; success payload is the parsed `wp post get --format=json` object. Unresolvable key (no row in the `acf-field-group` post type and not a numeric ID that wp-cli accepts) returns code 'not_found' with hint pointing to diviops_scf_field_group_list. Non-JSON noise around either call's payload — a PHP startup warning, a plugin `echo` — is tolerated. A stream carrying no recoverable JSON returns 'wp_error' naming which of the two calls failed, never 'not_found': an unreadable lookup and an absent field group are different answers. wp-cli failures map to 'scf.command_failed'; missing wp-cli configuration surfaces as 'scf.not_configured'.",
     inputSchema: {
       key: z
         .string()
@@ -4980,14 +4997,19 @@ registerLocalTool(
         ];
         const lookup = await cli.runArgs(lookupArgs);
         if (!lookup.success) failScfCommand(lookup, lookupArgs);
+        // A parse failure and an empty result are different answers and must
+        // stay that way. Folding them together — as a bare `catch` leaving
+        // `resolved` null once did — reports "no such field group" for a
+        // stream that was merely unreadable, sending the caller to look for
+        // something that is actually there (#167).
         let resolved: string | null = null;
         try {
-          const rows = JSON.parse(lookup.stdout || "[]") as Array<{ ID: number }>;
+          const rows = parseWpCliJson(lookup.stdout || "[]") as Array<{ ID: number }>;
           if (Array.isArray(rows) && rows.length > 0) {
             resolved = String(rows[0].ID);
           }
-        } catch {
-          // Fall through — resolved stays null, treated as not_found below.
+        } catch (e) {
+          failScfJson(e, ` while resolving field-group key "${key}"`);
         }
         if (!resolved) {
           withCode(
@@ -5022,13 +5044,9 @@ registerLocalTool(
         failScfCommand(result, args);
       }
       try {
-        return JSON.parse(result.stdout);
+        return parseWpCliJson(result.stdout);
       } catch (e) {
-        withCode(
-          ErrorCodes.WP_ERROR,
-          `wp-cli returned non-JSON output for --format=json: ${(e as Error).message}`,
-          "Inspect wp-cli's stdout for malformed output. Re-run with WP_CLI_DEBUG=1 in the env to surface PHP traceback.",
-        );
+        failScfJson(e, ` while fetching field-group post ${postId}`);
       }
     });
     return {

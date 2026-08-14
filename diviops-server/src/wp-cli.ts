@@ -372,6 +372,146 @@ export const __wpCliTesting = {
   normalizeWpCliPathArgs,
 };
 
+/** Longest excerpt of the offending stream carried on a parse failure. */
+const JSON_EXCERPT_LIMIT = 512;
+
+/**
+ * Raised when a `--format=json` stream carries no parsable JSON payload.
+ * `excerpt` is a bounded slice of the stream — stdout can reach `maxBuffer`
+ * (5MB), which must never be inlined into an error message.
+ */
+export class WpCliJsonParseError extends Error {
+  readonly excerpt: string;
+
+  constructor(message: string, stdout: string) {
+    super(message);
+    this.name = 'WpCliJsonParseError';
+    this.excerpt =
+      stdout.length > JSON_EXCERPT_LIMIT
+        ? `${stdout.slice(0, JSON_EXCERPT_LIMIT - 1)}…`
+        : stdout;
+  }
+}
+
+/**
+ * Walk forward from an opening `[` or `{` and return the index just past the
+ * matching close, or -1 if the value never closes.
+ *
+ * Deliberately a character walk rather than a pattern: string contents are
+ * skipped wholesale (with `\` escapes honored) so a brace inside a value —
+ * an `acf-field-group` row's serialized `post_content` blob is full of them —
+ * cannot end the span early. The walk only delimits a candidate; `JSON.parse`
+ * remains the authority on whether that span is actually valid.
+ */
+function findValueEnd(text: string, start: number): number {
+  const stack: string[] = [];
+  let inString = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+
+    if (inString) {
+      if (ch === '\\') {
+        i++; // Skip the escaped character, whatever it is.
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '[' || ch === '{') {
+      stack.push(ch);
+    } else if (ch === ']' || ch === '}') {
+      const open = stack.pop();
+      if (open !== (ch === ']' ? '[' : '{')) return -1; // Mismatched close.
+      if (stack.length === 0) return i + 1;
+    }
+  }
+
+  return -1;
+}
+
+/**
+ * Indices of every `[` / `{` that opens a line, ignoring that line's leading
+ * whitespace. Yielded in stream order.
+ */
+function* lineAnchoredStarts(text: string): Generator<number> {
+  let atLineStart = true;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (ch === '\n') {
+      atLineStart = true;
+    } else if (atLineStart && (ch === ' ' || ch === '\t' || ch === '\r')) {
+      // Still at the start of the line — indentation does not disqualify it.
+    } else {
+      if (atLineStart && (ch === '[' || ch === '{')) yield i;
+      atLineStart = false;
+    }
+  }
+}
+
+/**
+ * Parse a wp-cli `--format=json` stream that may carry non-JSON noise.
+ *
+ * wp-cli's contract is "stdout is JSON," but PHP writes to the same stream
+ * before wp-cli runs: a startup warning (imagick module-API mismatch on the
+ * reference site), a mu-plugin `echo`, a shutdown notice. The command still
+ * exits 0, so the runner reports success while `JSON.parse` throws — the
+ * failure mode behind #167.
+ *
+ * Suppressing the noise instead was investigated and does not work from this
+ * runner: `-d display_errors=0` is a PHP flag and `execFile('wp', args)` makes
+ * wp-cli the executable, while `WP_CLI_PHP_ARGS` is read only by wp-cli's
+ * shell wrapper — Local ships `wp` as a bare phar behind a `php` shebang.
+ * Suppression would also miss non-PHP pollution such as a plugin `echo`.
+ *
+ * A clean stream takes the fast path and behaves exactly like `JSON.parse`.
+ * Otherwise the payload is looked for at the start of a line (leading
+ * whitespace allowed), because that is where wp-cli puts it and PHP's
+ * diagnostics end with a newline. Position, not content, is what separates
+ * payload from noise: a bracket quoted mid-sentence in a warning is never a
+ * candidate even when it would parse in isolation.
+ *
+ * That anchor is also what makes truncation fail loudly. A stream clipped by
+ * `maxBuffer` ends mid-value, and its only line-anchored candidate never
+ * closes; scanning every bracket instead would find some inner object that
+ * parses and hand back a fragment of a list as though it were the list.
+ *
+ * Anchoring on `[` / `{` means bare scalars are not accepted. Every caller
+ * runs a `list`/`get` that yields an array or object, and accepting scalars
+ * would let a stray `0` on an otherwise-failed stream parse as a payload.
+ *
+ * @throws {WpCliJsonParseError} when no complete JSON value can be recovered.
+ */
+export function parseWpCliJson(stdout: string): unknown {
+  try {
+    const value = JSON.parse(stdout);
+    if (typeof value === 'object' && value !== null) return value;
+  } catch {
+    // Fall through to the scan — the stream is polluted, truncated, or empty.
+  }
+
+  for (const start of lineAnchoredStarts(stdout)) {
+    const end = findValueEnd(stdout, start);
+    if (end === -1) continue;
+
+    try {
+      return JSON.parse(stdout.slice(start, end));
+    } catch {
+      // This candidate was noise that merely looked structural. Keep looking.
+    }
+  }
+
+  throw new WpCliJsonParseError(
+    'wp-cli returned no parsable JSON for --format=json.',
+    stdout,
+  );
+}
+
 /**
  * Find the latest installed version of a Local lightning-service.
  * Scans ~/Library/Application Support/Local/lightning-services/ for directories
