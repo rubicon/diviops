@@ -403,11 +403,12 @@ export class WpCliJsonParseError extends Error {
  * cannot end the span early. The walk only delimits a candidate; `JSON.parse`
  * remains the authority on whether that span is actually valid.
  */
-function findValueEnd(text: string, start: number): number {
+function findValueEnd(text: string, start: number, budget: { remaining: number }): number {
   const stack: string[] = [];
   let inString = false;
 
   for (let i = start; i < text.length; i++) {
+    if (budget.remaining-- <= 0) return -1;
     const ch = text[i];
 
     if (inString) {
@@ -431,6 +432,26 @@ function findValueEnd(text: string, start: number): number {
   }
 
   return -1;
+}
+
+/**
+ * Does the value ending at `end` also finish its line?
+ *
+ * Starting a line is necessary but not sufficient for a span to be the
+ * payload. `print_r` and `var_dump` — the commonest things a debugging
+ * mu-plugin echoes, and precisely the plugin output that suppression could
+ * never have caught — indent an array index so the line begins `[0] => …`.
+ * `[0]` parses, so without this check the extractor hands back `[0]` while
+ * the real rows sit on the next line. wp-cli's own `--format=json` payload
+ * always occupies its line to the end.
+ */
+function endsItsLine(text: string, end: number): boolean {
+  for (let i = end; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '\n') return true;
+    if (ch !== ' ' && ch !== '\t' && ch !== '\r') return false;
+  }
+  return true; // Ran to end of stream — the final line needs no newline.
 }
 
 /**
@@ -488,19 +509,36 @@ function* lineAnchoredStarts(text: string): Generator<number> {
  * @throws {WpCliJsonParseError} when no complete JSON value can be recovered.
  */
 export function parseWpCliJson(stdout: string): unknown {
+  // A plugin file saved with a BOM is the classic "output started at" cause,
+  // and the BOM is invisible — left in place it produces a failure whose
+  // quoted stdout looks like perfectly valid JSON.
+  const text = stdout.charCodeAt(0) === 0xfeff ? stdout.slice(1) : stdout;
+
   try {
-    const value = JSON.parse(stdout);
+    const value = JSON.parse(text);
     if (typeof value === 'object' && value !== null) return value;
   } catch {
     // Fall through to the scan — the stream is polluted, truncated, or empty.
   }
 
-  for (const start of lineAnchoredStarts(stdout)) {
-    const end = findValueEnd(stdout, start);
-    if (end === -1) continue;
+  // The scan is O(candidates x stream): a stream of nothing but line-anchored
+  // unclosed brackets is quadratic, measured at 8.4s for 100KB and rising
+  // ~4x per doubling. This function is synchronous, so that would block the
+  // whole MCP server and ignore the request AbortSignal. The budget is far
+  // above anything real output needs and turns the pathological case into a
+  // prompt failure instead of a hang.
+  const budget = { remaining: text.length * 8 + 65_536 };
+
+  for (const start of lineAnchoredStarts(text)) {
+    const end = findValueEnd(text, start, budget);
+    if (end === -1) {
+      if (budget.remaining <= 0) break;
+      continue;
+    }
+    if (!endsItsLine(text, end)) continue;
 
     try {
-      return JSON.parse(stdout.slice(start, end));
+      return JSON.parse(text.slice(start, end));
     } catch {
       // This candidate was noise that merely looked structural. Keep looking.
     }

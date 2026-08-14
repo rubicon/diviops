@@ -4647,7 +4647,7 @@ function failScfJson(e: unknown, context: string): never {
   withCode(
     ErrorCodes.WP_ERROR,
     `wp-cli returned non-JSON output for --format=json${context}.`,
-    `wp-cli exited successfully but its stdout carried no JSON payload. This usually means a PHP startup warning or plugin output polluted the stream beyond recovery, or the output was truncated. Re-run the same command with WP_CLI_DEBUG=1 to surface the PHP traceback. Offending stdout: ${e.excerpt}`,
+    `wp-cli exited successfully but its stdout carried no JSON payload on any line. Ordinary PHP startup warnings and plugin output are extracted around, so this means the stream was polluted beyond recovery — a payload broken across lines, or output that is not JSON at all. Re-run the same command with WP_CLI_DEBUG=1 to surface the PHP traceback. Offending stdout: ${e.excerpt}`,
   );
 }
 
@@ -5002,14 +5002,31 @@ registerLocalTool(
         // `resolved` null once did — reports "no such field group" for a
         // stream that was merely unreadable, sending the caller to look for
         // something that is actually there (#167).
-        let resolved: string | null = null;
+        //
+        // Only the parse sits inside the `try`: widening it would route a
+        // shape error below into `failScfJson`, which rethrows anything that
+        // is not a parse failure and would surface it without a hint.
+        let rows: unknown;
         try {
-          const rows = parseWpCliJson(lookup.stdout || "[]") as Array<{ ID: number }>;
-          if (Array.isArray(rows) && rows.length > 0) {
-            resolved = String(rows[0].ID);
-          }
+          rows = parseWpCliJson(lookup.stdout || "[]");
         } catch (e) {
           failScfJson(e, ` while resolving field-group key "${key}"`);
+        }
+        let resolved: string | null = null;
+        if (Array.isArray(rows) && rows.length > 0) {
+          // Valid JSON is not the same as the expected shape. Unchecked, a
+          // row without a numeric ID makes `String(row.ID)` the literal
+          // "undefined" and the next call becomes `wp post get undefined`.
+          const id: unknown = (rows[0] as { ID?: unknown } | null)?.ID;
+          if (typeof id !== "number" && typeof id !== "string") {
+            withCode(
+              ErrorCodes.WP_ERROR,
+              `wp-cli returned a field-group lookup row without an ID for key "${key}".`,
+              `Expected \`[{ "ID": <number> }]\` from \`wp post list --name=${key} --fields=ID --format=json\`. Received: ${JSON.stringify(rows[0])}`,
+              { key },
+            );
+          }
+          resolved = String(id);
         }
         if (!resolved) {
           withCode(

@@ -234,6 +234,20 @@ describe('diviops_scf_field_group_get against polluted stdout', () => {
     });
   });
 
+  it('refuses a lookup row that carries no numeric ID instead of fetching post "undefined"', async () => {
+    // `parseWpCliJson` guarantees valid JSON, not the shape this call site
+    // expects. Without a shape check the cast to `Array<{ID:number}>` is
+    // unchecked, `String(rows[0].ID)` becomes the literal string "undefined",
+    // and the server goes on to run `wp post get undefined` — a wrong answer
+    // built on a value that was never there.
+    writeFileSync(lookupFixture, '[0]\n', 'utf-8');
+
+    const envelope = await callTool('diviops_scf_field_group_get', { key: 'group_hero' });
+
+    assert.equal(envelope.ok, false);
+    assert.equal(envelope.error?.code, 'wp_error');
+  });
+
   it('still reports a genuinely absent key as not_found', async () => {
     // The empty-but-valid lookup. If a fix collapsed every lookup failure
     // into wp_error, this is what would regress.

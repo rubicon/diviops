@@ -139,6 +139,46 @@ describe('parseWpCliJson: where a payload is allowed to begin', () => {
       WpCliJsonParseError,
     );
   });
+
+  /**
+   * Starting a line is necessary but not sufficient. `print_r` and `var_dump`
+   * — the two commonest things a debugging mu-plugin echoes, and exactly the
+   * "plugin output" that motivates extraction over suppression — indent an
+   * array index so the line begins `[0] => …`. `[0]` is valid JSON on its
+   * own, so an anchor that only checks where a span *starts* hands back `[0]`
+   * as the payload, with `ok: true`, while the real rows sit on the next
+   * line. A span must therefore also *end* its line.
+   */
+  it('does not mistake a print_r array index for the payload', () => {
+    const stdout = 'Array\n(\n    [0] => alpha\n)\n[{"ID":900,"post_name":"group_hero"}]\n';
+    assert.deepEqual(parseWpCliJson(stdout), [{ ID: 900, post_name: 'group_hero' }]);
+  });
+
+  it('does not mistake a var_dump array index for the payload', () => {
+    const stdout = 'array(1) {\n  [0]=>\n  int(1)\n}\n[{"ID":900}]\n';
+    assert.deepEqual(parseWpCliJson(stdout), [{ ID: 900 }]);
+  });
+
+  it('prefers a later payload over an earlier line-anchored span that also parses', () => {
+    // The general form of both cases above: the first parsable candidate is
+    // not automatically the payload.
+    assert.deepEqual(parseWpCliJson('[0] => noise\n[{"ID":7}]\n'), [{ ID: 7 }]);
+  });
+
+  it('accepts a payload followed by trailing spaces on its own line', () => {
+    assert.deepEqual(parseWpCliJson('Warning: noise\n[{"ID":7}]  \n'), [{ ID: 7 }]);
+  });
+
+  it('accepts a payload on the final line with no trailing newline', () => {
+    assert.deepEqual(parseWpCliJson('Warning: noise\n[{"ID":7}]'), [{ ID: 7 }]);
+  });
+
+  it('reads a payload behind a UTF-8 BOM', () => {
+    // A plugin file saved with a BOM is the classic "output started at"
+    // cause. The BOM is invisible, so without this the error quotes stdout
+    // that looks like perfectly valid JSON and nobody believes the failure.
+    assert.deepEqual(parseWpCliJson('﻿[{"ID":900}]\n'), [{ ID: 900 }]);
+  });
 });
 
 describe('parseWpCliJson: trailing pollution', () => {
@@ -195,9 +235,39 @@ describe('parseWpCliJson: refusing to invent a payload', () => {
   });
 
   it('throws on a truncated payload rather than salvaging a prefix', () => {
-    // maxBuffer clipping produces this. Returning the parsable head would be
-    // worse than failing: the caller would act on a silently partial result.
+    // Returning the parsable head would be worse than failing: the caller
+    // would act on a silently partial result.
+    //
+    // Defence in depth rather than a reachable case: a stream clipped at the
+    // runner's 5MB `maxBuffer` comes back with `success: false`
+    // (`ERR_CHILD_PROCESS_STDIO_MAXBUFFER`, verified), so `failScfCommand`
+    // fires before any parse. This keeps the pure function honest anyway.
     assert.throws(() => parseWpCliJson('[{"ID":7},{"ID":8'), WpCliJsonParseError);
+  });
+
+  it('throws on a truncated payload even when earlier noise parses on its own', () => {
+    // The assertion above pins one fixture; this pins the property. A
+    // var_dump ahead of the clipped payload gives the scan an earlier
+    // candidate that parses, which is precisely how a "returns a fragment"
+    // regression would slip back in while the fixture test stayed green.
+    assert.throws(
+      () => parseWpCliJson('array(1) {\n  [0]=>\n  int(1)\n}\n[{"ID":900},{"ID":901'),
+      WpCliJsonParseError,
+    );
+  });
+
+  it('gives up loudly instead of hanging on a stream full of unclosed brackets', () => {
+    // The scan is O(candidates x stream), so a stream that is nothing but
+    // line-anchored unclosed brackets is quadratic. Measured unbounded: 8.4s
+    // at 100KB, ~4x per doubling, extrapolating to hours at the 5MB ceiling —
+    // and `parseWpCliJson` is synchronous, so that blocks the whole MCP
+    // server and ignores the request AbortSignal. A work budget converts it
+    // into a prompt failure.
+    const pathological = '[\n'.repeat(100_000); // 200KB
+    const startedAt = Date.now();
+    assert.throws(() => parseWpCliJson(pathological), WpCliJsonParseError);
+    const elapsed = Date.now() - startedAt;
+    assert.ok(elapsed < 5_000, `should fail fast, took ${elapsed}ms`);
   });
 
   it('carries an excerpt of the offending stream so the cause is visible', () => {

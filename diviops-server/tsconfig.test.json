@@ -4,6 +4,10 @@
     "outDir": "./dist-test"
   },
   "include": ["src/wp-cli.ts", "src/wp-cli-fs-validator.ts", "src/__tests__/**/*.ts"],
+  // Excluded because each imports src/index.ts, which this scoped lane does
+  // not compile. Every one of them is still built by tsconfig.json and run
+  // explicitly by its own step in .github/workflows/test.yaml — an exclusion
+  // here means "runs elsewhere", never "does not run".
   "exclude": [
     "src/__tests__/canonical-tool-registry-finalization.test.ts",
     "src/__tests__/tool-cancellation.test.ts",
