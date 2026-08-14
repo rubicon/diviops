@@ -14,10 +14,18 @@
  * `diviops_scf_field_group_get` would have reported the same pollution as a
  * confident (and wrong) `not_found`.
  *
- * Both tools now route through the shared `parseScfWpCliJson` helper in
- * index.ts, so this file covers both: the `_get` lookup (the site that was
- * actually broken) and `_list` (which already handled this correctly
- * before the fix, and must keep doing so after sharing the helper).
+ * Both tools now route through the shared `parseWpCliJson` (wp-cli.ts) and
+ * `failScfJson` (index.ts) helpers, so this file covers both: the `_get`
+ * lookup (the site that was actually broken) and `_list` (which already
+ * handled this correctly before the fix, and must keep doing so after
+ * sharing the helper).
+ *
+ * `parseWpCliJson` recovers a JSON payload that sits on its own line behind
+ * leading noise (#178) — a stray warning followed by valid, line-anchored
+ * JSON is no longer a parse failure at all. The "polluted" fixture here is
+ * deliberately noise with no recoverable JSON anywhere in the stream, so it
+ * still exercises the genuinely-unparsable path this file is named for;
+ * `scf-field-group-stdout-pollution.test.ts` covers the recoverable case.
  *
  * `WP_CLI_CMD` is pointed at a real (scripted) executable rather than a
  * live wp-cli/WordPress install, so this exercises the real
@@ -40,7 +48,10 @@ import { join } from "node:path";
 // WordPress install.
 //
 //   - `post list --name=<key>` is the `_get` lookup step: `polluted`
-//     reproduces the PHP-warning-before-JSON shape that broke #167;
+//     reproduces stdout that carries no recoverable JSON at all — the
+//     genuinely-unparsable case `parseWpCliJson` (#178) still cannot rescue,
+//     as opposed to a warning followed by valid line-anchored JSON, which it
+//     now recovers rather than failing on;
 //     `missing`/`exists` are the legitimate-empty and legitimate-match
 //     cases the fix must not regress.
 //   - `post list` with no `--name=` is the `_list` tool's query; its
@@ -62,9 +73,11 @@ if (args[0] === "post" && args[1] === "list") {
   if (nameArg) {
     const name = nameArg.slice("--name=".length);
     if (name === "polluted") {
-      // A PHP bootstrap warning bleeding into the JSON stream ahead of the
-      // real payload — wp-cli still exits 0, but stdout is not valid JSON.
-      process.stdout.write('PHP Warning:  Module "imagick" already loaded in Unknown on line 0\\n[]');
+      // No recoverable JSON anywhere in the stream — wp-cli still exits 0,
+      // but there is no line-anchored bracket for parseWpCliJson (#178) to
+      // extract a payload from, unlike a warning followed by valid JSON on
+      // its own line, which it now recovers rather than failing on.
+      process.stdout.write('PHP Warning:  Module "imagick" already loaded in Unknown on line 0');
       process.exit(0);
     }
     if (name === "missing") {
@@ -175,7 +188,7 @@ describe("diviops_scf_field_group_get — non-JSON lookup stdout (#167)", () => 
     assert.equal(env.error.code, "wp_error");
     assert.notEqual(env.error.code, "not_found");
     assert.match(env.error.message, /non-JSON output/);
-    assert.match(env.error.hint ?? "", /stdout began with/);
+    assert.match(env.error.hint ?? "", /Offending stdout/);
   });
 
   it("still reports not_found for a genuinely empty, validly-parsed lookup", async () => {
@@ -194,18 +207,18 @@ describe("diviops_scf_field_group_get — non-JSON lookup stdout (#167)", () => 
   });
 });
 
-describe("diviops_scf_field_group_list — shares parseScfWpCliJson with _get", () => {
+describe("diviops_scf_field_group_list — shares parseWpCliJson with _get", () => {
   it("surfaces a parse failure as wp_error instead of silently returning empty", async () => {
     writeFileSync(
       listStdoutFile,
-      'PHP Warning:  Module "imagick" already loaded in Unknown on line 0\n[]',
+      'PHP Warning:  Module "imagick" already loaded in Unknown on line 0',
       "utf-8",
     );
     const result = await tool("diviops_scf_field_group_list")({}, {});
     const env = envelope(result);
     assert.equal(env.ok, false);
     assert.equal(env.error.code, "wp_error");
-    assert.match(env.error.hint ?? "", /stdout began with/);
+    assert.match(env.error.hint ?? "", /Offending stdout/);
   });
 
   it("still returns an empty array for a genuinely empty, validly-parsed result", async () => {

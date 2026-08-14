@@ -372,6 +372,184 @@ export const __wpCliTesting = {
   normalizeWpCliPathArgs,
 };
 
+/** Longest excerpt of the offending stream carried on a parse failure. */
+const JSON_EXCERPT_LIMIT = 512;
+
+/**
+ * Raised when a `--format=json` stream carries no parsable JSON payload.
+ * `excerpt` is a bounded slice of the stream — stdout can reach `maxBuffer`
+ * (5MB), which must never be inlined into an error message.
+ */
+export class WpCliJsonParseError extends Error {
+  readonly excerpt: string;
+
+  constructor(message: string, stdout: string) {
+    super(message);
+    this.name = 'WpCliJsonParseError';
+    this.excerpt =
+      stdout.length > JSON_EXCERPT_LIMIT
+        ? `${stdout.slice(0, JSON_EXCERPT_LIMIT - 1)}…`
+        : stdout;
+  }
+}
+
+/**
+ * Walk forward from an opening `[` or `{` and return the index just past the
+ * matching close, or -1 if the value never closes.
+ *
+ * Deliberately a character walk rather than a pattern: string contents are
+ * skipped wholesale (with `\` escapes honored) so a brace inside a value —
+ * an `acf-field-group` row's serialized `post_content` blob is full of them —
+ * cannot end the span early. The walk only delimits a candidate; `JSON.parse`
+ * remains the authority on whether that span is actually valid.
+ */
+function findValueEnd(text: string, start: number, budget: { remaining: number }): number {
+  const stack: string[] = [];
+  let inString = false;
+
+  for (let i = start; i < text.length; i++) {
+    if (budget.remaining-- <= 0) return -1;
+    const ch = text[i];
+
+    if (inString) {
+      if (ch === '\\') {
+        i++; // Skip the escaped character, whatever it is.
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '[' || ch === '{') {
+      stack.push(ch);
+    } else if (ch === ']' || ch === '}') {
+      const open = stack.pop();
+      if (open !== (ch === ']' ? '[' : '{')) return -1; // Mismatched close.
+      if (stack.length === 0) return i + 1;
+    }
+  }
+
+  return -1;
+}
+
+/**
+ * Does the value ending at `end` also finish its line?
+ *
+ * Starting a line is necessary but not sufficient for a span to be the
+ * payload. `print_r` and `var_dump` — the commonest things a debugging
+ * mu-plugin echoes, and precisely the plugin output that suppression could
+ * never have caught — indent an array index so the line begins `[0] => …`.
+ * `[0]` parses, so without this check the extractor hands back `[0]` while
+ * the real rows sit on the next line. wp-cli's own `--format=json` payload
+ * always occupies its line to the end.
+ */
+function endsItsLine(text: string, end: number): boolean {
+  for (let i = end; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '\n') return true;
+    if (ch !== ' ' && ch !== '\t' && ch !== '\r') return false;
+  }
+  return true; // Ran to end of stream — the final line needs no newline.
+}
+
+/**
+ * Indices of every `[` / `{` that opens a line, ignoring that line's leading
+ * whitespace. Yielded in stream order.
+ */
+function* lineAnchoredStarts(text: string): Generator<number> {
+  let atLineStart = true;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (ch === '\n') {
+      atLineStart = true;
+    } else if (atLineStart && (ch === ' ' || ch === '\t' || ch === '\r')) {
+      // Still at the start of the line — indentation does not disqualify it.
+    } else {
+      if (atLineStart && (ch === '[' || ch === '{')) yield i;
+      atLineStart = false;
+    }
+  }
+}
+
+/**
+ * Parse a wp-cli `--format=json` stream that may carry non-JSON noise.
+ *
+ * wp-cli's contract is "stdout is JSON," but PHP writes to the same stream
+ * before wp-cli runs: a startup warning (imagick module-API mismatch on the
+ * reference site), a mu-plugin `echo`, a shutdown notice. The command still
+ * exits 0, so the runner reports success while `JSON.parse` throws — the
+ * failure mode behind #167.
+ *
+ * Suppressing the noise instead was investigated and does not work from this
+ * runner: `-d display_errors=0` is a PHP flag and `execFile('wp', args)` makes
+ * wp-cli the executable, while `WP_CLI_PHP_ARGS` is read only by wp-cli's
+ * shell wrapper — Local ships `wp` as a bare phar behind a `php` shebang.
+ * Suppression would also miss non-PHP pollution such as a plugin `echo`.
+ *
+ * A clean stream takes the fast path and behaves exactly like `JSON.parse`.
+ * Otherwise the payload is looked for at the start of a line (leading
+ * whitespace allowed), because that is where wp-cli puts it and PHP's
+ * diagnostics end with a newline. Position, not content, is what separates
+ * payload from noise: a bracket quoted mid-sentence in a warning is never a
+ * candidate even when it would parse in isolation.
+ *
+ * That anchor is also what makes truncation fail loudly. A stream clipped by
+ * `maxBuffer` ends mid-value, and its only line-anchored candidate never
+ * closes; scanning every bracket instead would find some inner object that
+ * parses and hand back a fragment of a list as though it were the list.
+ *
+ * Anchoring on `[` / `{` means bare scalars are not accepted. Every caller
+ * runs a `list`/`get` that yields an array or object, and accepting scalars
+ * would let a stray `0` on an otherwise-failed stream parse as a payload.
+ *
+ * @throws {WpCliJsonParseError} when no complete JSON value can be recovered.
+ */
+export function parseWpCliJson(stdout: string): unknown {
+  // A plugin file saved with a BOM is the classic "output started at" cause,
+  // and the BOM is invisible — left in place it produces a failure whose
+  // quoted stdout looks like perfectly valid JSON.
+  const text = stdout.charCodeAt(0) === 0xfeff ? stdout.slice(1) : stdout;
+
+  try {
+    const value = JSON.parse(text);
+    if (typeof value === 'object' && value !== null) return value;
+  } catch {
+    // Fall through to the scan — the stream is polluted, truncated, or empty.
+  }
+
+  // The scan is O(candidates x stream): a stream of nothing but line-anchored
+  // unclosed brackets is quadratic, measured at 8.4s for 100KB and rising
+  // ~4x per doubling. This function is synchronous, so that would block the
+  // whole MCP server and ignore the request AbortSignal. The budget is far
+  // above anything real output needs and turns the pathological case into a
+  // prompt failure instead of a hang.
+  const budget = { remaining: text.length * 8 + 65_536 };
+
+  for (const start of lineAnchoredStarts(text)) {
+    const end = findValueEnd(text, start, budget);
+    if (end === -1) {
+      if (budget.remaining <= 0) break;
+      continue;
+    }
+    if (!endsItsLine(text, end)) continue;
+
+    try {
+      return JSON.parse(text.slice(start, end));
+    } catch {
+      // This candidate was noise that merely looked structural. Keep looking.
+    }
+  }
+
+  throw new WpCliJsonParseError(
+    'wp-cli returned no parsable JSON for --format=json.',
+    stdout,
+  );
+}
+
 /**
  * Find the latest installed version of a Local lightning-service.
  * Scans ~/Library/Application Support/Local/lightning-services/ for directories
