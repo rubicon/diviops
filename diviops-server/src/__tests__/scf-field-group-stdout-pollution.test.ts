@@ -214,6 +214,26 @@ describe('diviops_scf_field_group_get against polluted stdout', () => {
     assert.match(detail, /could not connect to the database/);
   });
 
+  it('resolves a numeric post ID despite a warning, skipping the lookup entirely', async () => {
+    // The tool has two entry shapes. A numeric ID goes straight to `wp post
+    // get`, so it exercises the payload parse without the lookup in front of
+    // it — a branch the key-based cases never reach.
+    writeFileSync(
+      getFixture,
+      `${IMAGICK_WARNING}{"ID":900,"post_name":"group_hero","post_status":"publish"}\n`,
+      'utf-8',
+    );
+
+    const envelope = await callTool('diviops_scf_field_group_get', { key: '900' });
+
+    assert.equal(envelope.ok, true, `expected success, got ${JSON.stringify(envelope.error)}`);
+    assert.deepEqual(envelope.data, {
+      ID: 900,
+      post_name: 'group_hero',
+      post_status: 'publish',
+    });
+  });
+
   it('still reports a genuinely absent key as not_found', async () => {
     // The empty-but-valid lookup. If a fix collapsed every lookup failure
     // into wp_error, this is what would regress.
