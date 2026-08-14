@@ -51,6 +51,7 @@ import {
 } from "./cross-env-preflight/source-payload-ref.js";
 import { optimizeSchema } from "./schema-optimizer.js";
 import { schemaModuleRoute } from "./schema-route.js";
+import { SEO_CHANGES, SEO_PROVIDER } from "./seo-schema.js";
 import { createWpCli } from "./wp-cli.js";
 import {
   META_INFO_CONFIG,
@@ -646,37 +647,6 @@ const BACKUP_FIELD = z
     "When true on supported content writes, capture a rollback snapshot before applying. dry_run + backup only reports the planned snapshot and does not create one.",
   );
 
-const SEO_FIELD = z.enum(["seo_title", "meta_description"]);
-const SEO_PROVIDER = z.enum(["auto", "tsf"]);
-const SEO_CHANGE = z.discriminatedUnion("action", [
-  z.strictObject({
-    field: SEO_FIELD,
-    action: z.literal("set"),
-    value: z.string(),
-  }),
-  z.strictObject({
-    field: SEO_FIELD,
-    action: z.literal("clear"),
-  }),
-]);
-const SEO_CHANGES = z
-  .array(SEO_CHANGE)
-  .min(1)
-  .max(2)
-  .superRefine((changes, context) => {
-    const seen = new Set<string>();
-    changes.forEach((change, index) => {
-      if (seen.has(change.field)) {
-        context.addIssue({
-          code: "custom",
-          message: `Duplicate operation for semantic field '${change.field}'.`,
-          path: [index, "field"],
-        });
-      }
-      seen.add(change.field);
-    });
-  });
-
 // ── Read Tools ───────────────────────────────────────────────────────
 
 registerPluginTool(
@@ -702,7 +672,7 @@ registerPluginTool(
   "diviops_seo_metadata_get",
   {
     description:
-      "Read explicit and effective semantic SEO metadata for one provider-supported post. Free/core and explicit-metadata-only: caller-visible fields are fixed to seo_title and meta_description; no raw metadata keys or provider maps are accepted or returned. Requires edit_post before stored payload exposure. Returns exact explicit presence/value, effective provider output, deterministic checksum, provider lifecycle/capability evidence, canonical WordPress identity evidence, and cache status. Error codes include not_found, forbidden, seo.provider_absent, seo.provider_incompatible, seo.provider_unsupported, and seo.post_type_unsupported. Returns the standardized envelope.",
+      "Read explicit and effective semantic SEO metadata for one provider-supported post. Free/core and explicit-metadata-only: caller-visible fields are fixed to seo_title, meta_description, og_title, og_description, twitter_title, and twitter_description; no raw metadata keys or provider maps are accepted or returned. The Open Graph and Twitter effective values reflect TSF's own fallback behavior (Twitter falls back to the Open Graph value when unset; both fall back to the plain title/description when unset). No schema/JSON-LD, image, card-type, homepage-override, or site-default evidence is included. Requires edit_post before stored payload exposure. Returns exact explicit presence/value, effective provider output, deterministic checksum, provider lifecycle/capability evidence, canonical WordPress identity evidence, and cache status. Error codes include not_found, forbidden, seo.provider_absent, seo.provider_incompatible, seo.provider_unsupported, and seo.post_type_unsupported. Returns the standardized envelope.",
     inputSchema: {
       post_id: z.number().int().positive().describe("WordPress post/page ID to inspect. Requires edit_post on this exact target."),
       provider: SEO_PROVIDER.optional().default("auto").describe("Provider selector. auto resolves only the active supported TSF adapter in V1."),
@@ -1813,7 +1783,7 @@ registerPluginTool(
   "diviops_seo_metadata_update",
   {
     description:
-      "Update explicit TSF SEO metadata on one provider-supported post through the Free/core semantic contract. Explicit metadata only: changes is a strict one-or-two-item discriminated list for seo_title and meta_description; set requires a plain-text value and clear forbids one. Unknown properties, duplicate fields, HTML/markup, control or invalid UTF-8 bytes, serialized/non-scalar values, secret-like values, and unresolved Divi/global/provider/dynamic tokens are refused before mutation. Requires edit_post and expected_checksum; drift refuses before mutation with no force path. Uses TSF's public sanitize/write/clear lifecycle, exact stored readback, request-local rollback on error/mismatch, and reports before/after checksums, readback, lifecycle, cache, rollback, no-op, and write evidence. Effective output must be verified by a follow-up diviops_seo_metadata_get. No persistent snapshot, canonical override, robots, social, schema, redirect, bulk, cross-site, or automatic Divi extraction path exists." +
+      "Update explicit TSF SEO metadata on one provider-supported post through the Free/core semantic contract. Explicit metadata only: changes is a strict one-or-two-item discriminated list for seo_title, meta_description, og_title, og_description, twitter_title, and twitter_description; set requires a plain-text value and clear forbids one. Unknown properties, duplicate fields, HTML/markup, control or invalid UTF-8 bytes, serialized/non-scalar values, secret-like values, and unresolved Divi/global/provider/dynamic tokens are refused before mutation. Requires edit_post and expected_checksum; drift refuses before mutation with no force path. Uses TSF's public sanitize/write/clear lifecycle, exact stored readback, request-local rollback on error/mismatch, and reports before/after checksums, readback, lifecycle, cache, rollback, no-op, and write evidence. Effective output must be verified by a follow-up diviops_seo_metadata_get. No image, Twitter card-type, schema/JSON-LD, homepage-override, canonical override, redirect, robots, site-default, bulk, cross-site, or automatic Divi extraction path exists." +
       DRY_RUN_DESC_SUFFIX,
     inputSchema: {
       post_id: z.number().int().positive().describe("WordPress post/page ID to update. Requires edit_post on this exact target."),
@@ -4697,6 +4667,37 @@ function failScfCommand(
   });
 }
 
+/**
+ * Parse wp-cli `--format=json` stdout for the `scf_*` tools. `meta_wp_cli`
+ * itself never parses server-side (see its own tool description above) —
+ * these SCF wrappers are the exception, and doing so carries a documented
+ * failure mode (#167): a PHP bootstrap warning (e.g. an imagick startup
+ * notice) can print ahead of the JSON payload even though wp-cli exits 0,
+ * so `JSON.parse` throws on a command that otherwise succeeded. That is a
+ * distinct condition from "wp-cli ran cleanly and returned an empty or
+ * absent result" and must never be folded into it — a caller mapped to
+ * `not_found` believes the looked-up key genuinely doesn't exist, when the
+ * real fault is unrelated stdout pollution upstream of the JSON.
+ *
+ * `emptyValue` is only for stdout that is legitimately absent on success
+ * (e.g. an empty list prints nothing rather than `[]` on some wp-cli
+ * versions) — it is never a fallback for malformed stdout; a parse failure
+ * always throws here regardless of `emptyValue`.
+ */
+function parseScfWpCliJson<T>(stdout: string, emptyValue?: string): T {
+  const raw = emptyValue !== undefined ? stdout || emptyValue : stdout;
+  try {
+    return JSON.parse(raw) as T;
+  } catch (e) {
+    const excerpt = raw.length > 200 ? `${raw.slice(0, 200)}…` : raw;
+    withCode(
+      ErrorCodes.WP_ERROR,
+      `wp-cli returned non-JSON output for --format=json: ${(e as Error).message}`,
+      `Inspect wp-cli's stdout for malformed output. This usually indicates a wp-cli bootstrap warning bleeding into the JSON stream — re-run with WP_CLI_DEBUG=1 in the env. stdout began with: ${JSON.stringify(excerpt)}`,
+    );
+  }
+}
+
 registerLocalTool(
   "diviops_scf_status",
   {
@@ -4926,15 +4927,7 @@ registerLocalTool(
       // Malformed JSON (shouldn't happen with --format=json on a successful
       // run, but wp-cli has surprised us before) maps to wp_error so the
       // failure is at least visible rather than silently empty.
-      try {
-        return JSON.parse(result.stdout || "[]");
-      } catch (e) {
-        withCode(
-          ErrorCodes.WP_ERROR,
-          `wp-cli returned non-JSON output for --format=json: ${(e as Error).message}`,
-          "Inspect wp-cli's stdout for malformed output. This usually indicates a wp-cli bootstrap warning bleeding into the JSON stream — re-run with WP_CLI_DEBUG=1 in the env.",
-        );
-      }
+      return parseScfWpCliJson(result.stdout, "[]");
     });
     return {
       content: [
@@ -4980,14 +4973,13 @@ registerLocalTool(
         ];
         const lookup = await cli.runArgs(lookupArgs);
         if (!lookup.success) failScfCommand(lookup, lookupArgs);
+        // parseScfWpCliJson throws its own wp_error on malformed stdout
+        // (#167) — it never reaches the `not_found` fallback below, which
+        // is reserved for a successfully-parsed, genuinely-empty result.
+        const rows = parseScfWpCliJson<Array<{ ID: number }>>(lookup.stdout, "[]");
         let resolved: string | null = null;
-        try {
-          const rows = JSON.parse(lookup.stdout || "[]") as Array<{ ID: number }>;
-          if (Array.isArray(rows) && rows.length > 0) {
-            resolved = String(rows[0].ID);
-          }
-        } catch {
-          // Fall through — resolved stays null, treated as not_found below.
+        if (Array.isArray(rows) && rows.length > 0) {
+          resolved = String(rows[0].ID);
         }
         if (!resolved) {
           withCode(
@@ -5021,15 +5013,7 @@ registerLocalTool(
         }
         failScfCommand(result, args);
       }
-      try {
-        return JSON.parse(result.stdout);
-      } catch (e) {
-        withCode(
-          ErrorCodes.WP_ERROR,
-          `wp-cli returned non-JSON output for --format=json: ${(e as Error).message}`,
-          "Inspect wp-cli's stdout for malformed output. Re-run with WP_CLI_DEBUG=1 in the env to surface PHP traceback.",
-        );
-      }
+      return parseScfWpCliJson(result.stdout);
     });
     return {
       content: [
