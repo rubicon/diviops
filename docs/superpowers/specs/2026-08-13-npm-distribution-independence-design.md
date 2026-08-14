@@ -16,8 +16,22 @@ Status: design — pending owner review
   "store a token" to a **two-phase bootstrap-then-OIDC** path, because npm classic
   automation tokens were permanently revoked on 2025-12-09 and the surviving token class is
   itself on a documented removal path; a **token-free smoke gate** was promoted from an
-  unmentioned detail to a first-class work item requiring a source change; and a
-  **licensing defect** was found that blocks first publish (see Blocking defect).
+  unmentioned detail to a first-class work item; and a **licensing defect** was found that
+  blocks first publish (see Blocking defect).
+- 2026-08-13, corrected after an adversarial review by Codex (`codex review`, three
+  findings, all independently verified against the repository before being accepted; none
+  rejected). (1) The claim that a credential-free smoke gate **requires a source change**
+  was **wrong** and is withdrawn — the earlier draft tested the *unset* case and
+  generalized it to the *credential-free* case, which are different; an empirical stdio
+  probe with dummy values against an unreachable host completes the handshake and lists all
+  115 tools. The smoke gate is CI-only work and is no longer a blocking gate. (2) The
+  rename inventory **undercounted**: it was built from a `grep` filtered on `npx` and so
+  missed six references that name the package without invoking it, plus
+  `tests/test-drop-in-constraint.php` entirely. Now sourced from `git grep -c` (18 files,
+  40 references) with the command recorded so the counts cannot silently rot again. (3) The
+  work-item list **contradicted itself** on which rename rides which release train, and
+  understated what gates first publish. Restructured by release train with the gating made
+  explicit.
 
 ## Problem
 
@@ -114,8 +128,8 @@ npx -y --package @rubicontv/diviops-mcp diviops-mcp
 There is no scope to acquire and no account to create; what was the largest open
 prerequisite in the first draft of this spec is simply already done.
 
-Cost: a publish workflow, a source change to enable a credential-free smoke gate, a
-licensing fix, and a documentation sweep. Details below.
+Cost: a publish workflow, a smoke-test script, a licensing fix, and a documentation sweep.
+No source changes to the server itself. Details below.
 
 ### Option B — GitHub Packages (`npm.pkg.github.com`)
 
@@ -234,35 +248,56 @@ be guarded on the `mcp-server-v` tag prefix**, for example by testing
 Note also that required status checks on `main` are pinned by exact job name, so adding a
 new workflow is additive and safe, while renaming an existing job is not.
 
-## The smoke gate is a source change, not CI config
+## The smoke gate is CI config, not a source change
 
 `forgejo-mcp` gates publishing behind `npm run smoke` (`npm run build && node
 scripts/smoke.mjs`), which spawns the built server, completes an MCP handshake, lists
 tools, and asserts the expected tool surface — with no Forgejo token required.
 
-`diviops-server` cannot do this today. Verified directly: running the built
-`dist/index.js` with `WP_URL`, `WP_USER`, and `WP_APP_PASSWORD` unset produces
+`diviops-server` can do the same today, with no source change.
+
+An earlier draft of this spec claimed otherwise and treated a source change as a blocking
+gate. That was wrong, and the error is worth recording because the reasoning failure is
+reusable. Running the built `dist/index.js` with `WP_URL`, `WP_USER`, and
+`WP_APP_PASSWORD` **unset** does hard-exit:
 
 ```
 Error: Missing required environment variable(s): WP_URL, WP_USER, WP_APP_PASSWORD.
 ```
 
-and never reaches a handshake. Making a credential-free smoke test possible therefore
-requires changing the server so it can start and answer `initialize` / `tools/list`
-without WordPress credentials, deferring the credential requirement to the first call that
-actually needs WordPress. That is a real code change with its own design questions (what
-does a tool call do when unconfigured, and does deferring the check weaken the current
-fail-fast behavior that surfaces misconfiguration immediately).
+But `requireCredentials()` (`diviops-server/src/index.ts:8014`) is a **presence** check,
+not a connectivity check — it tests only that the three variables are non-empty. And
+`main()` wraps the handshake in a `try`/`catch` that treats a network failure as
+non-fatal, setting `handshakeState = { kind: "failed" }` and continuing to stdio precisely
+so that plugin-touching tools surface their real errors rather than being misreported as
+missing capabilities. Only an HTTP 426 (server too old for the plugin) is fatal.
 
-This is worth doing rather than skipping. Without it the pipeline publishes artifacts that
-nothing verified, and this repository's own testing culture exists specifically to prevent
-gates that pass while inspecting nothing. It also pairs naturally with the tool-name
-stability constraint: a smoke test that asserts the registered tool-name set is exactly the
-guard that makes silent tool-name drift impossible.
+So dummy, non-secret values pointed at an unreachable host are sufficient. Verified
+empirically rather than by reading the code: spawning the built server with
+`WP_URL=http://127.0.0.1:9` and placeholder user/password, then driving `initialize` and
+`tools/list` over stdio, yields
 
-**Sequencing consequence:** either the smoke gate lands before the first publish, or the
-first publish ships with a weaker gate (build-only) and the smoke gate follows. Recommend
-the former; note the latter as the acceptable compromise if timing forces it.
+```
+initialize replied: YES (server diviops-mcp 1.6.1)
+tools/list replied: YES — 115 tools
+stderr: Handshake warning (gate disabled): fetch failed
+        Divi MCP Server running on stdio
+```
+
+The failure in the earlier draft was testing the *unset* case and generalizing to the
+*credential-free* case. Those are different, and only the second one matters for CI.
+
+A `scripts/smoke.mjs` modeled on `forgejo-mcp`'s can therefore be written as pure CI work.
+It should assert the tool count and the registered tool-name set, not merely that the
+process starts: that makes it simultaneously the publish gate and the guard against silent
+tool-name drift, which is otherwise unprotected. The 115 figure matches the always-on tool
+count `README.md` documents, so the smoke test doubles as a check that the README's number
+has not rotted.
+
+This is not a blocking gate on first publish, but it should land with the publish workflow
+rather than after it. Publishing behind a build-only gate would ship artifacts nothing
+verified, which is exactly the "gate that passes while inspecting nothing" failure this
+repository's testing culture exists to prevent.
 
 ## Credentials: bootstrap with a token, then move to OIDC
 
@@ -340,29 +375,37 @@ publish (or `publishConfig.access` in `package.json`).
 
 ## The rename blast radius
 
-Seventeen files reference `@diviops/mcp-server`. They are **not** all the same kind of
-reference, and conflating them would introduce a real error.
+Eighteen files reference `@diviops/mcp-server`, carrying 40 references between them. They
+are **not** all the same kind of reference, and conflating them would introduce a real
+error.
+
+Counts below are from `git grep -c '@diviops/mcp-server'` and exclude this spec itself.
+Use that command rather than the counts here when the time comes: an earlier draft of this
+inventory was built from a `grep` filtered on `npx`, which silently missed every reference
+that names the package without invoking it — six of them, including a global-install
+instruction and two JSON config blocks. Counts rot; the command does not.
 
 **Self-references — these must be renamed.** They describe the package this repository
 produces, and every one of them is currently wrong.
 
-| File | Nature |
-| ---- | ------ |
-| `diviops-server/package.json` | The `name` field itself |
-| `diviops-server/package-lock.json` | Regenerated, not hand-edited |
-| `release-please-config.json` | `package-name` for the `diviops-server` package |
-| `README.md` | Install instructions, tool table |
-| `SETUP.md` | ~8 `npx` invocations (lines 76, 87, 166, 185, 455, 481, 488, 496, 510) |
-| `diviops-server/README.md` | Install instructions |
-| `plugins/diviops-agent/README.md` | Install instructions |
-| `diviops-server/src/index.ts` | Line 4462, inside a user-facing error string |
-| `CLAUDE.md` | Describes which package calls `/diviops/v1/*` |
-| `FORK.md` | Same, plus the divergence table this change adds to |
-| `CONTRIBUTING.md` | Bug-report guidance (currently upstream's file) |
-| `SUPPORT.md` | Version-checking guidance (currently upstream's file) |
-| `.github/ISSUE_TEMPLATE/bug_report.md` | Version prompt (currently upstream's file) |
-| `plugins/diviops-agent/diviops-agent.php` | Line 2770, rendered in the wp-admin dashboard |
-| `plugins/diviops-agent/readme.txt` | Lines 15, 27, 31, 32 — see below |
+| File | Refs | Nature |
+| ---- | ---- | ------ |
+| `diviops-server/package.json` | 1 | The `name` field itself |
+| `diviops-server/package-lock.json` | 2 | Regenerated, not hand-edited |
+| `release-please-config.json` | 1 | `package-name` for the `diviops-server` package |
+| `README.md` | 9 | Install instructions, tool table |
+| `SETUP.md` | 13 | `npx` invocations plus a `-g` install (222), a `npm root -g` path (238), and two JSON `args` arrays (101, 206) |
+| `diviops-server/README.md` | 4 | Install instructions |
+| `plugins/diviops-agent/README.md` | 3 | Install instructions |
+| `diviops-server/src/index.ts` | 1 | Line 4462, inside a user-facing error string |
+| `CLAUDE.md` | 1 | Describes which package calls `/diviops/v1/*` |
+| `FORK.md` | 2 | Same, plus the divergence table this change adds to |
+| `CONTRIBUTING.md` | 1 | Bug-report guidance (currently upstream's file) |
+| `SUPPORT.md` | 2 | Version-checking guidance (currently upstream's file) |
+| `.github/ISSUE_TEMPLATE/bug_report.md` | 1 | Version prompt (currently upstream's file) |
+| `tests/test-drop-in-constraint.php` | 1 | Header comment describing which package calls `/diviops/v1/*`. Asserts nothing, so the rename is a comment fix — but leaving it stale would misdescribe the very constraint the test exists to protect |
+| `plugins/diviops-agent/diviops-agent.php` | 1 | Line 2770, rendered in the wp-admin dashboard |
+| `plugins/diviops-agent/readme.txt` | 4 | Lines 15, 27, 31, 32 — see below |
 
 **Provenance references — these must NOT be renamed.** They are factual statements about
 where vendored bytes came from, and renaming them would turn accurate provenance into
@@ -370,8 +413,8 @@ fiction.
 
 | File | Why it stays |
 | ---- | ------------ |
-| `diviops-server/src/cross-env-preflight/README.md` (lines 21, 31, 75) | Records that the vendored compiled output came from `@diviops/mcp-server@1.5.39`, with checksums. That is upstream's package and always will be. |
-| `diviops-server/scripts/copy-vendored-cross-env-preflight.mjs` (line 5) | The same provenance statement in a code comment. |
+| `diviops-server/src/cross-env-preflight/README.md` (3 refs, lines 21, 31, 75) | Records that the vendored compiled output came from `@diviops/mcp-server@1.5.39`, with checksums. That is upstream's package and always will be. |
+| `diviops-server/scripts/copy-vendored-cross-env-preflight.mjs` (1 ref, line 5) | The same provenance statement in a code comment. |
 
 Two couplings that are not obvious from the file list:
 
@@ -485,32 +528,56 @@ confirmed driver. It remains the fallback during migration.
 
 ## Work items
 
-In dependency order. Items 1 and 2 are gates on first publish.
+The rename splits across **two release trains**, and which train a file rides is the thing
+an implementer most needs stated explicitly. Items 1 through 4 all precede the first
+publish; the split is not optional sequencing preference but a consequence of the server
+package having to exist before the plugin can point at it.
+
+**Before the first publish (server release train, `mcp-server-v*`):**
 
 1. **Add a `LICENSE` to `diviops-server/`** retaining the `oaris.de` copyright notice, and
-   confirm via `npm pack --dry-run` that it appears in the tarball. Blocking.
-2. **Make a credential-free smoke gate possible** — server starts and answers
-   `initialize` / `tools/list` without WordPress credentials — then add
-   `scripts/smoke.mjs` asserting the registered tool-name set. Source change; see the
-   sequencing compromise noted above.
-3. **Rename** to `@rubicontv/diviops-mcp` across the self-reference table, leaving the
-   provenance references untouched; regenerate `package-lock.json`; update
-   `release-please-config.json`'s `package-name`.
+   confirm via `npm pack --dry-run` that it appears in the tarball. Hard gate — publishing
+   without it is a license violation.
+2. **Rename to `@rubicontv/diviops-mcp` in the server and repo-level files only** — that
+   is, every row of the self-reference table **except** the two plugin files
+   (`plugins/diviops-agent/diviops-agent.php` and `plugins/diviops-agent/readme.txt`,
+   which ride item 6). Leave the provenance references untouched. Regenerate
+   `package-lock.json`; update `release-please-config.json`'s `package-name`.
+3. **Add `scripts/smoke.mjs`** modeled on `forgejo-mcp`'s, asserting the tool count and the
+   registered tool-name set. CI-only; no source change (see the smoke-gate section).
 4. **Add `.github/workflows/publish.yaml`** modeled on `forgejo-mcp`'s, **guarded on the
-   `mcp-server-v` tag prefix** so plugin releases do not trigger it.
-5. **Phase 1 publish** with a bootstrap GAT (maintainer action).
-6. **Plugin-side rename** for `diviops-agent.php:2770` and `readme.txt`, riding a plugin
-   release.
+   `mcp-server-v` tag prefix** so plugin releases do not trigger it, and gated on
+   `npm run smoke`.
+
+**First publish:**
+
+5. **Phase 1 publish** of `@rubicontv/diviops-mcp@1.6.2` with a bootstrap GAT (maintainer
+   action).
+
+**After the package exists (plugin release train, `v*`):**
+
+6. **Plugin-side rename** for `diviops-agent.php:2770` (wp-admin dashboard) and
+   `readme.txt` (including the WordPress.org third-party-service disclosure), riding a
+   plugin release. Deliberately after item 5: until the package exists, pointing the
+   admin UI at it would be pointing users at a 404.
+
+**Then:**
+
 7. **Client migration** per the sequence above (maintainer action).
-8. **Phase 2** — configure the trusted publisher, drop the token, revoke it. File as its
-   own issue when item 5 lands.
+8. **Phase 2** — configure the trusted publisher, drop `NODE_AUTH_TOKEN` and the
+   `--provenance` flag, revoke the bootstrap token. File as its own issue when item 5
+   lands, so it does not survive only as an intention recorded here.
 9. **`FORK.md` divergence rows** for everything above.
+
+There is an unavoidable window between items 5 and 6 where the shipped plugin's admin UI
+names the old package. It is short, it affects only the dashboard hint rather than any
+functional path, and the alternative — renaming the plugin first — points users at a
+package that does not yet exist. The window is the better failure.
 
 ## Open items requiring the maintainer
 
 1. Approve the recommendation and the `@rubicontv/diviops-mcp` name.
-2. Decide whether the smoke gate blocks first publish (recommended) or follows it.
-3. Create the bootstrap GAT and store it in `Automation` (referenced by UUID).
-4. Configure the trusted publisher and revoke the bootstrap token at Phase 2.
-5. Approve filing the follow-up issues named here rather than having them filed
+2. Create the bootstrap GAT and store it in `Automation` (referenced by UUID).
+3. Configure the trusted publisher and revoke the bootstrap token at Phase 2.
+4. Approve filing the follow-up issues named here rather than having them filed
    unilaterally: multi-site runtime design, the main-clone launcher foot-gun, and Phase 2.
