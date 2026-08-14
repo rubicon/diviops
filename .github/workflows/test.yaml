@@ -163,6 +163,13 @@ jobs:
       - name: Run regen-module-formats tests
         run: npm run test:regen-skill
 
+      # Also plain ESM (it parses src/index.ts with the TypeScript compiler's
+      # parser rather than compiling it), so it needs no build either. This is
+      # the staleness guard for README.md's per-tool reference: it fails when a
+      # tool change lands without re-running the generator (#93).
+      - name: Run regen-tool-reference tests
+        run: npm run test:tool-reference
+
       # The real build (not the scoped tsconfig.test.json above) plus an
       # actual `node dist/index.js` startup, asserting it reaches the
       # graceful missing-credentials refusal rather than crashing. #41
