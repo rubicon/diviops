@@ -1,0 +1,63 @@
+# Publish diviops-server to npm as @rubicontv/diviops-mcp (#163).
+#
+# Fires when a GitHub Release is published — release-please cuts the Release when
+# its release PR merges — so npm never drifts behind the tags.
+#
+# CRITICAL: this repository cuts TWO release streams. release-please versions the
+# WordPress plugin as `vX.Y.Z` and the MCP server as `mcp-server-vX.Y.Z`
+# (`component: mcp-server`, `include-component-in-tag: true`). An unguarded
+# `on: release: [published]` would therefore run `npm publish` on PLUGIN releases
+# too, republishing an unchanged server under a version that does not exist. The
+# tag-prefix guard below is the whole reason this file differs from the
+# single-package template it was modeled on (rubicon/forgejo-mcp).
+#
+# `workflow_dispatch` allows an on-demand (re)publish — used for the first
+# publish, whose release was cut before this workflow existed.
+#
+# Requires the `NPM_TOKEN` repository secret: an npm token authorized to publish
+# `@rubicontv/diviops-mcp`. Provenance is enabled, which needs `id-token: write`
+# and a public repository. Phase 2 replaces the token with a trusted publisher
+# (OIDC); that cannot perform a package's FIRST publish, which is why a token is
+# used to bootstrap.
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # required for npm provenance
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    # Only the mcp-server release train publishes. On workflow_dispatch there is
+    # no release payload, so the maintainer's explicit invocation is trusted.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.event.release.tag_name, 'mcp-server-v')
+    defaults:
+      run:
+        working-directory: diviops-server
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: diviops-server/package-lock.json
+      - run: npm ci
+      # Build + credential-free MCP handshake. Fails loudly on an empty registry,
+      # a drifted tool count, a missing tool, or a version mismatch — so a broken
+      # build cannot reach the registry.
+      - run: npm run smoke
+      - run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

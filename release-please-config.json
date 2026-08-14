@@ -17,7 +17,7 @@
     },
     "diviops-server": {
       "release-type": "node",
-      "package-name": "@diviops/mcp-server",
+      "package-name": "@rubicontv/diviops-mcp",
       "component": "mcp-server",
       "include-component-in-tag": true
     }
