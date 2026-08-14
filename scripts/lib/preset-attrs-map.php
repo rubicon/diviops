@@ -164,6 +164,144 @@ function diviops_preset_attrs_map_index( string $packages_dir ): array {
 }
 
 /**
+ * Index every shared decoration family declared under a `Packages` root.
+ *
+ * Families live at `Module/Options/<Group>/<Class>PresetAttrsMap.php` and are named here
+ * after the class rather than the directory, because `Module/Options/FormField/` holds
+ * two unrelated maps (`FieldDecoration` and `FormField`) and a directory key would drop
+ * one of them without saying so.
+ *
+ * @param string $packages_dir Path to a `Packages` root.
+ *
+ * @throws RuntimeException When the root holds no family maps at all.
+ *
+ * @return array<string, string> Family name to absolute map-file path.
+ */
+function diviops_preset_attrs_map_shared_index( string $packages_dir ): array {
+	$root  = diviops_preset_attrs_map_packages_root( $packages_dir );
+	$files = glob( $root . '/Module/Options/*/*PresetAttrsMap.php' ) ?: array();
+
+	/*
+	 * A scan that inspected nothing must fail rather than return an empty index, the same
+	 * rule the per-module index follows.
+	 */
+	if ( array() === $files ) {
+		throw new RuntimeException(
+			sprintf( 'no shared PresetAttrsMap files found under %s/Module/Options', $root )
+		);
+	}
+
+	$index = array();
+
+	foreach ( $files as $file ) {
+		$family = (string) preg_replace( '/PresetAttrsMap\.php$/', '', basename( $file ) );
+
+		if ( isset( $index[ $family ] ) && $index[ $family ] !== $file ) {
+			throw new RuntimeException(
+				sprintf(
+					'family %s is declared by two map files: %s and %s',
+					$family,
+					$index[ $family ],
+					$file
+				)
+			);
+		}
+
+		$index[ $family ] = $file;
+	}
+
+	ksort( $index );
+
+	return $index;
+}
+
+/**
+ * Resolve one shared decoration family's full key vocabulary.
+ *
+ * The family is run, not read. `ButtonPresetAttrsMap` spells six of its 149 keys and
+ * delegates the rest to seven sibling maps, so the delegated paths exist nowhere in its
+ * own source and a text scan reports a vocabulary that is missing most of itself.
+ *
+ * Most families take the element prefix they are keyed on as their one argument, which
+ * is how a single family serves every element of every module. Three take none and
+ * return absolute paths instead; passing a prefix to one of those is refused rather than
+ * ignored, so a caller never gets back keys their prefix had no part in.
+ *
+ * @param string $packages_dir Path to a `Packages` root.
+ * @param string $family       Family name, for example `Button`.
+ * @param string $attr_name    Element prefix to key the family on. Empty for the
+ *                             parameterless families.
+ *
+ * @throws RuntimeException When no map file declares the family, when the prefix does
+ *                          not match the map's arity, or when the map resolves to
+ *                          nothing.
+ *
+ * @return array{family: string, class: string, file: string, attr: string,
+ *               parameterless: bool, keys: array<int, string>}
+ */
+function diviops_preset_attrs_map_shared_resolve( string $packages_dir, string $family, string $attr_name = '' ): array {
+	$root  = diviops_preset_attrs_map_packages_root( $packages_dir );
+	$index = diviops_preset_attrs_map_shared_index( $root );
+
+	if ( ! isset( $index[ $family ] ) ) {
+		throw new RuntimeException(
+			sprintf( 'no shared PresetAttrsMap under %s declares family %s', $root, $family )
+		);
+	}
+
+	$file  = $index[ $family ];
+	$class = diviops_preset_attrs_map_class_name( $file );
+
+	diviops_preset_attrs_map_bootstrap( $root );
+	require_once $file;
+
+	if ( ! method_exists( $class, 'get_map' ) ) {
+		throw new RuntimeException( sprintf( '%s has no get_map() method', $class ) );
+	}
+
+	$parameterless = 0 === ( new ReflectionMethod( $class, 'get_map' ) )->getNumberOfParameters();
+
+	if ( $parameterless && '' !== $attr_name ) {
+		throw new RuntimeException(
+			sprintf( '%s takes no attribute prefix: its keys are absolute paths', $class )
+		);
+	}
+
+	if ( ! $parameterless && '' === $attr_name ) {
+		throw new RuntimeException(
+			sprintf( '%s requires an attribute prefix to key its subfields on', $class )
+		);
+	}
+
+	$resolved = $parameterless ? $class::get_map() : $class::get_map( $attr_name );
+
+	if ( ! is_array( $resolved ) ) {
+		throw new RuntimeException( sprintf( '%s::get_map() did not return an array', $class ) );
+	}
+
+	$keys = array_keys( $resolved );
+	sort( $keys );
+
+	/*
+	 * Every family Divi ships contributes at least one key. An empty return means the
+	 * class was not exercised the way it expects, which must not read as "this family has
+	 * no vocabulary".
+	 */
+	if ( array() === $keys ) {
+		throw new RuntimeException( sprintf( '%s::get_map() resolved to zero keys', $class ) );
+	}
+
+	return array(
+		'family'        => $family,
+		'class'         => $class,
+		'file'          => $file,
+		'attr'          => $attr_name,
+		'parameterless' => $parameterless,
+		'keys'          => $keys,
+	);
+}
+
+/**
  * Read the fully qualified class name a map file declares.
  *
  * @param string $file Absolute path to a map file.
