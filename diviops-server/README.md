@@ -109,7 +109,10 @@ and IPv6 ranges rejected on every redirect hop) and every upload is validated
 against its real bytes via `wp_check_filetype_and_ext()`. **SVG uploads require
 an active SVG sanitizer** — the plugin verifies [Safe SVG](https://wordpress.org/plugins/safe-svg/)
 is actually bound to `wp_handle_sideload_prefilter`, not just that the SVG mime
-is allowed, and fails closed with `svg_sanitizer_required` (415) otherwise. See
+is allowed, and fails closed with `svg_sanitizer_required` (415) otherwise. A site
+can additionally require a higher capability for SVG uploads specifically, via the
+`DIVIOPS_SVG_UPLOAD_CAPABILITY` constant or environment variable (default
+`upload_files`); a caller without it gets `svg_capability_required` (403). See
 the [main README's Media domain section](../README.md#media-domain) for the full
 write-up, including deployment hardening notes.
 

@@ -186,12 +186,26 @@ detected sanitizer, an SVG upload fails closed with `svg_sanitizer_required` (HT
 415) rather than accepting an unsanitized file. If you need SVG support, install and
 activate Safe SVG; merely allowing the SVG mime type elsewhere is not sufficient.
 
+**SVG uploads can require a higher capability.** Sanitizer bypasses have shipped
+before, so the sanitizer requirement above is backed by a second, independent gate:
+the capability an SVG upload requires is configurable, and applies to SVG only.
+Set `DIVIOPS_SVG_UPLOAD_CAPABILITY` in `wp-config.php` (or as an environment
+variable of the same name; the constant wins) to raise it, for example
+`define( 'DIVIOPS_SVG_UPLOAD_CAPABILITY', 'manage_options' );`. The default is
+`upload_files`, which is what every media upload already requires, so an
+unconfigured site behaves exactly as before. Setting it to `do_not_allow` turns SVG
+uploads off entirely, since WordPress denies that capability to everyone. A caller
+without the configured capability gets `svg_capability_required` (HTTP 403); other
+media types are unaffected, and the capability never replaces the Safe SVG
+requirement, which still applies on top of it. No filter is provided for this
+setting on purpose: it is a security gate rather than a tuning knob, and a filter
+would let any plugin on the site lower it.
+
 If you enable SVG uploads, also harden the deployment itself (server/site
 configuration, not something the plugin can do for you): disable PHP execution
 inside `wp-content/uploads`, serve uploads with the `X-Content-Type-Options: nosniff`
 response header, and consider a restrictive Content-Security-Policy for SVG
-responses. A stricter, admin-configurable SVG capability gate is tracked separately
-(see [rubicon/diviops#73](https://github.com/rubicon/diviops/issues/73)).
+responses.
 
 ## Response contract
 
