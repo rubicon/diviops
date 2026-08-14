@@ -163,6 +163,13 @@ jobs:
       - name: Run regen-module-formats tests
         run: npm run test:regen-skill
 
+      # Also plain ESM (it parses src/index.ts with the TypeScript compiler's
+      # parser rather than compiling it), so it needs no build either. This is
+      # the staleness guard for README.md's per-tool reference: it fails when a
+      # tool change lands without re-running the generator (#93).
+      - name: Run regen-tool-reference tests
+        run: npm run test:tool-reference
+
       # The real build (not the scoped tsconfig.test.json above) plus an
       # actual `node dist/index.js` startup, asserting it reaches the
       # graceful missing-credentials refusal rather than crashing. #41
@@ -196,3 +203,12 @@ jobs:
       # a parse failure never surfaces as not_found (#167).
       - name: Run SCF field-group stdout pollution test (#167)
         run: node --test dist/__tests__/scf-field-group-stdout-pollution.test.js
+
+      # Same reason again, and the same gap this file exists to close: this
+      # file is also excluded from the scoped dist-test lane (it imports
+      # index.ts too) and had no explicit step of its own, so it compiled
+      # under the full build above but nothing in CI ever executed it --
+      # the exact "gate that inspects nothing" failure CLAUDE.md warns about,
+      # just for this test file instead of the whole suite (#167).
+      - name: Run SCF field-group JSON-parse test (#167)
+        run: node --test dist/__tests__/scf-field-group-get-json-parse.test.js

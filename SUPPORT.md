@@ -16,7 +16,7 @@ For guaranteed support windows, dedicated channels, and SLAs, see the Pro distri
 
 - Check [SETUP.md](SETUP.md) for environment-specific setup (DDEV, wp-env, WordPress Studio, DevKinsta, Local by Flywheel).
 - Check the [troubleshooting section in README.md](README.md#troubleshooting) for common quick fixes.
-- Confirm you're on the latest released version of `@diviops/mcp-server` and the `diviops-agent` WordPress plugin. The MCP server updates through npm. WordPress.org installs of the Free plugin update through the normal WordPress plugin update flow; pre-listing or fallback packages can be replaced through **Plugins → Add New → Upload Plugin**.
+- Confirm you're on the latest released version of `@rubicontv/diviops-mcp` and the `diviops-agent` WordPress plugin. The MCP server updates through npm. WordPress.org installs of the Free plugin update through the normal WordPress plugin update flow; pre-listing or fallback packages can be replaced through **Plugins → Add New → Upload Plugin**.
 
 ## What to include
 
@@ -24,7 +24,7 @@ When opening an issue, the bug-report template prompts for:
 
 - WordPress version
 - Divi theme version
-- MCP server version (`npm list -g @diviops/mcp-server` if installed globally, or the version pinned in your MCP config)
+- MCP server version (`npm list -g @rubicontv/diviops-mcp` if installed globally, or the version pinned in your MCP config)
 - Plugin version (WP Admin → Plugins → DiviOps Agent)
 - Hosting environment (Local by Flywheel, DDEV, wp-env, WordPress Studio, DevKinsta, etc.)
 - Reproduction steps

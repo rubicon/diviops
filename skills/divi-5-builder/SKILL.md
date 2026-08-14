@@ -14,7 +14,7 @@ Build modern, VB-editable Divi 5 pages programmatically via MCP tools.
 
 ## DiviOps harness conventions
 
-Cross-cutting contracts the Divi-builder tools inherit — response envelope (`{ ok, data?, error: { code, message, hint?, data? } }`), capability handshake / three-layer gating, `dry_run` plan shape, idempotency conventions, and namespace-prefixed error codes (`<ns>.not_configured` gate vs `<ns>.command_failed` runtime) — live in the [diviops/](../diviops/SKILL.md) primer skill. SCF coverage lives in [diviops-scf/](../diviops-scf/SKILL.md). When this skill references "the standardized envelope" or "the capability handshake," the primer is the source.
+Cross-cutting contracts the Divi-builder tools inherit — response envelope (`{ ok, data?, error: { code, message, hint?, data? } }`), capability handshake / three-layer gating, `dry_run` plan shape, idempotency conventions, and namespace-prefixed error codes (`<ns>.not_configured` gate vs `<ns>.command_failed` runtime) — live in the [diviops/](../diviops/SKILL.md) primer skill. SCF coverage for Divi authoring — field-group discovery, JSON sync, and binding a custom field into a module — lives in [scf-fields.md](references/scf-fields.md). (The separate `diviops-scf/` coverage slice named in the primer does not ship in this repository.) When this skill references "the standardized envelope" or "the capability handshake," the primer is the source.
 
 ## Reference Files
 
@@ -27,9 +27,11 @@ Read the right file for the task at hand — don't load everything.
 | Copy-paste minimum-valid block snippets | [minimal-snippets.md](references/minimal-snippets.md) (Heading, Text, Button, Blurb, Icon, Image) |
 | Module attribute paths | [module-formats.md](references/module-formats.md) (Tier 1 free — Tier 2 patterns + Tier 3 per-module are Pro) |
 | Advanced decoration attributes (shadows, filters, transform, sticky, transition, scroll, animation) | [advanced-attributes.md](references/advanced-attributes.md) |
+| `$variable()$` bindings — token grammar, and the five namespaces sharing it (dynamic content, global colors, design tokens, gradients, images/shortcodes) | [variable-bindings.md](references/variable-bindings.md) |
 | Adding CSS classes to modules | [design-effects.md](references/design-effects.md) — uses `module.decoration.attributes`, NOT `className` |
 | CSS effects & WebGL shaders | [design-effects.md](references/design-effects.md) |
 | Mega menus & navigation | [mega-menu-pattern.md](references/mega-menu-pattern.md) |
+| SCF/ACF custom fields — discovery, JSON sync, dynamic-content binding | [scf-fields.md](references/scf-fields.md) |
 | Presets & cleanup | [presets.md](references/presets.md) |
 | Design system setup | [SKILL.md](#design-system-lifecycle) (below) → [presets.md](references/presets.md) |
 | Page templates | [patterns/](references/patterns/) — SaaS landing, more coming |
@@ -174,7 +176,7 @@ Write `.claude/instructions/design-system.md` with brand-specific guidance: aest
 4. **HTML in innerContent**: Use unicode escapes: `\u003cp\u003e` not `<p>`
 5. **Layout display on containers**: Section, Row, Column, Group need `"module":{"decoration":{"layout":{"desktop":{"value":{"display":"block"}}}}}` — content modules (Text, Button, Icon) don't require it
 6. **Admin labels on important modules**: `"meta":{"adminLabel":{"desktop":{"value":"My Label"}}}` — required for granular editing
-7. **`$variable()$` trailing `$` is load-bearing**: tokens must end with `)$`, not just `)`. Writing `$variable({...})` (no trailing `$`) silently fails to resolve at render time. Full payload format + examples: [presets.md → Variable Tokens](references/presets.md#variable-tokens).
+7. **`$variable()$` trailing `$` is load-bearing**: tokens must end with `)$`, not just `)`. Writing `$variable({...})` (no trailing `$`) silently fails to resolve at render time. Full payload format + examples: [presets.md → Variable Tokens](references/presets.md#variable-tokens); token grammar and every namespace sharing the wrapper: [variable-bindings.md](references/variable-bindings.md).
 8. **Module attrs must not contain `var(--<custom-alias>)`**: attr values hold literal CSS or canonical `$variable({...})$` tokens. Hand-authored `var()` refs to non-Divi aliases depend on external CSS that may not exist — if the alias is undeclared, CSS spec falls through to the property's initial value (0 for padding, browser default for color) and the page silently breaks. Full rule + tolerated patterns: [module-formats.md → Design Token References in Attrs](references/module-formats.md#design-token-references-in-attrs-canonical-variable-only).
 
 ## Module Gotchas (Silent Failures)

@@ -51,6 +51,7 @@ import {
 } from "./cross-env-preflight/source-payload-ref.js";
 import { optimizeSchema } from "./schema-optimizer.js";
 import { schemaModuleRoute } from "./schema-route.js";
+import { SEO_CHANGES, SEO_PROVIDER } from "./seo-schema.js";
 import { createWpCli, parseWpCliJson, WpCliJsonParseError } from "./wp-cli.js";
 import {
   META_INFO_CONFIG,
@@ -646,37 +647,6 @@ const BACKUP_FIELD = z
     "When true on supported content writes, capture a rollback snapshot before applying. dry_run + backup only reports the planned snapshot and does not create one.",
   );
 
-const SEO_FIELD = z.enum(["seo_title", "meta_description"]);
-const SEO_PROVIDER = z.enum(["auto", "tsf"]);
-const SEO_CHANGE = z.discriminatedUnion("action", [
-  z.strictObject({
-    field: SEO_FIELD,
-    action: z.literal("set"),
-    value: z.string(),
-  }),
-  z.strictObject({
-    field: SEO_FIELD,
-    action: z.literal("clear"),
-  }),
-]);
-const SEO_CHANGES = z
-  .array(SEO_CHANGE)
-  .min(1)
-  .max(2)
-  .superRefine((changes, context) => {
-    const seen = new Set<string>();
-    changes.forEach((change, index) => {
-      if (seen.has(change.field)) {
-        context.addIssue({
-          code: "custom",
-          message: `Duplicate operation for semantic field '${change.field}'.`,
-          path: [index, "field"],
-        });
-      }
-      seen.add(change.field);
-    });
-  });
-
 // ── Read Tools ───────────────────────────────────────────────────────
 
 registerPluginTool(
@@ -702,7 +672,7 @@ registerPluginTool(
   "diviops_seo_metadata_get",
   {
     description:
-      "Read explicit and effective semantic SEO metadata for one provider-supported post. Free/core and explicit-metadata-only: caller-visible fields are fixed to seo_title and meta_description; no raw metadata keys or provider maps are accepted or returned. Requires edit_post before stored payload exposure. Returns exact explicit presence/value, effective provider output, deterministic checksum, provider lifecycle/capability evidence, canonical WordPress identity evidence, and cache status. Error codes include not_found, forbidden, seo.provider_absent, seo.provider_incompatible, seo.provider_unsupported, and seo.post_type_unsupported. Returns the standardized envelope.",
+      "Read explicit and effective semantic SEO metadata for one provider-supported post. Free/core and explicit-metadata-only: caller-visible fields are fixed to seo_title, meta_description, og_title, og_description, twitter_title, and twitter_description; no raw metadata keys or provider maps are accepted or returned. The Open Graph and Twitter effective values reflect TSF's own fallback behavior (Twitter falls back to the Open Graph value when unset; both fall back to the plain title/description when unset). No schema/JSON-LD, image, card-type, homepage-override, or site-default evidence is included. Requires edit_post before stored payload exposure. Returns exact explicit presence/value, effective provider output, deterministic checksum, provider lifecycle/capability evidence, canonical WordPress identity evidence, and cache status. Error codes include not_found, forbidden, seo.provider_absent, seo.provider_incompatible, seo.provider_unsupported, and seo.post_type_unsupported. Returns the standardized envelope.",
     inputSchema: {
       post_id: z.number().int().positive().describe("WordPress post/page ID to inspect. Requires edit_post on this exact target."),
       provider: SEO_PROVIDER.optional().default("auto").describe("Provider selector. auto resolves only the active supported TSF adapter in V1."),
@@ -1813,7 +1783,7 @@ registerPluginTool(
   "diviops_seo_metadata_update",
   {
     description:
-      "Update explicit TSF SEO metadata on one provider-supported post through the Free/core semantic contract. Explicit metadata only: changes is a strict one-or-two-item discriminated list for seo_title and meta_description; set requires a plain-text value and clear forbids one. Unknown properties, duplicate fields, HTML/markup, control or invalid UTF-8 bytes, serialized/non-scalar values, secret-like values, and unresolved Divi/global/provider/dynamic tokens are refused before mutation. Requires edit_post and expected_checksum; drift refuses before mutation with no force path. Uses TSF's public sanitize/write/clear lifecycle, exact stored readback, request-local rollback on error/mismatch, and reports before/after checksums, readback, lifecycle, cache, rollback, no-op, and write evidence. Effective output must be verified by a follow-up diviops_seo_metadata_get. No persistent snapshot, canonical override, robots, social, schema, redirect, bulk, cross-site, or automatic Divi extraction path exists." +
+      "Update explicit TSF SEO metadata on one provider-supported post through the Free/core semantic contract. Explicit metadata only: changes is a strict one-or-two-item discriminated list for seo_title, meta_description, og_title, og_description, twitter_title, and twitter_description; set requires a plain-text value and clear forbids one. Unknown properties, duplicate fields, HTML/markup, control or invalid UTF-8 bytes, serialized/non-scalar values, secret-like values, and unresolved Divi/global/provider/dynamic tokens are refused before mutation. Requires edit_post and expected_checksum; drift refuses before mutation with no force path. Uses TSF's public sanitize/write/clear lifecycle, exact stored readback, request-local rollback on error/mismatch, and reports before/after checksums, readback, lifecycle, cache, rollback, no-op, and write evidence. Effective output must be verified by a follow-up diviops_seo_metadata_get. No image, Twitter card-type, schema/JSON-LD, homepage-override, canonical override, redirect, robots, site-default, bulk, cross-site, or automatic Divi extraction path exists." +
       DRY_RUN_DESC_SUFFIX,
     inputSchema: {
       post_id: z.number().int().positive().describe("WordPress post/page ID to update. Requires edit_post on this exact target."),
@@ -4509,7 +4479,7 @@ registerLocalTool(
         withCode(
           "meta_wp_cli.not_configured",
           "WP-CLI not configured.",
-          'Set the WP_PATH environment variable to your WordPress installation path. Example: claude mcp add diviops-mcp --env WP_URL=http://site.local --env WP_USER=admin --env WP_APP_PASSWORD=xxxx --env "WP_PATH=/Users/you/Local Sites/your-site/app/public" -- npx -y --package @diviops/mcp-server diviops-mcp. Local site ID is auto-detected from WP_PATH; set LOCAL_SITE_ID explicitly if needed.',
+          'Set the WP_PATH environment variable to your WordPress installation path. Example: claude mcp add diviops-mcp --env WP_URL=http://site.local --env WP_USER=admin --env WP_APP_PASSWORD=xxxx --env "WP_PATH=/Users/you/Local Sites/your-site/app/public" -- npx -y --package @rubicontv/diviops-mcp diviops-mcp. Local site ID is auto-detected from WP_PATH; set LOCAL_SITE_ID explicitly if needed.',
         );
       }
       const result = await wpCli.run(command);
