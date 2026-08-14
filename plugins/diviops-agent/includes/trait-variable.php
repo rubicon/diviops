@@ -2471,7 +2471,7 @@ trait DiviOps_Agent_Variable {
 			// from main + TB content at DynamicAssetsUtils.php:2749-2771). Same
 			// for every owner since the main is the same.
 			$shared_portal_ids_from_main = [];
-			if ( str_contains( $combined_main, 'canvas-portal' ) ) {
+			if ( false !== strpos( $combined_main, 'canvas-portal' ) ) {
 				$shared_portal_ids_from_main = \ET\Builder\FrontEnd\Assets\DynamicAssetsUtils::extract_canvas_portal_canvas_ids_from_content( $combined_main );
 			}
 
@@ -2511,7 +2511,7 @@ trait DiviOps_Agent_Variable {
 				// OWNER's local appended/interaction buffer — matches the
 				// merge at OffCanvasHooks.php:3009-3017.
 				$portal_ids_from_owner_buffer = [];
-				if ( '' !== $owner_canvas_content && str_contains( $owner_canvas_content, 'canvas-portal' ) ) {
+				if ( '' !== $owner_canvas_content && false !== strpos( $owner_canvas_content, 'canvas-portal' ) ) {
 					$portal_ids_from_owner_buffer = \ET\Builder\FrontEnd\Assets\DynamicAssetsUtils::extract_canvas_portal_canvas_ids_from_content( $owner_canvas_content );
 				}
 
@@ -2538,7 +2538,7 @@ trait DiviOps_Agent_Variable {
 
 						$owner_canvas_content .= $portal_content;
 
-						if ( str_contains( $portal_content, 'canvas-portal' ) ) {
+						if ( false !== strpos( $portal_content, 'canvas-portal' ) ) {
 							$nested_portal_ids = \ET\Builder\FrontEnd\Assets\DynamicAssetsUtils::extract_canvas_portal_canvas_ids_from_content( $portal_content );
 							if ( ! empty( $nested_portal_ids ) ) {
 								$portal_ids_to_expand = array_unique( array_merge( $portal_ids_to_expand, $nested_portal_ids ) );

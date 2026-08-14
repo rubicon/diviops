@@ -107,6 +107,31 @@ jobs:
       - name: Run test suite
         run: php tests/run.php
 
+  # Additive defense-in-depth for the declared "Requires PHP: 7.4" floor (#180).
+  # This is NOT the primary gate for that class of bug: a PHP-8-only *function
+  # call* only fatals when the branch containing it actually executes, and this
+  # suite's OffCanvasHooks/DynamicAssetsUtils-gated code (where #180 lived) is
+  # never reached by any test here, on any PHP version -- those Divi classes are
+  # not loaded by the test shims. Running on 7.4 catches 7.4-incompatibility in
+  # code paths the suite DOES exercise; the static scan in
+  # tests/test-php-version-floor-check.php is what closes the gap for code paths
+  # it does not, because it reads source text and does not depend on the branch
+  # running at all. Kept as its own job for the same required-status-check-name
+  # stability reason as test-php85 above (#72, #55).
+  test-php74:
+    name: Test suite (php 7.4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '7.4'
+          coverage: none
+
+      - name: Run test suite
+        run: php tests/run.php
+
   static-analysis:
     name: PHPStan
     runs-on: ubuntu-latest
