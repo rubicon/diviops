@@ -4,7 +4,7 @@
  * Plugin URI: https://github.com/oaris-dev/diviops
  * Description: REST API bridge for DiviOps — connects Claude Code to your Divi 5 site for AI-powered page building and design management.
  * x-release-please-start-version
- * Version: 1.13.0
+ * Version: 1.14.1
  * x-release-please-end
  * Author: oaris.de
  * Author URI: https://oaris.de
@@ -74,7 +74,7 @@ class DiviOps_Agent {
 	 * Plugin version — surfaced in /handshake for self-diagnosis only;
 	 * server no longer gates on it (capability map is the gate).
 	 */
-	const VERSION = '1.13.0'; // x-release-please-version
+	const VERSION = '1.14.1'; // x-release-please-version
 
 	/**
 	 * Minimum MCP server version this plugin is compatible with.
@@ -406,6 +406,255 @@ class DiviOps_Agent {
 		return current_user_can( 'edit_pages' );
 	}
 
+	/**
+	 * Statuses intentionally supported by DiviOps page create/status routes.
+	 *
+	 * WordPress core can register additional workflow statuses, but accepting
+	 * every non-internal status here would bypass the status-specific contract
+	 * enforced by WP_REST_Posts_Controller::handle_status_param().
+	 *
+	 * @return string[]
+	 */
+	private static function supported_page_statuses(): array {
+		return [ 'draft', 'pending', 'publish', 'future', 'private' ];
+	}
+
+	private static function page_status_requires_publish_capability( string $status ): bool {
+		return in_array( $status, [ 'publish', 'future', 'private' ], true );
+	}
+
+	/**
+	 * Require mapped creation and publishing capabilities for fixed-publish CPT writes.
+	 *
+	 * @param string[] $post_types Post types the operation will create.
+	 * @return true|WP_Error
+	 */
+	private static function published_post_types_permission_result( array $post_types ) {
+		foreach ( array_values( array_unique( $post_types ) ) as $post_type_name ) {
+			$post_type = get_post_type_object( $post_type_name );
+			if ( ! $post_type || ! isset( $post_type->cap->create_posts, $post_type->cap->publish_posts ) ) {
+				return new WP_Error(
+					'rest_cannot_create',
+					'Sorry, this content type does not expose the capabilities required for creation.',
+					[ 'status' => 403, 'post_type' => $post_type_name ]
+				);
+			}
+			foreach ( [ 'create_posts', 'publish_posts' ] as $cap_key ) {
+				$capability = (string) $post_type->cap->{$cap_key};
+				if ( '' === $capability || ! current_user_can( $capability ) ) {
+					return new WP_Error(
+						'create_posts' === $cap_key ? 'rest_cannot_create' : 'rest_cannot_publish',
+						'Sorry, you are not allowed to create published content of this type.',
+						[
+							'status'              => 403,
+							'post_type'           => $post_type_name,
+							'required_capability' => $capability,
+						]
+					);
+				}
+			}
+		}
+
+		return true;
+	}
+
+	private static function fixed_publish_route_permission( string $base_capability, array $post_types ) {
+		if ( ! current_user_can( $base_capability ) ) {
+			return new WP_Error( 'rest_forbidden', 'Sorry, you are not allowed to perform this operation.', [ 'status' => 403 ] );
+		}
+		return self::published_post_types_permission_result( $post_types );
+	}
+
+	public static function check_canvas_create_permission() {
+		return self::fixed_publish_route_permission( 'edit_pages', [ 'et_pb_canvas' ] );
+	}
+
+	public static function check_library_save_permission() {
+		return self::fixed_publish_route_permission( 'manage_options', [ 'et_pb_layout' ] );
+	}
+
+	public static function check_tb_template_create_permission( $request ) {
+		$post_types = [ 'et_theme_builder', 'et_template' ];
+		$header_content = $request->get_param( 'header_content' );
+		$footer_content = $request->get_param( 'footer_content' );
+		if ( is_string( $header_content ) && '' !== $header_content ) {
+			$post_types[] = 'et_header_layout';
+		}
+		if ( is_string( $footer_content ) && '' !== $footer_content ) {
+			$post_types[] = 'et_footer_layout';
+		}
+		return self::fixed_publish_route_permission( 'manage_options', $post_types );
+	}
+
+	/**
+	 * Resolve the request-aware page-create capability refusal, if any.
+	 *
+	 * Resolves the TARGET post type from the request (default 'page', mirroring
+	 * page_create()'s own default) rather than hardcoding 'page' — this fork's
+	 * page_create() (#31) accepts a caller-supplied post_type, and a caller
+	 * creating a non-page type must be gated against that type's own
+	 * capabilities, not page's. This is the one place this fork's own #31
+	 * addition and upstream's new permission function intersect; upstream's
+	 * verbatim version does not know about post_type at all.
+	 *
+	 * @param WP_REST_Request|ArrayAccess $request REST-like request.
+	 * @return true|WP_Error
+	 */
+	private static function page_create_permission_result( $request ) {
+		if ( ! current_user_can( 'edit_pages' ) ) {
+			return new WP_Error( 'rest_forbidden', 'Sorry, you are not allowed to perform this operation.', [ 'status' => 403 ] );
+		}
+
+		$status = sanitize_key( (string) ( $request->get_param( 'status' ) ?? 'draft' ) );
+		if ( ! in_array( $status, self::supported_page_statuses(), true ) ) {
+			return new WP_Error(
+				'rest_invalid_param',
+				'Status is not supported for DiviOps page creation.',
+				[ 'status' => 400 ]
+			);
+		}
+
+		$post_type_param = $request->get_param( 'post_type' );
+		$post_type_name  = ( null === $post_type_param ) ? 'page' : sanitize_key( (string) $post_type_param );
+
+		$post_type = get_post_type_object( $post_type_name );
+		if ( ! $post_type || ! isset( $post_type->cap->create_posts ) ) {
+			return new WP_Error(
+				'rest_cannot_create',
+				"The {$post_type_name} post type does not expose the capabilities required for creation.",
+				[ 'status' => 403, 'post_type' => $post_type_name ]
+			);
+		}
+
+		if ( ! current_user_can( $post_type->cap->create_posts ) ) {
+			return new WP_Error(
+				'rest_cannot_create',
+				"Sorry, you are not allowed to create {$post_type_name} content.",
+				[
+					'status'              => 403,
+					'post_type'           => $post_type_name,
+					'required_capability' => (string) $post_type->cap->create_posts,
+				]
+			);
+		}
+
+		$publish_capability = isset( $post_type->cap->publish_posts ) ? (string) $post_type->cap->publish_posts : '';
+		if (
+			self::page_status_requires_publish_capability( $status )
+			&& ( '' === $publish_capability || ! current_user_can( $publish_capability ) )
+		) {
+			return new WP_Error(
+				'rest_cannot_publish',
+				"Sorry, you are not allowed to publish {$post_type_name} content or create private {$post_type_name} content.",
+				[
+					'status'              => 403,
+					'post_type'           => $post_type_name,
+					'required_capability' => $publish_capability,
+					'requested_status'    => $status,
+				]
+			);
+		}
+
+		return true;
+	}
+
+	/**
+	 * Request-aware REST permission callback for POST /page/create.
+	 *
+	 * @param WP_REST_Request $request Current REST request.
+	 * @return true|WP_Error
+	 */
+	public static function check_page_create_permission( $request ) {
+		return self::page_create_permission_result( $request );
+	}
+
+	/**
+	 * Resolve page status-transition authority before a plan or mutation.
+	 *
+	 * DIVERGES from upstream deliberately (owner decision 2026-08-02):
+	 * (1) does NOT narrow to page-type posts — the route keeps accepting any
+	 * post type the id resolves to, matching page_update_status()'s existing
+	 * behavior; (2) resolves the publish capability from the ACTUAL post's
+	 * post_type, not a hardcoded 'page', so a non-page post's publish
+	 * transition is gated against its own type's publish_posts capability
+	 * rather than page's (the same post_type-blindness class of bug this PR
+	 * fixes in page_create). See the PR 2 implementation plan, Task 3.
+	 *
+	 * @param WP_REST_Request|ArrayAccess $request REST-like request.
+	 * @return true|WP_Error
+	 */
+	private static function page_update_status_permission_result( $request ) {
+		if ( ! current_user_can( 'edit_pages' ) ) {
+			return new WP_Error( 'rest_forbidden', 'Sorry, you are not allowed to perform this operation.', [ 'status' => 403 ] );
+		}
+
+		$post_id = absint( $request['id'] ?? 0 );
+		$status  = sanitize_key( (string) $request->get_param( 'status' ) );
+
+		if ( ! in_array( $status, self::supported_page_statuses(), true ) ) {
+			return new WP_Error(
+				'rest_invalid_param',
+				'Status is not supported for DiviOps page status updates.',
+				[ 'status' => 400 ]
+			);
+		}
+
+		$post = get_post( $post_id );
+		if ( ! $post ) {
+			return new WP_Error(
+				'rest_cannot_edit',
+				'Sorry, you are not allowed to edit this content.',
+				[ 'status' => 403 ]
+			);
+		}
+
+		if ( ! current_user_can( 'edit_post', $post_id ) ) {
+			return new WP_Error(
+				'rest_cannot_edit',
+				'Sorry, you are not allowed to edit this content.',
+				[ 'status' => 403 ]
+			);
+		}
+
+		$post_type = get_post_type_object( (string) $post->post_type );
+		if ( ! $post_type ) {
+			return new WP_Error(
+				'rest_cannot_edit',
+				'This content type does not expose the capability required for status updates.',
+				[ 'status' => 403, 'post_type' => (string) $post->post_type ]
+			);
+		}
+
+		$publish_capability = isset( $post_type->cap->publish_posts ) ? (string) $post_type->cap->publish_posts : '';
+		if (
+			self::page_status_requires_publish_capability( $status )
+			&& ( '' === $publish_capability || ! current_user_can( $publish_capability ) )
+		) {
+			return new WP_Error(
+				'rest_cannot_publish',
+				'Sorry, you are not allowed to publish this content or make it private.',
+				[
+					'status'              => 403,
+					'post_type'           => (string) $post->post_type,
+					'required_capability' => $publish_capability,
+					'requested_status'    => $status,
+				]
+			);
+		}
+
+		return true;
+	}
+
+	/**
+	 * Request-aware REST permission callback for POST /page/update-status/{id}.
+	 *
+	 * @param WP_REST_Request $request Current REST request.
+	 * @return true|WP_Error
+	 */
+	public static function check_page_update_status_permission( $request ) {
+		return self::page_update_status_permission_result( $request );
+	}
+
 	public static function check_authenticated_permission() {
 		return get_current_user_id() > 0;
 	}
@@ -427,6 +676,11 @@ class DiviOps_Agent {
 			'permission_callback' => [ __CLASS__, 'check_read_permission' ],
 			'args'                => [
 				'mcp_server_version' => [ 'required' => true, 'type' => 'string' ],
+				// Optional (#123): runtime facts the client can observe about
+				// itself and this plugin cannot — currently just wp_cli.
+				// Optional on purpose, so every MCP server predating this
+				// contract keeps handshaking unchanged.
+				'client_runtime'     => [ 'required' => false, 'type' => 'object' ],
 			],
 		] );
 
@@ -936,7 +1190,7 @@ class DiviOps_Agent {
 		register_rest_route( self::REST_NAMESPACE, '/library/save', [
 			'methods'             => 'POST',
 			'callback'            => [ __CLASS__, 'library_save' ],
-			'permission_callback' => [ __CLASS__, 'check_admin_permission' ],
+			'permission_callback' => [ __CLASS__, 'check_library_save_permission' ],
 			'args'                => [
 				'title'       => [ 'required' => true, 'type' => 'string' ],
 				'content'     => [ 'required' => true, 'type' => 'string' ],
@@ -1164,7 +1418,7 @@ class DiviOps_Agent {
 		register_rest_route( self::REST_NAMESPACE, '/theme-builder/template/create', [
 			'methods'             => 'POST',
 			'callback'            => [ __CLASS__, 'tb_template_create' ],
-			'permission_callback' => [ __CLASS__, 'check_admin_permission' ],
+			'permission_callback' => [ __CLASS__, 'check_tb_template_create_permission' ],
 			'args'                => [
 				'title'          => [ 'required' => true, 'type' => 'string' ],
 				'condition'      => [ 'required' => true, 'type' => 'string' ],
@@ -1391,7 +1645,7 @@ class DiviOps_Agent {
 		register_rest_route( self::REST_NAMESPACE, '/page/update-status/(?P<id>\d+)', [
 			'methods'             => 'POST',
 			'callback'            => [ __CLASS__, 'page_update_status' ],
-			'permission_callback' => [ __CLASS__, 'check_write_permission' ],
+			'permission_callback' => [ __CLASS__, 'check_page_update_status_permission' ],
 			'args'                => [
 				'id'       => [ 'required' => true ],
 				'status'   => [
@@ -1755,12 +2009,18 @@ class DiviOps_Agent {
 		register_rest_route( self::REST_NAMESPACE, '/page/create', [
 			'methods'             => 'POST',
 			'callback'            => [ __CLASS__, 'page_create' ],
-			'permission_callback' => [ __CLASS__, 'check_write_permission' ],
+			'permission_callback' => [ __CLASS__, 'check_page_create_permission' ],
 			'args'                => [
 				'title'     => [ 'required' => true, 'type' => 'string' ],
 				'content'   => [ 'required' => false, 'type' => 'string', 'default' => '' ],
-				'status'    => [ 'required' => false, 'type' => 'string', 'default' => 'draft' ],
+				'status'    => [
+					'required' => false,
+					'type'     => 'string',
+					'default'  => 'draft',
+					'enum'     => [ 'draft', 'pending', 'publish', 'future', 'private' ],
+				],
 				'post_type' => [ 'required' => false, 'type' => 'string', 'default' => 'page' ],
+				'dry_run'   => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
 			],
 		] );
 
@@ -1797,7 +2057,7 @@ class DiviOps_Agent {
 		register_rest_route( self::REST_NAMESPACE, '/canvas/create', [
 			'methods'             => 'POST',
 			'callback'            => [ __CLASS__, 'canvas_create' ],
-			'permission_callback' => [ __CLASS__, 'check_write_permission' ],
+			'permission_callback' => [ __CLASS__, 'check_canvas_create_permission' ],
 			'args'                => [
 				'title'          => [ 'required' => true, 'type' => 'string' ],
 				'parent_page_id' => [ 'required' => true, 'type' => 'integer' ],
@@ -1860,7 +2120,7 @@ class DiviOps_Agent {
 		register_rest_route( self::REST_NAMESPACE, '/canvas/duplicate/(?P<id>\d+)', [
 			'methods'             => 'POST',
 			'callback'            => [ __CLASS__, 'canvas_duplicate' ],
-			'permission_callback' => [ __CLASS__, 'check_write_permission' ],
+			'permission_callback' => [ __CLASS__, 'check_canvas_create_permission' ],
 			'args'                => [
 				'title'   => [ 'required' => false, 'type' => 'string' ],
 				'dry_run' => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
@@ -2164,6 +2424,124 @@ class DiviOps_Agent {
 		<?php
 	}
 
+	/**
+	 * Where the most recent client-reported runtime state is cached.
+	 *
+	 * Long TTL on purpose: this is a "last known" record, not a liveness
+	 * probe. An MCP client may not connect for days, and the dashboard
+	 * showing a timestamped report from last Tuesday is more useful than
+	 * silently reverting to "unknown" because a short window lapsed.
+	 */
+	const CLIENT_RUNTIME_TRANSIENT = 'diviops_client_runtime';
+
+	/**
+	 * Record runtime facts an MCP client reported about itself (#123).
+	 *
+	 * Only fields actually present are written. A client that omits
+	 * `client_runtime` entirely — every MCP server older than this contract —
+	 * must leave the stored report untouched, because silence is not a
+	 * retraction. Recording "absent" as "unavailable" would recreate the
+	 * original bug in a new place: a red cross on a working setup.
+	 *
+	 * @param mixed  $client_runtime Raw `client_runtime` param, unvalidated.
+	 * @param string $server_version Reporting MCP server version, for provenance.
+	 * @return void
+	 */
+	private static function record_client_runtime( $client_runtime, $server_version ) {
+		if ( ! is_array( $client_runtime ) || ! array_key_exists( 'wp_cli', $client_runtime ) ) {
+			return;
+		}
+
+		$stored = get_transient( self::CLIENT_RUNTIME_TRANSIENT );
+		$stored = is_array( $stored ) ? $stored : [];
+
+		$stored['wp_cli'] = [
+			'available'          => (bool) $client_runtime['wp_cli'],
+			'reported_at'        => time(),
+			'mcp_server_version' => $server_version,
+		];
+
+		set_transient( self::CLIENT_RUNTIME_TRANSIENT, $stored, MONTH_IN_SECONDS );
+	}
+
+	/**
+	 * Runtime state reported by MCP clients, for the dashboard.
+	 *
+	 * Deliberately separate from dashboard_capabilities(). Those two answer
+	 * different questions — "what does this plugin provide?" versus "what did
+	 * a client tell us about its own environment?" — and merging them is what
+	 * produced #123 in the first place: WP-CLI sat in the capability list as
+	 * though the plugin provided it, so the dashboard guessed from PHP and
+	 * reported a red cross on setups where WP-CLI worked fine.
+	 *
+	 * Three states, because two cannot express the truth here:
+	 *   available / unavailable  a client actually reported
+	 *   unknown                  nobody has reported yet — NOT "broken"
+	 *
+	 * @return array<string,array{state:string,reported_at:?int,mcp_server_version:?string}>
+	 */
+	public static function dashboard_client_runtime() {
+		$stored = get_transient( self::CLIENT_RUNTIME_TRANSIENT );
+		$stored = is_array( $stored ) ? $stored : [];
+
+		$report = isset( $stored['wp_cli'] ) && is_array( $stored['wp_cli'] ) ? $stored['wp_cli'] : null;
+
+		if ( null === $report ) {
+			return [
+				'wp_cli' => [
+					'state'              => 'unknown',
+					'reported_at'        => null,
+					'mcp_server_version' => null,
+				],
+			];
+		}
+
+		return [
+			'wp_cli' => [
+				'state'              => ! empty( $report['available'] ) ? 'available' : 'unavailable',
+				'reported_at'        => isset( $report['reported_at'] ) ? (int) $report['reported_at'] : null,
+				'mcp_server_version' => isset( $report['mcp_server_version'] ) ? (string) $report['mcp_server_version'] : null,
+			],
+		];
+	}
+
+	/**
+	 * Capabilities shown on the admin dashboard.
+	 *
+	 * Every entry is a claim a user reads as "this works" or "this does not,"
+	 * so this list may only advertise capabilities the plugin itself provides
+	 * AND can observe. All seven are Divi-backed, so all seven gate on the
+	 * same flag.
+	 *
+	 * WP-CLI used to be listed here and was neither (#123). This plugin never
+	 * executes WP-CLI — there is no shell_exec/proc_open/passthru/WP_CLI:: in
+	 * it, which tests/test-dashboard-capabilities.php asserts so it stays
+	 * true. WP-CLI is run by the Node MCP server, a separate process whose
+	 * environment PHP cannot read, so the old probe
+	 * (`defined( 'DIVIOPS_WP_CLI_PATH' ) || getenv( 'WP_PATH' ) ||
+	 * getenv( 'WP_CLI_CMD' )`) reported a red ✗ on setups where WP-CLI worked
+	 * perfectly well. Defining DIVIOPS_WP_CLI_PATH — a constant referenced
+	 * nowhere else — would only have inverted the lie into an unconditional ✓.
+	 * The MCP server reports genuine WP-CLI readiness through
+	 * `diviops_meta_info`; that is the side of the boundary that can see it.
+	 *
+	 * @param bool $divi_active Whether a Divi 5 install was detected.
+	 * @return array<string,bool> Capability label => availability.
+	 */
+	public static function dashboard_capabilities( $divi_active ) {
+		$divi_active = (bool) $divi_active;
+
+		return [
+			'Pages'         => $divi_active,
+			'Modules'       => $divi_active,
+			'Presets'       => $divi_active,
+			'Library'       => $divi_active,
+			'Theme Builder' => $divi_active,
+			'Canvas'        => $divi_active,
+			'Variables'     => $divi_active,
+		];
+	}
+
 	public static function render_admin_page() {
 		$divi_active   = function_exists( 'et_get_option' );
 		$divi_version  = $divi_active && defined( 'ET_BUILDER_PRODUCT_VERSION' ) ? ET_BUILDER_PRODUCT_VERSION : null;
@@ -2277,18 +2655,7 @@ class DiviOps_Agent {
 				<?php // ── Capabilities ── ?>
 				<div class="card" style="padding:16px 20px;">
 					<h2 style="margin-top:0;">Capabilities</h2>
-					<?php
-					$caps = [
-						'Pages'         => $divi_active,
-						'Modules'       => $divi_active,
-						'Presets'       => $divi_active,
-						'Library'       => $divi_active,
-						'Theme Builder' => $divi_active,
-						'Canvas'        => $divi_active,
-						'Variables'     => $divi_active,
-						'WP-CLI'        => defined( 'DIVIOPS_WP_CLI_PATH' ) || getenv( 'WP_PATH' ) || getenv( 'WP_CLI_CMD' ),
-					];
-					?>
+					<?php $caps = self::dashboard_capabilities( $divi_active ); ?>
 					<ul style="margin:0;padding:0;list-style:none;">
 						<?php foreach ( $caps as $name => $ok ) : ?>
 						<li style="padding:4px 0;">
@@ -2297,6 +2664,54 @@ class DiviOps_Agent {
 						</li>
 						<?php endforeach; ?>
 					</ul>
+
+					<?php
+					// Client-reported runtime (#123). Rendered apart from the
+					// list above because it is a different kind of claim: the
+					// list is what this plugin provides, this is what an MCP
+					// client told us about its own environment. Three states —
+					// "unknown" is shown when nobody has reported yet, which is
+					// emphatically not the same as "broken".
+					$runtime = self::dashboard_client_runtime();
+					$wp_cli  = $runtime['wp_cli'];
+					?>
+					<h3 style="margin:16px 0 4px;font-size:13px;">Reported by MCP client</h3>
+					<ul style="margin:0;padding:0;list-style:none;">
+						<li style="padding:4px 0;">
+							<?php
+							if ( 'available' === $wp_cli['state'] ) {
+								echo '<span style="color:#46b450;">&#10003;</span> ';
+							} elseif ( 'unavailable' === $wp_cli['state'] ) {
+								echo '<span style="color:#dc3232;">&#10007;</span> ';
+							} else {
+								echo '<span style="color:#888;">&#8211;</span> ';
+							}
+							?>
+							WP-CLI
+							<?php if ( 'unknown' === $wp_cli['state'] ) : ?>
+								<span class="description">— not reported yet; connect an MCP client</span>
+							<?php else : ?>
+								<span class="description">
+									—
+									<?php
+									echo esc_html(
+										sprintf(
+											/* translators: 1: human-readable time difference, 2: MCP server version */
+											'reported %1$s ago by MCP server %2$s',
+											human_time_diff( (int) $wp_cli['reported_at'] ),
+											$wp_cli['mcp_server_version'] ? $wp_cli['mcp_server_version'] : 'unknown'
+										)
+									);
+									?>
+								</span>
+							<?php endif; ?>
+						</li>
+					</ul>
+					<p class="description" style="margin-top:8px;">
+						WP-CLI is executed by the MCP server, not this plugin, so its
+						availability can only be reported by the client. See
+						<code>diviops_meta_info</code> for the full allowlist.
+					</p>
 				</div>
 
 				<?php // ── Design Library ── ?>

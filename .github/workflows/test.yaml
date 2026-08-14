@@ -119,7 +119,9 @@ jobs:
       # issue's own "start permissive, ratchet up" plan. Level and baseline
       # both live in phpstan.neon.dist, not duplicated here.
       - name: Run PHPStan
-        run: vendor/bin/phpstan analyse --no-progress --memory-limit=2G
+        # Runs the same composer script a developer runs locally, so the
+        # memory limit cannot drift between here and a workstation (#125).
+        run: composer phpstan -- --no-progress
 
   server-security-test:
     name: diviops-server security tests (node ${{ matrix.node }})
@@ -148,9 +150,32 @@ jobs:
 
       # Scoped to wp-cli.ts and wp-cli-fs-validator.ts (the WP-CLI command
       # allowlist and the filesystem path validator) via tsconfig.test.json,
-      # not the project-wide "test" script — src/index.ts currently fails to
-      # build for unrelated reasons (missing cross-env-preflight modules),
-      # which would otherwise block this unrelated security suite from ever
-      # running.
+      # not the project-wide "test" script. Originally scoped this way
+      # because src/index.ts failed to build for unrelated reasons (missing
+      # cross-env-preflight modules, fixed by #41); kept scoped regardless,
+      # since a security-relevant allowlist suite has no reason to depend on
+      # the rest of the server building.
       - name: Run WP-CLI allowlist / filesystem path validator tests
         run: npm run test:server-security
+
+      # Plain ESM, no tsc involved, so it never depended on index.ts's build
+      # either -- see #116.
+      - name: Run regen-module-formats tests
+        run: npm run test:regen-skill
+
+      # The real build (not the scoped tsconfig.test.json above) plus an
+      # actual `node dist/index.js` startup, asserting it reaches the
+      # graceful missing-credentials refusal rather than crashing. #41
+      # (ERR_MODULE_NOT_FOUND on the vendored cross-env-preflight modules)
+      # and #128 (a missing _meta.idempotent declaration, masked by #41
+      # until #41 was fixed) both only manifest when the server actually
+      # runs as a process -- no prior job in this file exercised that.
+      - name: Run server build + startup regression test (#41, #128)
+        run: node --test scripts/verify-server-builds-and-starts.test.mjs
+
+      # The registry-finalization test imports the built index.js, which needs
+      # the vendored cross-env-preflight JS present -- so it runs against the
+      # full `npm run build` output (copy-vendored included), not the scoped
+      # dist-test lane above (#137).
+      - name: Run CanonicalToolRegistry finalization test (#137)
+        run: npm run build && node --test dist/__tests__/canonical-tool-registry-finalization.test.js

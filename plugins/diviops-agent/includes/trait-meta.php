@@ -1692,6 +1692,13 @@ trait DiviOps_Agent_Meta {
 	public static function handshake( $request ) {
 		$server_version = sanitize_text_field( (string) $request->get_param( 'mcp_server_version' ) );
 
+		// Optional since #123: the client reports facts about its own runtime
+		// that this plugin cannot observe — WP-CLI most importantly, which the
+		// Node MCP server executes in a separate process whose environment PHP
+		// cannot read. Recorded before the version gate below only in the sense
+		// that it is read here; the gate still short-circuits the response.
+		self::record_client_runtime( $request->get_param( 'client_runtime' ), $server_version );
+
 		// Check if the MCP server meets minimum required version.
 		if ( version_compare( $server_version, self::MIN_SERVER_VERSION, '<' ) ) {
 			return new WP_Error(
@@ -1723,6 +1730,11 @@ trait DiviOps_Agent_Meta {
 			'compatible'     => true,
 			'plugin_version' => self::VERSION,
 			'min_server'     => self::MIN_SERVER_VERSION,
+			'authenticated_user' => [
+				'id'    => get_current_user_id(),
+				'login' => wp_get_current_user()->user_login,
+			],
+			'site_url'       => get_site_url(),
 			'divi'           => [
 				'active'  => $divi_active,
 				'version' => $divi_version,
