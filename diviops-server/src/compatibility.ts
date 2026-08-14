@@ -96,6 +96,24 @@ export interface HandshakePluginInfo {
 }
 
 /**
+ * Runtime facts this server observes about its own environment and reports
+ * to the plugin in the handshake (#123).
+ *
+ * These are things the plugin cannot see for itself. WP-CLI is the motivating
+ * case: this server executes it, in a process whose environment PHP has no
+ * access to, so the plugin's dashboard previously guessed from PHP and showed
+ * a red cross on setups where WP-CLI worked.
+ *
+ * Every field is optional and additive. A plugin that predates this contract
+ * ignores the whole object; a server that cannot determine a field omits it,
+ * and the plugin records "unknown" rather than a negative.
+ */
+export interface ClientRuntime {
+  /** Whether this server has a usable WP-CLI (WP_PATH or WP_CLI_CMD wired up). */
+  wp_cli?: boolean;
+}
+
+/**
  * Shape returned by `POST /diviops/v1/handshake`.
  *
  * `capabilities` is a per-tool map keyed by post-rename tool slug
@@ -129,6 +147,10 @@ export interface HandshakeResult {
   active_modules?: Record<string, boolean>;
   /** Advisory installed-plugin versions for S0 preflight reports. */
   plugins?: Record<string, HandshakePluginInfo>;
+  /** Permission-gated non-secret identity of the authenticated App Password owner. */
+  authenticated_user?: { id: number; login: string };
+  /** Observed WordPress site URL; normalized and pinned by launcher mode. */
+  site_url?: string;
 }
 
 export function proToolGatesSatisfied(

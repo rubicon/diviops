@@ -256,6 +256,41 @@ if ( ! function_exists( 'current_user_can' ) ) {
 	}
 }
 
+if ( ! function_exists( 'get_current_user_id' ) ) {
+	/**
+	 * Fixed-zero stub — the natural "no auth context" value in this CLI
+	 * harness. No test asserts on this value; it exists only so calls like
+	 * handshake() (trait-meta.php) don't fatal on an undefined function.
+	 */
+	function get_current_user_id() {
+		return 0;
+	}
+}
+
+if ( ! function_exists( 'wp_get_current_user' ) ) {
+	/**
+	 * Fixed stub exposing the `user_login` property real callers read
+	 * (e.g. handshake()'s `wp_get_current_user()->user_login`). No test
+	 * asserts on this value.
+	 */
+	function wp_get_current_user() {
+		return (object) array(
+			'ID'         => 0,
+			'user_login' => '',
+		);
+	}
+}
+
+if ( ! function_exists( 'get_site_url' ) ) {
+	/**
+	 * Fixed placeholder stub, matching get_permalink()/admin_url()'s
+	 * example.test convention below. No test asserts on this value.
+	 */
+	function get_site_url() {
+		return 'http://example.test';
+	}
+}
+
 if ( ! function_exists( 'apply_filters' ) ) {
 	/**
 	 * Real filter runner over the registry add_filter() above builds: runs every
@@ -423,6 +458,21 @@ if ( ! class_exists( 'WP_REST_Response' ) ) {
 		public function get_status(): int {
 			return $this->status;
 		}
+	}
+}
+
+if ( ! function_exists( 'rest_ensure_response' ) ) {
+	/**
+	 * Mirrors core: a WP_Error passes through untouched, an existing
+	 * WP_REST_Response is returned as-is, anything else is wrapped. Handlers
+	 * return all three shapes, so a shim that always wrapped would hide the
+	 * difference between an error and a successful payload.
+	 */
+	function rest_ensure_response( $response ) {
+		if ( $response instanceof WP_Error || $response instanceof WP_REST_Response ) {
+			return $response;
+		}
+		return new WP_REST_Response( $response );
 	}
 }
 
@@ -628,8 +678,51 @@ if ( ! function_exists( 'current_time' ) ) {
 	}
 }
 
+// WordPress' own time constants (wp-includes/default-constants.php). Values
+// match core exactly — a shim that redefined them would let a test pass on a
+// duration the real site would never use.
+if ( ! defined( 'MINUTE_IN_SECONDS' ) ) {
+	define( 'MINUTE_IN_SECONDS', 60 );
+}
+if ( ! defined( 'HOUR_IN_SECONDS' ) ) {
+	define( 'HOUR_IN_SECONDS', 60 * MINUTE_IN_SECONDS );
+}
+if ( ! defined( 'DAY_IN_SECONDS' ) ) {
+	define( 'DAY_IN_SECONDS', 24 * HOUR_IN_SECONDS );
+}
+if ( ! defined( 'WEEK_IN_SECONDS' ) ) {
+	define( 'WEEK_IN_SECONDS', 7 * DAY_IN_SECONDS );
+}
+if ( ! defined( 'MONTH_IN_SECONDS' ) ) {
+	define( 'MONTH_IN_SECONDS', 30 * DAY_IN_SECONDS );
+}
+
+// In-memory transient store. delete_transient() predates this and returned a
+// bare true, which was fine while nothing read transients back; the
+// client-runtime report (#123) round-trips through set/get, so the three now
+// share real storage and delete actually deletes.
+if ( ! isset( $GLOBALS['diviops_test_transients'] ) ) {
+	$GLOBALS['diviops_test_transients'] = [];
+}
+
+if ( ! function_exists( 'set_transient' ) ) {
+	function set_transient( $transient, $value, $expiration = 0 ) {
+		$GLOBALS['diviops_test_transients'][ $transient ] = $value;
+		return true;
+	}
+}
+
+if ( ! function_exists( 'get_transient' ) ) {
+	function get_transient( $transient ) {
+		// WordPress returns false for a missing transient, which is why callers
+		// must not store a literal false and expect to read it back.
+		return $GLOBALS['diviops_test_transients'][ $transient ] ?? false;
+	}
+}
+
 if ( ! function_exists( 'delete_transient' ) ) {
 	function delete_transient( $transient ) {
+		unset( $GLOBALS['diviops_test_transients'][ $transient ] );
 		return true;
 	}
 }

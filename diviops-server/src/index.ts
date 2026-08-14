@@ -53,11 +53,17 @@ import { optimizeSchema } from "./schema-optimizer.js";
 import { schemaModuleRoute } from "./schema-route.js";
 import { createWpCli } from "./wp-cli.js";
 import {
+  META_INFO_CONFIG,
+  META_PING_CONFIG,
+  requestAbortSignal,
+} from "./health-tools.js";
+import { CanonicalToolRegistry } from "./canonical-tool-registry.js";
+import {
   isolationFailure,
   scanValueForForeignVarRefs,
   writerIsolationErrorResult,
 } from "./validate-attrs.js";
-import { readFileSync, readdirSync } from "fs";
+import { readFileSync, readdirSync, realpathSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -68,20 +74,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const WP_URL = process.env.WP_URL ?? "";
 const WP_USER = process.env.WP_USER ?? "";
 const WP_APP_PASSWORD = process.env.WP_APP_PASSWORD ?? "";
-
-if (!WP_URL || !WP_USER || !WP_APP_PASSWORD) {
-  const missing = [
-    !WP_URL && "WP_URL",
-    !WP_USER && "WP_USER",
-    !WP_APP_PASSWORD && "WP_APP_PASSWORD",
-  ].filter(Boolean);
-  console.error(
-    `Error: Missing required environment variable(s): ${missing.join(", ")}.\n` +
-      "Set WP_URL to your WordPress site URL (e.g. http://mysite.local).\n" +
-      "Generate an Application Password at: WP Admin → Users → Profile → Application Passwords",
-  );
-  process.exit(1);
-}
 
 const wp = new WPClient({
   siteUrl: WP_URL,
@@ -130,10 +122,7 @@ const SERVER_VERSION: string = (() => {
 
 // ── MCP Server ───────────────────────────────────────────────────────
 
-const server = new McpServer({
-  name: "diviops-mcp",
-  version: SERVER_VERSION,
-});
+const registry = new CanonicalToolRegistry();
 
 // ── Capability map (#486) ────────────────────────────────────────────
 
@@ -144,7 +133,7 @@ const server = new McpServer({
 // response with an upgrade hint.
 //
 // Server-local tools (wp-cli wrappers, in-memory templates, meta_ping /
-// meta_info) register directly via `server.registerTool` — they have no
+// meta_info) register directly via `registry.registerTool` — they have no
 // plugin dependency.
 //
 // Three distinct startup states the gate must honor (Codex review):
@@ -158,7 +147,7 @@ const server = new McpServer({
 //   - "pending" — handshake hasn't run yet (defensive; main() awaits it
 //                 before connecting transport, so this should not be
 //                 reachable in normal flow).
-type HandshakeState =
+export type HandshakeState =
   | {
       kind: "ok";
       capabilities: Record<string, boolean>;
@@ -463,7 +452,7 @@ function backupCapabilityError(
 
 // `any` here is deliberate, not laziness. McpServer.registerTool is a
 // multi-overload generic whose `cb`/`InputArgs` machinery doesn't compose
-// with `Parameters<typeof server.registerTool>` (overload collapse to
+// with `Parameters<typeof registry.registerTool>` (overload collapse to
 // `never`). Restating its Zod-driven generics in this thin wrapper buys
 // no real safety — the per-callsite `inputSchema` Zod object at every
 // usage site below is what enforces actual argument shape; this helper
@@ -496,24 +485,26 @@ function registerPluginTool<H extends (args: any) => Promise<any>>(
     return handler(args);
   }) as any;
   recordIdempotent(name, config?._meta);
-  server.registerTool(name, config, wrapped);
+  registry.registerTool(name, config, wrapped);
 }
 
 /**
  * Server-local tools (no plugin dependency) register via this thin shim
- * instead of `server.registerTool` directly. Same recording obligation
+ * instead of `registry.registerTool` directly. Same recording obligation
  * as `registerPluginTool` — every tool surface needs `_meta.idempotent`
  * captured into the runtime table so `serializeEnvelope(result, name)`
  * can emit it on per-call responses (#597).
  */
-function registerLocalTool<H extends (args: any) => Promise<any>>(
+function registerLocalTool<
+  H extends (args: any, context?: any) => Promise<any>,
+>(
   name: string,
   config: any,
   handler: H,
 ): void {
   recordToolCatalog({ name, kind: "server_local", registered: true });
   recordIdempotent(name, config?._meta);
-  server.registerTool(name, config, handler);
+  registry.registerTool(name, config, handler);
 }
 
 /**
@@ -571,7 +562,7 @@ function registerProTool<H extends (args: any) => Promise<any>>(
 
   catalogEntry.registered = true;
   recordIdempotent(name, config?._meta);
-  server.registerTool(name, config, handler);
+  registry.registerTool(name, config, handler);
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -1046,7 +1037,8 @@ registerPluginTool(
         ),
       dry_run: DRY_RUN_FIELD,
     },
-    annotations: { idempotentHint: false },
+    annotations: { idempotentHint: true },
+    _meta: { idempotent: "true" },
   },
   async ({ menu_id, item_id, cascade, dry_run }) => {
     const body: Record<string, unknown> = { menu_id, item_id };
@@ -5002,14 +4994,16 @@ registerLocalTool(
 registerLocalTool(
   "diviops_meta_ping",
   {
-    description:
-      "Test the connection to the WordPress site and verify the Divi MCP plugin is active. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; success payload is { connected: true, message: \"Connected to Divi <version>\" } and connection failure surfaces as { ok: false, error: { code: 'wp_error', message } } with the underlying transport message preserved.",
-    annotations: { idempotentHint: true },
+    ...META_PING_CONFIG,
     _meta: { idempotent: "true" },
   },
-  async () => {
+  async (
+    _args: unknown,
+    context?: { signal?: AbortSignal; mcpReq?: { signal?: AbortSignal } },
+  ) => {
+    const signal = requestAbortSignal(_args, context);
     const response = await wrapResponse(async () => {
-      const ping = await wp.testConnection();
+      const ping = await wp.testConnection(signal);
       if (!ping.ok) {
         withCode(ErrorCodes.WP_ERROR, ping.message);
       }
@@ -5026,9 +5020,7 @@ registerLocalTool(
 registerLocalTool(
   "diviops_meta_info",
   {
-    description:
-      "Returns DiviOps MCP server identity, server_version, license type, numeric tool_count, registered tool catalog summary, active plugin version summary, WP-CLI allowlist, and plugin handshake/slice state including Pro and FluentCart target readiness. Use as the S0 preflight before dogfooding or product work. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.",
-    annotations: { idempotentHint: true },
+    ...META_INFO_CONFIG,
     _meta: { idempotent: "true" },
   },
   async () => {
@@ -5043,7 +5035,7 @@ registerLocalTool(
 
 // ── Resources ────────────────────────────────────────────────────────
 
-server.registerResource(
+registry.registerResource(
   "divi-block-format-guide",
   "divi://block-format-guide",
   {},
@@ -7996,15 +7988,54 @@ function registerProTools(): void {
   );
 }
 
+let productionRegistryFinalized = false;
+
+/**
+ * Complete the canonical registry after the connected site's handshake has
+ * settled. Production startup and any future credential-free compatibility
+ * fixture deliberately share this seam so a test materializes the real
+ * Free/Pro-gated catalog instead of maintaining a second set of definitions.
+ */
+export function finalizeProductionRegistryForHandshake(
+  state: HandshakeState,
+): CanonicalToolRegistry {
+  if (productionRegistryFinalized) {
+    throw new Error("Production MCP registry has already been finalized");
+  }
+  handshakeState = state;
+  registerCrossEnvEvidenceTools();
+  registerProTools();
+  productionRegistryFinalized = true;
+  return registry;
+}
+
 // ── Start ────────────────────────────────────────────────────────────
 
+function requireCredentials(): void {
+  if (WP_URL && WP_USER && WP_APP_PASSWORD) return;
+  const missing = [
+    !WP_URL && "WP_URL",
+    !WP_USER && "WP_USER",
+    !WP_APP_PASSWORD && "WP_APP_PASSWORD",
+  ].filter(Boolean);
+  console.error(
+    `Error: Missing required environment variable(s): ${missing.join(", ")}.\n` +
+      "Set WP_URL to your WordPress site URL (e.g. http://mysite.local).\n" +
+      "Generate an Application Password at: WP Admin → Users → Profile → Application Passwords",
+  );
+  process.exit(1);
+}
+
 async function main() {
+  requireCredentials();
   // Capability handshake — populate the per-tool gate map (#486)
   // and the ADR-003 / ADR-007 Pro-extension surface (target presence,
   // module activation). On Free-only sites the Pro fields are
   // normalized to `false` / `{}` by wp-client.
   try {
-    const hs = await wp.handshake(SERVER_VERSION);
+    // Report what this server can see and the plugin cannot: WP-CLI runs
+    // in THIS process, so only we know whether it is wired up (#123).
+    const hs = await wp.handshake(SERVER_VERSION, { wp_cli: wpCli !== null });
     handshakeState = {
       kind: "ok",
       capabilities: hs.capabilities,
@@ -8049,24 +8080,34 @@ async function main() {
     console.error(`Handshake warning (gate disabled): ${msg}`);
   }
 
-  // The cross-env evidence schema is additive-capability aware: older Free
-  // plugins retain the existing header-only enum, while current plugins prove
-  // footer support through cross_env_footer_layout_evidence.
-  registerCrossEnvEvidenceTools();
+  // Cross-env evidence and Pro coverage-slice registration must run AFTER
+  // the handshake so capability and tier gates reflect the connected site.
+  const finalizedRegistry =
+    finalizeProductionRegistryForHandshake(handshakeState);
 
-  // Pro coverage-slice registration must run AFTER the handshake so the
-  // gates (`pro_active`, `available_targets`, `active_modules`,
-  // capability map) reflect the connected site's actual state. On Free
-  // sites — or when the handshake failed — registerProTool's internal
-  // gates short-circuit so no Pro tools register.
-  registerProTools();
-
+  const server = new McpServer({
+    name: "diviops-mcp",
+    version: SERVER_VERSION,
+  });
+  finalizedRegistry.install(server);
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Divi MCP Server running on stdio");
 }
 
-main().catch((error) => {
-  console.error("Fatal error:", error);
-  process.exit(1);
-});
+function isDirectEntryPoint(): boolean {
+  const entryPoint = process.argv[1];
+  if (!entryPoint) return false;
+  try {
+    return realpathSync(entryPoint) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectEntryPoint()) {
+  main().catch((error) => {
+    console.error("Fatal error:", error);
+    process.exit(1);
+  });
+}
