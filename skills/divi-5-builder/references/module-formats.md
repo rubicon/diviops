@@ -15,7 +15,7 @@ Structured as a 3-tier classification: universal decoration (Tier 1), shared pat
 - [Attribute Tree Layout: Top-Level vs `module.*`](#attribute-tree-layout-top-level-vs-module) — silent-fail guard
 - [Design Token References in Attrs](#design-token-references-in-attrs-canonical-variable-only) — canonical `$variable()$` only, ban cross-system `var()`
 - [Exceptions Quick Reference](#exceptions-quick-reference) — modules that break standard patterns
-- Tier 2 — Pattern Families (Pro) — font families, icon family, container cascade
+- [Tier 2 — Pattern Families](#tier-2--pattern-families) — button, font, text effects, text shadow, icon (documented in [advanced-attributes.md](advanced-attributes.md))
 - Tier 3 — Module Reference (Pro) — per-module element maps + surprises
 - Advanced Module Attributes (Pro)
 - Global Color Variables (Pro)
@@ -321,14 +321,31 @@ Need a semantic name? Register it inside Divi as a `gvid-*` / `gcid-*` in the Va
 
 ---
 
-## Tier 2 — Pattern Families (Pro)
+## Tier 2 — Pattern Families
 
-The Pro version includes shared pattern documentation for:
-- Font Family A (bodyFont) and Font Family B (element.decoration.font.font)
-- Font Text Effects (gradient/image fill, stroke) *(Divi 5.7+)*
-- Icon Family (element.decoration.icon)
-- Container Cascade (children.module.decoration)
-- Module Link
+Shared families that attach to an *element* rather than the module wrapper. Documented
+family-by-family in [advanced-attributes.md](advanced-attributes.md), at the same
+leaf-path depth as the seven advanced `module.decoration.*` families:
+
+- [Button](advanced-attributes.md#button) — `button.decoration.button__icon.*`,
+  `button.decoration.sizing__alignment`, `button.innerContent__*`, plus the seven
+  families it delegates to
+- [Font](advanced-attributes.md#font) — `element.decoration.font.font__*` (note the
+  doubled `font.font`)
+- [Text Effects](advanced-attributes.md#text-effects) — gradient / image fill / stroke
+  *(Divi 5.7+)*
+- [Text Shadow](advanced-attributes.md#text-shadow) —
+  `element.decoration.font.textShadow__*`
+- [Icon](advanced-attributes.md#icon) — `element.decoration.icon__*`
+
+Every other shared family Divi ships, documented or not, is listed with a status in
+[Shared family inventory](advanced-attributes.md#shared-family-inventory-46-maps). Still
+undocumented at that depth, and named there as deferred: the body and heading font groups
+(`FontBody`, `FontHeader`), form fields (`FormField`, `FieldDecoration`), `Image`,
+`Layout`, `Position`, `Text`, `Fit`, and `Gutter`. Container Cascade
+(`children.module.decoration`) is a Tier 3 concern rather than a shared family and is not
+in that inventory; module link lives in the `LinkUtils` family, classified there as
+content configuration.
 
 ## Tier 3 — Module Reference (Pro)
 

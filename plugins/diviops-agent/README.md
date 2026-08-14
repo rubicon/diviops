@@ -2,11 +2,11 @@
 
 **REST API bridge inside the DiviOps AI harness for WordPress — Divi-native today, WordPress-wide by design.**
 
-The WordPress companion plugin for `@diviops/mcp-server`. Pairs with the MCP server to expose Divi 5 page authoring, CPT/post population, data model introspection, and site auditing as `/diviops/v1/*` REST endpoints behind Application Password auth. The MCP server separately layers in SCF tools that shell out to this site's `wp` binary directly — this plugin implements no SCF code at all; see [Capabilities](#capabilities) below.
+The WordPress companion plugin for `@diviops/mcp-server`. Pairs with the MCP server to expose Divi 5 page authoring, data model introspection, and site auditing as `/diviops/v1/*` REST endpoints behind Application Password auth. SCF management and CPT/post population reach WordPress through the MCP server's own WP-CLI tools rather than through this plugin — see [What this plugin does not implement](#what-this-plugin-does-not-implement).
 
 Divi is a registered trademark of Elegant Themes, Inc. DiviOps Agent is not affiliated with or endorsed by Elegant Themes.
 
-> **Don't use this plugin standalone** — it's the WordPress side of a two-piece suite; install + configure the [DiviOps MCP Server](../../../diviops-server/) next.
+> **Don't use this plugin standalone** — it's the WordPress side of a two-piece suite; install + configure the [DiviOps MCP Server](../../diviops-server/) next.
 
 ## Requirements
 
@@ -21,7 +21,7 @@ Divi is a registered trademark of Elegant Themes, Inc. DiviOps Agent is not affi
 2. **WP Admin → Plugins → Add New → Upload Plugin** — upload `diviops-agent.zip` and activate.
 3. Create an Application Password under **WP Admin → Users → Profile → Application Passwords**.
 
-If Divi is not active, all endpoints return `503 divi_unavailable`. See [setup-guide.md](../../../docs/setup-guide.md) for the full onboarding walkthrough including MCP server registration.
+If Divi is not active, all endpoints return `503 divi_unavailable`. See [SETUP.md](../../SETUP.md) for the full onboarding walkthrough including MCP server registration.
 
 ## Updates
 
@@ -91,29 +91,28 @@ WP_USER = "your-wp-username"
 WP_APP_PASSWORD = "xxxxXXXXxxxxXXXXxxxxXXXX"
 ```
 
-See the [DiviOps MCP Server README](../../../diviops-server/) for full setup and the response contract.
+See the [DiviOps MCP Server README](../../diviops-server/) for full setup and the response contract.
 
 ## Capabilities
 
-The plugin advertises 98 capability keys through the handshake (full MCP endpoint reference, 91 always-on tools: [docs/server-reference.md](../../../docs/server-reference.md)):
+The plugin advertises 123 capability keys through the handshake. The MCP server gates its 104 plugin-backed tools against those keys and adds 11 server-local tools of its own, for **115 always-on tools** in total. Keys outnumber plugin-backed tools because some advertise a sub-feature of a tool rather than the tool itself (`variable_create_gradient`, the `*_backup` rollback keys, the `*_storage_multipath_v1` contract keys). For one row per tool, see the [per-tool reference](../../diviops-server/README.md#per-tool-reference).
 
 - **Page building** — Divi page/section/module/canvas CRUD; Theme Builder layouts + templates
-- **CPT + post population** — wp-cli-routed post type registration + bulk post operations
 - **Data model reasoning** — module schema introspection, post meta surveys
 - **Site auditing** — preset audits, design-token usage scans, orphan detection (presets, variables, dangling references)
 - **Hybrid site harmonization** — design token APIs (`variable_*`, `global_color_*`, `global_font_*`) for cross-surface design system management between Divi pages and custom PHP templates
 
-SCF (Secure Custom Fields) is not one of this plugin's capability domains — there is
-no `trait-scf.php`, no `/diviops/v1/scf/*` route, and no `scf_*` handshake key. The
-six `diviops_scf_*` MCP tools are `registerLocalTool` wrappers in the MCP server
-itself (`diviops-server/src/index.ts`) that shell out to `wp scf json …` / `wp post`
-via wp-cli, the same way the CPT tools above are wp-cli-routed. That difference is
-behavioral, not cosmetic: the SCF tools are never gated by this plugin's capability
-handshake, so they appear in the tool list even against a site with no SCF installed
-at all; a missing SCF surfaces per call (`scf.command_failed`) rather than as an
-absent tool; and they depend on wp-cli reachability, not on this plugin being active.
-See [skills/divi-5-builder/references/scf-fields.md](../../skills/divi-5-builder/references/scf-fields.md)
-for the full SCF tool reference.
+### What this plugin does not implement
+
+Secure Custom Fields and CPT/post population are surfaces of the MCP server, not of this plugin. There is no `/diviops/v1/scf/*` route and no `scf_*` capability key.
+
+The six `diviops_scf_*` tools (`status`, `export`, `import`, `sync`, `field_group_list`, `field_group_get`) are server-local wrappers that shell out to `wp scf json …` and `wp post` over WP-CLI. CPT registration and bulk post operations route the same way, through the general-purpose `diviops_meta_wp_cli` passthrough. That difference is behavioural, not cosmetic:
+
+- They carry no capability key, so they are never handshake-gated and register even against a site with no SCF installed.
+- A missing SCF therefore surfaces per call, as `scf.command_failed`, rather than as a tool that is simply absent.
+- They depend on WP-CLI being reachable from the server, not on this plugin being active.
+
+A reader who assumes the plugin implements SCF will debug the wrong layer. The field and dynamic-content reference lives in [scf-fields.md](../../skills/divi-5-builder/references/scf-fields.md).
 
 ## Authentication & permissions
 
@@ -136,7 +135,7 @@ If Divi is not active, all endpoints return `503 divi_unavailable`. All write op
 
 ## Learn more
 
-- [DiviOps MCP Server README](../../../diviops-server/) — server quick start + response contract
-- [setup-guide.md](../../../docs/setup-guide.md) — full onboarding walkthrough
-- [server-reference.md](../../../docs/server-reference.md) — full per-tool reference
-- [troubleshooting.md](../../../docs/troubleshooting.md) — common errors and resolutions
+- [DiviOps MCP Server README](../../diviops-server/) — server quick start + response contract
+- [SETUP.md](../../SETUP.md) — full onboarding walkthrough
+- [Per-tool reference](../../diviops-server/README.md#per-tool-reference) — one row per tool, with inputs and idempotency
+- [SETUP.md#troubleshooting](../../SETUP.md#troubleshooting) — common errors and resolutions
