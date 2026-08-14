@@ -14,7 +14,7 @@ Build modern, VB-editable Divi 5 pages programmatically via MCP tools.
 
 ## DiviOps harness conventions
 
-Cross-cutting contracts the Divi-builder tools inherit — response envelope (`{ ok, data?, error: { code, message, hint?, data? } }`), capability handshake / three-layer gating, `dry_run` plan shape, idempotency conventions, and namespace-prefixed error codes (`<ns>.not_configured` gate vs `<ns>.command_failed` runtime) — live in the [diviops/](../diviops/SKILL.md) primer skill. SCF coverage lives in [diviops-scf/](../diviops-scf/SKILL.md). When this skill references "the standardized envelope" or "the capability handshake," the primer is the source.
+Cross-cutting contracts the Divi-builder tools inherit — response envelope (`{ ok, data?, error: { code, message, hint?, data? } }`), capability handshake / three-layer gating, `dry_run` plan shape, idempotency conventions, and namespace-prefixed error codes (`<ns>.not_configured` gate vs `<ns>.command_failed` runtime) — live in the [diviops/](../diviops/SKILL.md) primer skill. SCF coverage for Divi authoring — field-group discovery, JSON sync, and binding a custom field into a module — lives in [scf-fields.md](references/scf-fields.md). (The separate `diviops-scf/` coverage slice named in the primer does not ship in this repository.) When this skill references "the standardized envelope" or "the capability handshake," the primer is the source.
 
 ## Reference Files
 
@@ -30,6 +30,7 @@ Read the right file for the task at hand — don't load everything.
 | Adding CSS classes to modules | [design-effects.md](references/design-effects.md) — uses `module.decoration.attributes`, NOT `className` |
 | CSS effects & WebGL shaders | [design-effects.md](references/design-effects.md) |
 | Mega menus & navigation | [mega-menu-pattern.md](references/mega-menu-pattern.md) |
+| SCF/ACF custom fields — discovery, JSON sync, dynamic-content binding | [scf-fields.md](references/scf-fields.md) |
 | Presets & cleanup | [presets.md](references/presets.md) |
 | Design system setup | [SKILL.md](#design-system-lifecycle) (below) → [presets.md](references/presets.md) |
 | Page templates | [patterns/](references/patterns/) — SaaS landing, more coming |
