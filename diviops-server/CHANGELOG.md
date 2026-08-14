@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.7.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.6.2...mcp-server-v1.7.0) (2026-08-14)
+
+
+### Features
+
+* **media:** admin-configurable capability gate for SVG uploads ([#158](https://github.com/rubicon/diviops/issues/158)) ([5639a88](https://github.com/rubicon/diviops/commit/5639a88130191d8892d732cf28243025d15fc9cc)), closes [#73](https://github.com/rubicon/diviops/issues/73)
+* **server:** thread the MCP request AbortSignal through every tool wrapper ([#155](https://github.com/rubicon/diviops/issues/155)) ([f6c0620](https://github.com/rubicon/diviops/commit/f6c0620321d40fec6c0b27d84c2b4126df7074cd))
+
 ## [1.6.2](https://github.com/rubicon/diviops/compare/mcp-server-v1.6.1...mcp-server-v1.6.2) (2026-08-14)
 
 
