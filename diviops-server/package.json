@@ -15,6 +15,7 @@
     "templates",
     "data/verified-attrs.json",
     "data/verified-attrs-backlog.json",
+    "LICENSE",
     "README.md"
   ],
   "scripts": {
