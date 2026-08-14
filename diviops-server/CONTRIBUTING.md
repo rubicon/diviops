@@ -124,3 +124,82 @@ network/file-I/O orchestration (`fetchDumpAll`, `main`) has no
 unit-testable logic of its own; it's verified by actually running the
 script against a live reference site and diffing the result, the same way
 PR #115 verified its hand-written blocks.
+
+## Per-tool reference regeneration: `regen-tool-reference.mjs`
+
+`README.md`'s "Per-tool reference" section — one row per MCP tool, with its
+inputs, `_meta.idempotent` marker, and a one-sentence summary — is generated
+by `scripts/regen-tool-reference.mjs` from the `registerPluginTool` /
+`registerLocalTool` / `registerProTool` call sites in `src/index.ts` (#93).
+
+Hand-maintaining it is not viable: there are 145 call sites, and the two
+prose tool counts that preceded this table went stale three times in a
+single day before #90 corrected them.
+
+### The sentinel convention
+
+Same convention as the skill-doc regen above, with three pairs:
+
+- `<!-- BEGIN GENERATED:tool-reference:header --> ... <!-- END ... -->` — the
+  `## Per-tool reference` heading, the provenance note, the counts sentence,
+  and the column legend.
+- `<!-- BEGIN GENERATED:tool-reference:always-on --> ... <!-- END ... -->` —
+  the plugin-backed + server-local table.
+- `<!-- BEGIN GENERATED:tool-reference:pro --> ... <!-- END ... -->` — the
+  conditionally-registered Pro table.
+
+Content between a pair is replaced wholesale on every run. Everything
+outside them, including the hand-curated "Tools at a glance" category table,
+is never touched.
+
+### Running it
+
+```bash
+cd diviops-server
+npm run regen:tool-reference
+```
+
+No WordPress site and no credentials: the whole tool surface is declared in
+source. Run it in the same commit as any change that adds, removes, or
+renames a tool, or that edits a tool's `description`, `inputSchema`, or
+`_meta.idempotent`.
+
+### How the call sites are read
+
+Through the TypeScript compiler's own parser, not a regex. The
+registrations carry shapes a pattern match cannot follow safely: a
+description assembled by string concatenation (`"..." +
+DRY_RUN_DESC_SUFFIX`) or by a template literal whose value the server fills
+in at handshake time, a config object spread in from another module
+(`...META_PING_CONFIG`, declared in `health-tools.ts`), an `inputSchema`
+spread in from a shared constant, and an input field whose optionality lives
+in a shared `DRY_RUN_FIELD`/`BACKUP_FIELD` constant rather than at the call
+site. The script therefore parses `src/index.ts` plus every sibling module
+it imports by relative path, and resolves identifiers against the top-level
+constants declared across that set.
+
+A field counts as optional when its Zod chain contains `.optional()`,
+`.default()`, or `.nullish()`. A `${...}` placeholder in a description
+renders as `…`, because its value is a handshake-time decision that source
+alone cannot answer.
+
+The script fails loudly rather than emitting a thinner table: an identifier
+it cannot resolve, a registration with no `description` or no
+`_meta.idempotent`, a Pro registration with no literal gates, and a source
+file with zero registration call sites are all errors.
+
+### Tests
+
+`scripts/regen-tool-reference.test.mjs` (`npm run test:tool-reference`)
+covers the transform against synthetic TypeScript fixtures written for the
+test rather than copied from `src/index.ts`, including every failure mode
+above.
+
+Two of its cases run against the real source and are the staleness guard:
+one asserts the committed `README.md` is byte-identical to what regen
+produces right now (so a tool change that skips the regen step fails CI),
+and one cross-checks the AST extraction against the same line-anchored
+call-site regex `tests/test-tool-count-sync.php` uses, so a parse that
+silently dropped call sites fails rather than quietly shrinking the table.
+Neither can pass vacuously: the extraction throws when it finds no call
+sites, and the regex cross-check asserts it matched at least one.
