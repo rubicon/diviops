@@ -4509,7 +4509,7 @@ registerLocalTool(
         withCode(
           "meta_wp_cli.not_configured",
           "WP-CLI not configured.",
-          'Set the WP_PATH environment variable to your WordPress installation path. Example: claude mcp add diviops-mcp --env WP_URL=http://site.local --env WP_USER=admin --env WP_APP_PASSWORD=xxxx --env "WP_PATH=/Users/you/Local Sites/your-site/app/public" -- npx -y --package @diviops/mcp-server diviops-mcp. Local site ID is auto-detected from WP_PATH; set LOCAL_SITE_ID explicitly if needed.',
+          'Set the WP_PATH environment variable to your WordPress installation path. Example: claude mcp add diviops-mcp --env WP_URL=http://site.local --env WP_USER=admin --env WP_APP_PASSWORD=xxxx --env "WP_PATH=/Users/you/Local Sites/your-site/app/public" -- npx -y --package @rubicontv/diviops-mcp diviops-mcp. Local site ID is auto-detected from WP_PATH; set LOCAL_SITE_ID explicitly if needed.',
         );
       }
       const result = await wpCli.run(command);

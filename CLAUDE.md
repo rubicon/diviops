@@ -42,7 +42,7 @@ filter `diviops_agent_handshake_extensions`.
 
 DiviOps Agent Pro (separate, commercial, not forked) attaches through
 `class_exists( 'DiviOps_Agent' )` and that filter. The published
-`@diviops/mcp-server` calls `/diviops/v1/*`. Renaming any of the four silently
+`@rubicontv/diviops-mcp` calls `/diviops/v1/*`. Renaming any of the four silently
 disables Pro and makes MCP tools vanish without an error, because a failed capability
 gate removes a tool rather than reporting a problem. The maintainer's default `rtv_`
 vendor prefix does not apply here; see `FORK.md`.
