@@ -2,7 +2,7 @@
 
 **An AI harness for WordPress site authoring — Divi-native today, WordPress-wide by design.**
 
-[![npm](https://img.shields.io/npm/v/@diviops/mcp-server.svg?label=%40diviops%2Fmcp-server)](https://www.npmjs.com/package/@diviops/mcp-server)
+[![npm](https://img.shields.io/npm/v/@rubicontv/diviops-mcp.svg?label=%40rubicontv%2Fdiviops-mcp)](https://www.npmjs.com/package/@rubicontv/diviops-mcp)
 [![License: MIT & GPL-2.0](https://img.shields.io/badge/License-MIT%20%26%20GPL--2.0-yellow.svg)](LICENSE)
 [![Divi 5](https://img.shields.io/badge/Divi-5.1.0%2B-7E3DD3.svg)](https://www.elegantthemes.com/gallery/divi/)
 
@@ -20,7 +20,7 @@ Claude Code ◄──► MCP Server (stdio) ◄──► WordPress REST API ◄�
 
 > **Beta software.** DiviOps is under active development. Use on production sites at your own discretion. Always back up your WordPress site before running write operations.
 
-> **Maintained fork.** This is `rubicon/diviops`, a fork of [`oaris-dev/diviops`](https://github.com/oaris-dev/diviops) that we maintain and extend: namespace-agnostic targeting so third-party Divi 5 modules (`difl/*`, `decm/*`, `d5bgo/*`) are addressable by every operation, a complete CRUD surface (library, menu, page, variable, block insertion), a layered global-layout write guard, and release automation. It stays a drop-in replacement for the stock plugin — the plugin slug, main class, REST namespace, and handshake filter are unchanged, so DiviOps Agent Pro and `@diviops/mcp-server` keep working against it. The original project and its design are the work of oaris.de; this fork honors that authorship and its licensing.
+> **Maintained fork.** This is `rubicon/diviops`, a fork of [`oaris-dev/diviops`](https://github.com/oaris-dev/diviops) that we maintain and extend: namespace-agnostic targeting so third-party Divi 5 modules (`difl/*`, `decm/*`, `d5bgo/*`) are addressable by every operation, a complete CRUD surface (library, menu, page, variable, block insertion), a layered global-layout write guard, and release automation. It stays a drop-in replacement for the stock plugin — the plugin slug, main class, REST namespace, and handshake filter are unchanged, so DiviOps Agent Pro and `@rubicontv/diviops-mcp` keep working against it. The original project and its design are the work of oaris.de; this fork honors that authorship and its licensing.
 
 ## What's in this distribution
 
@@ -28,7 +28,7 @@ Claude Code ◄──► MCP Server (stdio) ◄──► WordPress REST API ◄�
 |---|---|---|
 | **DiviOps Agent** WordPress plugin | REST API endpoints for Divi page data, section targeting, block validation, preset management. The contract layer between WordPress + Divi and the MCP server. | `diviops-agent.zip` at repo root |
 | **`diviops-agent-pro`** WordPress plugin | Pro add-on for paid coverage slices, Pro license activation, and update gating. Requires `diviops-agent`. | `diviops-agent-pro.zip` at repo root in the Pro distribution |
-| **`@diviops/mcp-server`** | Node.js MCP server that bridges MCP clients to WordPress. Distributed via npm — no clone, no build. | `npx -y --package @diviops/mcp-server diviops-mcp` |
+| **`@rubicontv/diviops-mcp`** | Node.js MCP server that bridges MCP clients to WordPress. Distributed via npm — no clone, no build. | `npx -y --package @rubicontv/diviops-mcp diviops-mcp` |
 | **`divi-5-builder`** skill | Block format rules, verified attribute paths, design patterns. Without it, agents guess attr formats and produce broken pages. | `skills/divi-5-builder/` (Claude: `claude plugin install oaris-dev/diviops`; Codex: copy `skills/*` into `~/.codex/skills`) |
 | **`diviops-design-library`** plugin | Optional. CSS entrance animations, gradient text, glass effects, Three.js WebGL shaders. | `diviops-design-library.zip` at repo root |
 
@@ -76,19 +76,19 @@ claude mcp add diviops-mysite \
   --env WP_URL=http://your-site.local \
   --env WP_USER=your-wp-username \
   --env WP_APP_PASSWORD=xxxxXXXXxxxxXXXXxxxxXXXX \
-  -- npx -y --package @diviops/mcp-server diviops-mcp
+  -- npx -y --package @rubicontv/diviops-mcp diviops-mcp
 ```
 
 For Local by Flywheel (enables the `diviops_meta_wp_cli` tool), add `--env "WP_PATH=/Users/you/Local Sites/your-site/app/public"`.
 
-For Claude Desktop, use `"command": "npx"` with args `["-y", "--package", "@diviops/mcp-server", "diviops-mcp"]`. If Claude cannot find `npx`, run `npm install -g @diviops/mcp-server@latest` and use `diviops-mcp`, or use `node "$(npm root -g)/@diviops/mcp-server/dist/index.js"`.
+For Claude Desktop, use `"command": "npx"` with args `["-y", "--package", "@rubicontv/diviops-mcp", "diviops-mcp"]`. If Claude cannot find `npx`, run `npm install -g @rubicontv/diviops-mcp@latest` and use `diviops-mcp`, or use `node "$(npm root -g)/@rubicontv/diviops-mcp/dist/index.js"`.
 
 Codex `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.diviops-mysite]
 command = "npx"
-args = ["-y", "--package", "@diviops/mcp-server", "diviops-mcp"]
+args = ["-y", "--package", "@rubicontv/diviops-mcp", "diviops-mcp"]
 
 [mcp_servers.diviops-mysite.env]
 WP_URL = "http://your-site.local"
@@ -236,7 +236,7 @@ The Free distribution (`oaris-dev/diviops`) carries the core DiviOps execution s
 
 - `diviops-agent` WordPress plugin (REST bridge, Divi 5 + SCF + CPT + WP-CLI handlers)
 - `diviops-design-library` plugin (CSS effects, gradients, glass, Three.js shaders)
-- `@diviops/mcp-server` on npm — the shared MCP server package
+- `@rubicontv/diviops-mcp` on npm — the shared MCP server package
 - `divi-5-builder` skill, free slice: `SKILL.md`, design patterns, tools reference, preset system, design-effects, mega-menu, minimal snippets, SaaS landing, and the **Tier 1** attribute reference (universal decoration, `innerContent[]` variants, attribute tree layout, design tokens, exceptions quick reference)
 
 ### What ships in Pro (v1.x today)
@@ -248,7 +248,7 @@ The Pro distribution adds the Pro plugin, license/update gating, target coverage
 | `diviops-agent` WordPress plugin | ✓ | ✓ (same binary) |
 | `diviops-agent-pro` WordPress plugin | — | ✓ |
 | `diviops-design-library` plugin | ✓ | ✓ (same binary) |
-| `@diviops/mcp-server` on npm | ✓ | ✓ (same package) |
+| `@rubicontv/diviops-mcp` on npm | ✓ | ✓ (same package) |
 | Skill: SKILL.md, design patterns, tools reference, preset system, design-effects, mega-menu, minimal snippets, SaaS landing | ✓ | ✓ |
 | Skill: **Tier 1** attribute reference — universal decoration, innerContent variants, attribute tree layout, design tokens, exceptions quick reference | ✓ | ✓ |
 | Skill: **Tier 2** — shared pattern families (font, icon, container cascade, module link) | — | ✓ |
@@ -320,7 +320,7 @@ Full troubleshooting matrix and environment-specific setup (DDEV, wp-env, WordPr
 
 This repository is **dual-licensed**, matching the fork base:
 
-- **MIT** — the MCP server (`@diviops/mcp-server`), the skills, templates, documentation, and tests.
+- **MIT** — the MCP server (`@rubicontv/diviops-mcp`), the skills, templates, documentation, and tests.
 - **GPL-2.0-or-later** — the WordPress plugins (`diviops-agent`, `diviops-design-library`), as WordPress requires.
 
 See [LICENSE](LICENSE) for the full text and per-component scope. This fork honors the original licensing and attributes the project to [oaris-dev/diviops](https://github.com/oaris-dev/diviops).

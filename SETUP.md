@@ -73,7 +73,7 @@ claude mcp add diviops-mysite \
   --env WP_URL=http://your-site.local \
   --env WP_USER=your-username \
   --env WP_APP_PASSWORD=xxxxXXXXxxxxXXXXxxxxXXXX \
-  -- npx -y --package @diviops/mcp-server diviops-mcp
+  -- npx -y --package @rubicontv/diviops-mcp diviops-mcp
 ```
 
 #### With WP-CLI (Local by Flywheel — enables the `diviops_meta_wp_cli` tool)
@@ -84,7 +84,7 @@ claude mcp add diviops-mysite \
   --env WP_USER=your-username \
   --env WP_APP_PASSWORD=xxxxXXXXxxxxXXXXxxxxXXXX \
   --env "WP_PATH=/Users/you/Local Sites/your-site/app/public" \
-  -- npx -y --package @diviops/mcp-server diviops-mcp
+  -- npx -y --package @rubicontv/diviops-mcp diviops-mcp
 ```
 
 > **Use `--env` flags, not the `env` command.** Claude Code's native `--env KEY=VALUE` flags survive copy-paste; the older `-- env KEY=VALUE` form (piping through unix `env`) breaks silently when any value contains a space. Quote any value with spaces using regular double quotes — no backslash escaping needed inside quotes.
@@ -98,7 +98,7 @@ Add an MCP server entry to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.diviops-mysite]
 command = "npx"
-args = ["-y", "--package", "@diviops/mcp-server", "diviops-mcp"]
+args = ["-y", "--package", "@rubicontv/diviops-mcp", "diviops-mcp"]
 
 [mcp_servers.diviops-mysite.env]
 WP_URL = "http://your-site.local"
@@ -163,7 +163,7 @@ You should see your MCP server listed with the correct env vars. If anything loo
 
 ```bash
 claude mcp remove diviops-mysite
-claude mcp add diviops-mysite --env KEY=VALUE ... -- npx -y --package @diviops/mcp-server diviops-mcp
+claude mcp add diviops-mysite --env KEY=VALUE ... -- npx -y --package @rubicontv/diviops-mcp diviops-mcp
 ```
 
 ## Step 5: Test Connection
@@ -182,7 +182,7 @@ Then try:
 Use diviops_page_list to show all pages.
 ```
 
-> **If tools don't appear**: In Claude Code, check `claude mcp list`. In Codex, check `~/.codex/config.toml` and restart Codex. The `npx` command must be reachable on your `PATH` (it ships with Node.js, which provides `npm`/`npx`). The `-y --package @diviops/mcp-server diviops-mcp` form avoids `npx` prompts and explicitly selects the MCP server bin from the package.
+> **If tools don't appear**: In Claude Code, check `claude mcp list`. In Codex, check `~/.codex/config.toml` and restart Codex. The `npx` command must be reachable on your `PATH` (it ships with Node.js, which provides `npm`/`npx`). The `-y --package @rubicontv/diviops-mcp diviops-mcp` form avoids `npx` prompts and explicitly selects the MCP server bin from the package.
 
 ### Purchased Pro: verify Pro capabilities
 
@@ -203,7 +203,7 @@ Use the same command shape in Claude Desktop:
   "mcpServers": {
     "diviops-mysite": {
       "command": "npx",
-      "args": ["-y", "--package", "@diviops/mcp-server", "diviops-mcp"],
+      "args": ["-y", "--package", "@rubicontv/diviops-mcp", "diviops-mcp"],
       "env": {
         "WP_URL": "http://your-site.local",
         "WP_USER": "your-username",
@@ -219,7 +219,7 @@ Use the same command shape in Claude Desktop:
 If Claude cannot find `npx`, install the package globally and register the installed bin:
 
 ```bash
-npm install -g @diviops/mcp-server@latest
+npm install -g @rubicontv/diviops-mcp@latest
 
 claude mcp add diviops-mysite \
   --env WP_URL=http://your-site.local \
@@ -235,7 +235,7 @@ claude mcp add diviops-mysite \
   --env WP_URL=http://your-site.local \
   --env WP_USER=your-username \
   --env WP_APP_PASSWORD=xxxxXXXXxxxxXXXXxxxxXXXX \
-  -- node "$(npm root -g)/@diviops/mcp-server/dist/index.js"
+  -- node "$(npm root -g)/@rubicontv/diviops-mcp/dist/index.js"
 ```
 
 ## Step 6: Optional — Install the Design Library Plugin
@@ -452,7 +452,7 @@ claude mcp add diviops-mysite \
   --env WP_APP_PASSWORD=xxxxXXXXxxxxXXXXxxxxXXXX \
   --env "WP_PATH=/Users/you/Local Sites/your-site/app/public" \
   --env "DIVIOPS_WP_CLI_ALLOW=option update,post delete,search-replace" \
-  -- npx -y --package @diviops/mcp-server diviops-mcp
+  -- npx -y --package @rubicontv/diviops-mcp diviops-mcp
 ```
 
 Only list the specific commands you need. Unknown entries are ignored with a warning.
@@ -478,14 +478,14 @@ claude mcp add diviops-main \
   --env WP_URL=http://main-site.local \
   --env WP_USER=admin \
   --env WP_APP_PASSWORD=xxxx \
-  -- npx -y --package @diviops/mcp-server diviops-mcp
+  -- npx -y --package @rubicontv/diviops-mcp diviops-mcp
 
 # Test site (same MCP package, different credentials)
 claude mcp add diviops-test \
   --env WP_URL=http://test-site.local \
   --env WP_USER=admin \
   --env WP_APP_PASSWORD=yyyy \
-  -- npx -y --package @diviops/mcp-server diviops-mcp
+  -- npx -y --package @rubicontv/diviops-mcp diviops-mcp
 ```
 
 Each registration is independent — different site, different credentials, different MCP name.
@@ -493,7 +493,7 @@ Each registration is independent — different site, different credentials, diff
 **Teammate setup**: They only need:
 1. `diviops-agent.zip` installed in their WordPress site
 2. For Pro seats, `diviops-agent-pro.zip` installed and activated with their license key
-3. `claude mcp add ... npx -y --package @diviops/mcp-server diviops-mcp` with their own `WP_URL`, `WP_USER`, `WP_APP_PASSWORD`
+3. `claude mcp add ... npx -y --package @rubicontv/diviops-mcp diviops-mcp` with their own `WP_URL`, `WP_USER`, `WP_APP_PASSWORD`
 4. The bundled skills via `claude plugin install oaris-dev/diviops` or by copying `skills/*` into their Codex skill directory
 
 No clone, no build.
@@ -507,4 +507,4 @@ No clone, no build.
 | WP-CLI "not configured" | Set `WP_PATH` (Local by Flywheel) or `WP_CLI_CMD` (containerized) |
 | Styles not rendering | Hard-refresh browser (Cmd+Shift+R) — CSS cache |
 | VB shows raw `$variable()$` | Dynamic content binding — click the chip to edit |
-| `npx` can't find package | Update Node.js to 22+; verify `npx --version` works; use `npx -y --package @diviops/mcp-server diviops-mcp`; the explicit package/bin form is required |
+| `npx` can't find package | Update Node.js to 22+; verify `npx --version` works; use `npx -y --package @rubicontv/diviops-mcp diviops-mcp`; the explicit package/bin form is required |
