@@ -4,7 +4,7 @@
  *
  * DiviOps Agent Pro is a separate commercial plugin that is not forked. It attaches
  * by calling class_exists( 'DiviOps_Agent' ) and hooking the
- * diviops_agent_handshake_extensions filter. The published @diviops/mcp-server
+ * diviops_agent_handshake_extensions filter. The published @rubicontv/diviops-mcp
  * package calls /diviops/v1/* routes and gates every tool on the capability keys the
  * handshake returns.
  *

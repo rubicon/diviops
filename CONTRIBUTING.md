@@ -8,7 +8,7 @@ Thanks for your interest in DiviOps. A note on how this repo works before you op
 
 ## How to contribute
 
-- **Found a bug?** Open an issue on this repo. Include WP version, Divi version, MCP server version (`@diviops/mcp-server`), plugin version, and reproduction steps. The bug-report template prompts for these.
+- **Found a bug?** Open an issue on this repo. Include WP version, Divi version, MCP server version (`@rubicontv/diviops-mcp`), plugin version, and reproduction steps. The bug-report template prompts for these.
 - **Have a feature idea?** Open an issue using the feature-request template. Concrete use cases beat abstract requests.
 - **Spotted a docs problem?** Open an issue. We'll fix it upstream and the next sync will land it here.
 
