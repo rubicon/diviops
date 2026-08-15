@@ -1936,7 +1936,28 @@ trait DiviOps_Agent_Preset {
 	 *     slot level. Unmappable slots (missing class, unknown module) skip strip and emit a per-slot
 	 *     advisory at `summary.strip_advisory_per_slot[<module>::<slot>]`; neighbor slots still strip.
 	 *
-	 * Dry-run (default) returns a summary of proposed changes without writing.
+	 * Dry-run (default) returns a summary of proposed changes without writing, and is the
+	 * only mode that scans the whole site: `mode="apply"` requires `page_ids`, so an apply
+	 * writes exactly the pages a plan reported rather than re-resolving the site (#188).
+	 *
+	 * Write safety per page, in order (#188). Each step refuses only its own page and the
+	 * batch continues:
+	 *   1. Round-trip fidelity — `serialize_blocks( parse_blocks_for_write( $c ) )` must be
+	 *      byte-identical to `$c` before the mutated tree is trusted. Enforced in dry-run
+	 *      too, so a plan does not promise a rewrite that apply would refuse.
+	 *   2. Global-layout wrapper drift (#11), checked before the snapshot so a page that is
+	 *      going to be refused never leaves a snapshot row behind.
+	 *   3. A mandatory rollback snapshot, created and then MARKED —
+	 *      `rollback_snapshot_restore()` refuses any snapshot whose `after.checksum` is
+	 *      empty, so an unmarked one would be permanently unrestorable. Unlike the
+	 *      single-post writers this ignores the `backup` param: the only site-wide write in
+	 *      the plugin does not get an off switch for its recovery data.
+	 *   4. The write itself, through `update_post_content_with_integrity_guard()`, so each
+	 *      page gets readback verification and auto-revert.
+	 *
+	 * Apply returns `ok: false` (`preset.reassign_partial_failure`, HTTP 207) when any page
+	 * failed, carrying the whole summary — including the snapshot id of every page that was
+	 * written — in `error.data`.
 	 */
 	public static function preset_reassign( $request ) {
 		$old_uuid     = sanitize_text_field( $request->get_param( 'old_uuid' ) );
@@ -1987,6 +2008,11 @@ trait DiviOps_Agent_Preset {
 					'received' => $scope,
 				]
 			);
+		}
+
+		$apply_target_refusal = self::preset_reassign_apply_target_refusal( $mode, $page_ids );
+		if ( null !== $apply_target_refusal ) {
+			return $apply_target_refusal;
 		}
 
 		$d5 = self::get_d5_presets();
@@ -2282,6 +2308,27 @@ trait DiviOps_Agent_Preset {
 
 			$swap_hits = $module_swap_hits + $group_swap_hits;
 			if ( $swap_hits > 0 ) {
+				// Round-trip fidelity gate (#188). Serialize the UNMODIFIED parse
+				// and require byte identity before trusting a re-serialization of
+				// the mutated one. parse -> serialize is not identity on every
+				// page (FORK.md records a real page losing 312 bytes to it), and
+				// on a page where it is not, nothing downstream can separate the
+				// preset swap we intended from the bytes the round trip dropped
+				// on its way past. Refused in dry-run too, so the dry-run reports
+				// what an apply would actually do rather than promising a rewrite
+				// that apply would then refuse.
+				$round_trip_drift = self::block_round_trip_drift( $content, serialize_blocks( $blocks ) );
+				if ( null !== $round_trip_drift ) {
+					$summary['errors'][] = [
+						'page_id'    => $p->ID,
+						'title'      => $p->post_title,
+						'code'       => 'preset.round_trip_lossy',
+						'error'      => 'Refused: parsing and re-serializing this page is not byte-identical, so a rewrite of its parsed tree cannot be distinguished from the bytes the round trip itself drops.',
+						'round_trip' => $round_trip_drift,
+					];
+					continue;
+				}
+
 				$summary['pages_modified']++;
 				$summary['uuid_swaps']      += $swap_hits;
 				$summary['module_swaps']    += $module_swap_hits;
@@ -2305,23 +2352,24 @@ trait DiviOps_Agent_Preset {
 						$summary['errors'][] = [
 							'page_id' => $p->ID,
 							'title'   => $p->post_title,
+							'code'    => 'preset.page_not_editable',
 							'error'   => 'Current user cannot edit this post',
 						];
 						$page_detail['update_error'] = 'Current user cannot edit this post';
 					} else {
 						$new_content = serialize_blocks( $new_blocks );
 
-						// Layer 2 backstop (#11): this bypasses
-						// update_post_content_with_integrity_guard() (a batch
-						// operation across many pages does not fit that
-						// single-post readback/revert contract), so the
-						// drift check is placed here directly, before the
-						// write. Refuse only this page rather than the whole
-						// batch, matching the per-page error handling below.
+						// Layer 2 backstop (#11), kept ahead of the guarded write
+						// rather than delegated to the guard's own opt-in drift
+						// check, so a page that is going to be refused anyway
+						// never gets a rollback snapshot row created for it.
+						// Refuse only this page rather than the whole batch,
+						// matching the per-page error handling below.
 						if ( self::global_layout_wrapper_drift( $content, $new_content ) ) {
 							$summary['errors'][] = [
 								'page_id' => $p->ID,
 								'title'   => $p->post_title,
+								'code'    => 'preset.global_layout_drift',
 								'error'   => "Refused: this write would materialize a divi/global-layout wrapper's resolved content into this page (data loss). Retry via the REST API / MCP server, or edit the referenced global layout directly.",
 							];
 							$page_detail['update_error'] = 'global_layout_wrapper_drift_detected';
@@ -2329,29 +2377,67 @@ trait DiviOps_Agent_Preset {
 							continue;
 						}
 
-						$update_result = wp_update_post(
+						// Rollback snapshot (#188), mandatory rather than
+						// governed by the `backup` param every single-post write
+						// consults. This is the only site-wide write in the
+						// plugin; an operation whose whole risk profile is "many
+						// pages at once" does not get an off switch for its
+						// recovery data. A snapshot that cannot be stored refuses
+						// this page BEFORE it is written.
+						$snapshot = self::rollback_snapshot_create_for_post_write(
+							$p,
+							'diviops_preset_reassign',
 							[
-								'ID'           => $p->ID,
-								'post_content' => wp_slash( $new_content ),
-							],
-							true
+								'tool_operation' => 'preset.reassign',
+								'old_uuid'       => $old_uuid,
+								'new_uuid'       => $new_uuid,
+								'scope'          => $effective_scope,
+								'swaps'          => $swap_hits,
+							]
+						);
+						if ( is_wp_error( $snapshot ) ) {
+							$summary['errors'][] = [
+								'page_id' => $p->ID,
+								'title'   => $p->post_title,
+								'code'    => $snapshot->get_error_code(),
+								'error'   => $snapshot->get_error_message(),
+							];
+							$page_detail['update_error'] = $snapshot->get_error_code();
+							$summary['details'][]        = $page_detail;
+							continue;
+						}
+
+						// The batch is a loop over guarded single writes (#188).
+						// The earlier reading — that a batch cannot use the
+						// single-post readback/revert contract — gave up the only
+						// real atomicity available here: per page, this reads the
+						// stored bytes back and reverts on drift.
+						$update_result = self::update_post_content_with_integrity_guard(
+							(int) $p->ID,
+							$new_content,
+							'preset',
+							"page #{$p->ID} preset reassign",
+							$content
 						);
 						if ( is_wp_error( $update_result ) ) {
+							$snapshot            = self::rollback_snapshot_mark_from_write_error( $snapshot, $update_result );
 							$summary['errors'][] = [
-								'page_id' => $p->ID,
-								'title'   => $p->post_title,
-								'error'   => $update_result->get_error_message(),
+								'page_id'     => $p->ID,
+								'title'       => $p->post_title,
+								'code'        => $update_result->get_error_code(),
+								'error'       => $update_result->get_error_message(),
+								'snapshot_id' => $snapshot['snapshot_id'],
 							];
-							$page_detail['update_error'] = $update_result->get_error_message();
-						} elseif ( 0 === (int) $update_result ) {
-							$summary['errors'][] = [
-								'page_id' => $p->ID,
-								'title'   => $p->post_title,
-								'error'   => 'wp_update_post returned 0 (no update performed)',
-							];
-							$page_detail['update_error'] = 'wp_update_post returned 0';
+							$page_detail['update_error'] = $update_result->get_error_code();
+							$page_detail['snapshot_id']  = $snapshot['snapshot_id'];
 						} else {
 							self::invalidate_divi_cache( $p->ID );
+							// Marking is not bookkeeping: rollback_snapshot_restore()
+							// refuses any snapshot whose after.checksum is empty, so
+							// a created-but-unmarked snapshot is permanently
+							// unrestorable.
+							$snapshot                   = self::rollback_snapshot_mark_post_write( $snapshot, 'write_applied', $new_content );
+							$page_detail['snapshot_id'] = $snapshot['snapshot_id'];
 						}
 					}
 				}
@@ -2430,6 +2516,10 @@ trait DiviOps_Agent_Preset {
 			if ( ! empty( $summary['truncated'] ) ) {
 				$warnings[] = 'Preset reassign scan was truncated to ' . ( $summary['max_pages'] ?? 0 ) . ' posts; chunk with page_ids before applying.';
 			}
+			if ( ! empty( $summary['errors'] ) ) {
+				$warnings[] = count( $summary['errors'] ) . ' page(s) carry refs to old_uuid but would be refused by apply; see summary.errors for the per-page reason. They are excluded from the changes above.';
+			}
+			$warnings[] = 'mode="apply" requires page_ids. Apply with the page ids listed in this plan rather than re-scanning the site.';
 			foreach ( ( $summary['strip_advisory_per_slot'] ?? [] ) as $slot_key => $message ) {
 				$warnings[] = $slot_key . ': ' . $message;
 			}
@@ -2459,9 +2549,7 @@ trait DiviOps_Agent_Preset {
 			);
 		}
 
-		$success = 'apply' !== $mode || empty( $summary['errors'] );
-		return self::envelope_success( [
-			'success'      => $success,
+		return self::preset_reassign_apply_response( [
 			'mode'         => $mode,
 			'scope'        => $scope,
 			'strip_inline' => $strip_inline,
@@ -2470,6 +2558,76 @@ trait DiviOps_Agent_Preset {
 			'new_module'   => $new_mod,
 			'summary'      => $summary,
 		] );
+	}
+
+	/**
+	 * Refuse an apply that names no pages.
+	 *
+	 * Omitting `page_ids` resolves to every `publish`/`draft`/`private` page and
+	 * post on the site, and the set is resolved again at apply time, so an apply
+	 * could write pages the dry-run never showed. Dry-run keeps the site-wide
+	 * scan — that is how a caller discovers the page ids in the first place —
+	 * and apply has to be told which of them to write.
+	 *
+	 * @param string $mode     Requested mode, already sanitized.
+	 * @param mixed  $page_ids Raw `page_ids` param.
+	 * @return WP_REST_Response|null Null when the request may proceed.
+	 */
+	private static function preset_reassign_apply_target_refusal( string $mode, $page_ids ) {
+		if ( 'apply' !== $mode ) {
+			return null;
+		}
+		if ( is_array( $page_ids ) && ! empty( $page_ids ) ) {
+			return null;
+		}
+
+		return self::envelope_error(
+			'preset.apply_requires_page_ids',
+			'mode="apply" requires page_ids. Without it the apply would rewrite every publish/draft/private page and post on the site, resolved fresh at apply time, so it could touch pages the dry-run never showed.',
+			'Run mode="dry-run" first — it still scans the whole site — then apply with the page ids it reported.',
+			400,
+			[
+				'field' => 'page_ids',
+				'mode'  => $mode,
+			]
+		);
+	}
+
+	/**
+	 * Shape the apply-mode response, failing the envelope when any page failed.
+	 *
+	 * This used to be an `envelope_success()` carrying a nested `success: false`.
+	 * The skill primer tells every caller to branch on the envelope's `ok`, so a
+	 * run where pages failed read as a success. A partial apply is a failure that
+	 * happens to have written some pages, and the full summary — including the
+	 * snapshot id of every page that WAS written — travels in `error.data` so the
+	 * run stays recoverable.
+	 *
+	 * @param array $payload Response payload, including its `summary`.
+	 * @return WP_REST_Response
+	 */
+	private static function preset_reassign_apply_response( array $payload ) {
+		$errors             = (array) ( $payload['summary']['errors'] ?? [] );
+		$payload['success'] = empty( $errors );
+
+		if ( empty( $errors ) ) {
+			return self::envelope_success( $payload );
+		}
+
+		$failed   = count( $errors );
+		$modified = (int) ( $payload['summary']['pages_modified'] ?? 0 );
+
+		return self::envelope_error(
+			'preset.reassign_partial_failure',
+			sprintf(
+				'Preset reassign applied with failures: %d page(s) failed, %d page(s) were written.',
+				$failed,
+				max( 0, $modified - $failed )
+			),
+			'Inspect error.data.summary.errors for the per-page reason. Pages that were written carry a snapshot_id in error.data.summary.details — restore one with diviops_rollback_snapshot_restore.',
+			207,
+			$payload
+		);
 	}
 
 	/**

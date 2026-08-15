@@ -417,6 +417,42 @@ trait DiviOps_Agent_Core {
 	}
 
 	/**
+	 * Compare a block-markup round trip against the content it came from.
+	 *
+	 * `parse_blocks_for_write()` -> `serialize_blocks()` is not guaranteed to be
+	 * byte identity. FORK.md records a real page losing 312 bytes (62,167 ->
+	 * 61,855) to exactly that round trip, on a page that parses and renders
+	 * fine, which is why `page_duplicate` was rewritten as a byte copy.
+	 *
+	 * Nothing else in this file catches it.
+	 * `update_post_content_with_integrity_guard()` compares stored against
+	 * requested, and a silently normalized re-serialization is what was
+	 * requested; the marker census counts comment markers; the pseudo-escape
+	 * scan never decodes JSON. Every check passes and the bytes are gone.
+	 *
+	 * A caller about to mutate a parsed tree serializes the UNMODIFIED parse
+	 * first and refuses the page when this reports drift. A page whose round
+	 * trip is not identity cannot have a tree-based edit applied safely,
+	 * because no downstream guard can separate the intended change from the
+	 * incidental normalization that rode along with it.
+	 *
+	 * @param string $original     Content as stored.
+	 * @param string $reserialized The same content parsed and re-serialized, unmodified.
+	 * @return array{original_bytes:int,reserialized_bytes:int,byte_delta:int}|null Null when identical.
+	 */
+	private static function block_round_trip_drift( string $original, string $reserialized ): ?array {
+		if ( $original === $reserialized ) {
+			return null;
+		}
+
+		return [
+			'original_bytes'     => strlen( $original ),
+			'reserialized_bytes' => strlen( $reserialized ),
+			'byte_delta'         => strlen( $reserialized ) - strlen( $original ),
+		];
+	}
+
+	/**
 	 * Normalize Divi block comment attributes before full-content writes.
 	 *
 	 * WordPress block attributes may contain HTML strings, but the serialized
