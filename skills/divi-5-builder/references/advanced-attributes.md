@@ -101,9 +101,9 @@ one argument. Three (`FieldDecoration`, `PositionSettings`, `VisibilitySettings`
 none and return absolute `module.decoration.*` paths, because they serve exactly one
 element. The extractor refuses a prefix for those rather than ignoring it.
 
-### Shared family inventory (46 maps)
+### Shared family inventory (47 maps)
 
-Every `Module/Options/<Group>/<Group>PresetAttrsMap.php` file Divi 5.9.0 ships, with the
+Every `Module/Options/<Group>/<Group>PresetAttrsMap.php` file Divi 5.11.0 ships, with the
 key count `get_map()` actually resolves to and where (if anywhere) it is documented.
 "Keys" is the resolved count under a single prefix, delegated keys included — counted by
 `php scripts/extract-shared-preset-paths.php <builder5> --family <Name> --attr x`.
@@ -146,6 +146,7 @@ or behavior configuration, out of this document's scope.
 | LinkUtils | 2 | not a decoration family | Module-level link url and target. |
 | Loop | 14 | not a decoration family | Query-loop configuration. |
 | Meta | 3 | not a decoration family | Admin label, force-visible, ToC heading. |
+| NativeChoice | 1 | deferred | Accent color for native radio/checkbox controls. Added in Divi 5.11.0; the **third** map in `Module/Options/FormField/`, alongside FormField and FieldDecoration. |
 | Overflow | 2 | Tier 1 (group level) | `overflow-x` / `overflow-y`. |
 | Position | 6 | deferred | Positioning mode, origin, offset. |
 | PositionSettings | 7 | deferred | Absolute-path variant of Position for the module wrapper. |
@@ -165,8 +166,24 @@ or behavior configuration, out of this document's scope.
 
 Counts and family names produced by
 `php scripts/extract-shared-preset-paths.php <builder5> --list` plus one
-`--family <Name>` run each; 46 files, matching the count asserted in
+`--family <Name>` run each; 47 files, matching the count asserted in
 `tests/test-shared-preset-attrs-map.php`.
+
+Family maps are **parameterized by the element prefix**, so the inventory's key names are
+templates rather than literal paths. NativeChoice, for example, resolves to
+`<attrName>.decoration.accentColor` — it becomes `field.decoration.accentColor` only when
+the module supplies `field` as the prefix. Reading a family's key as a fixed path is the
+same mistake as reading a map file instead of running it (see
+[Two shapes of family map](#two-shapes-of-family-map--and-why-they-have-to-be-run-not-read)).
+
+**Why there are far fewer maps than modules.** Divi 5.11.0 ships **90** module directories
+under `server/Packages/ModuleLibrary/` but only **65** `*PresetAttrsMap.php` files there.
+The 25-module gap is not drift and not missing coverage — those modules declare no
+per-module preset vocabulary and compose entirely from the 47 shared families above. The
+six modules added since 5.9.0 (Charts, Gravity Forms, Payment Button, Post Filter, Post
+Filter Item, Imagely Gallery) are all in that group. Counting ModuleLibrary directories
+against map files and expecting agreement will keep reproducing a phantom 25-module
+discrepancy; they measure different things.
 
 ---
 

@@ -205,6 +205,22 @@ Full attribute paths in [module-formats.md](references/module-formats.md) Tier 3
 - **CSS classes**: via `module.decoration.attributes.desktop.value.attributes[]` array.
 - **freeForm CSS**: top-level `css.desktop.value.freeForm` — sibling of `module`, NOT inside it.
 
+**Vendor-namespace traps** (right title, wrong module — every attribute path then no-ops):
+
+- **Divi core owns the bare name; third-party modules must be vendor-qualified** *(verified 2026-08-14 against the live registry: Divi 5.11.0 + DiviFlash 5.3.2)*. Several third-party modules ship titles identical to Divi core's. A request for "a Timeline module" has two registry matches whose attribute trees share nothing, so resolving it to the wrong one is a silent failure of the worst kind: the block saves, renders, and ignores every Divi-core path written to it. **Default to `divi/*` whenever a bare title is used. Only select a `difl/*` module when the request names DiviFlash explicitly**, and always name the vendor back to the user when you do.
+
+  | Bare title | Divi core (default) | DiviFlash (explicit request only) |
+  | --- | --- | --- |
+  | Breadcrumbs | `divi/breadcrumbs` | `difl/breadcrumbs` |
+  | Instagram Feed | `divi/instagram-feed` | `difl/instagramgallery` |
+  | Lottie | `divi/lottie` | `difl/lottieimage` |
+  | Timeline | `divi/timeline` | `difl/timeline` |
+  | Timeline Item | `divi/timeline-item` | `difl/timelineitem` |
+  | Table of Contents | `divi/table-of-contents` | `difl/table-of-contents` |
+  | Post Carousel | `divi/fullwidth-portfolio` | `difl/blogcarousel` |
+
+  `table-of-contents` is the sharpest edge: the two collide on the **slug** as well, differing only by vendor prefix, so a name written without a prefix is ambiguous rather than merely unqualified. Near-collisions follow the same rule — Divi 5.11.0's native `divi/gravity-forms` ("Gravity Form") is the default for "Gravity Forms"; DiviFlash's `difl/gravity-form` is the "Gravity Forms Styler" and must be asked for by name.
+
 **Runtime-specific traps** (valid markup that currently renders with upstream Divi quirks):
 
 - **PostSlider / FullwidthPostSlider responsive text shadow** *(verified 2026-06-24, Divi 5.8.0)*: if `module.advanced.text.text.<breakpoint>.value.color = "light"` is set at phone/tablet while `module.advanced.text.textShadow` exists only on `desktop`, Divi emits a responsive `text-shadow: unset` rule and removes the inherited desktop shadow on small screens. When a slider needs text shadow plus responsive text color, set the matching `textShadow` value explicitly at every breakpoint where text color is set, or avoid the responsive text-color override.
