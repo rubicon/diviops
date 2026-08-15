@@ -1,6 +1,6 @@
 {
   "name": "@rubicontv/diviops-mcp",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "MCP server exposing Divi 5 Visual Builder as tools for Claude",
   "type": "module",
   "main": "dist/index.js",
