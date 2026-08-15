@@ -12,7 +12,7 @@ REST bridge for the DiviOps MCP server, so AI clients can work with Divi-powered
 
 == Description ==
 
-DiviOps Agent is the WordPress-side companion plugin for DiviOps, an AI harness for WordPress site authoring. It exposes authenticated `/diviops/v1/*` REST endpoints that the `@diviops/mcp-server` package can use from Claude Code, Codex, Claude Desktop, and other MCP clients.
+DiviOps Agent is the WordPress-side companion plugin for DiviOps, an AI harness for WordPress site authoring. It exposes authenticated `/diviops/v1/*` REST endpoints that the `@rubicontv/diviops-mcp` package can use from Claude Code, Codex, Claude Desktop, and other MCP clients.
 
 The Free plugin is useful on its own as the core REST bridge for Divi 5 page authoring, schema inspection, block validation, design-token management, preset audits, and safe read-only diagnostics. Pro adds paid workflow leverage, including advanced cross-environment apply flows, deeper paid coverage slices, Pro plugin handlers, license/update handling, and higher-support agency or studio workflows. Not every current or future MCP tool is guaranteed to be backed by the Free plugin; tools are advertised through the DiviOps capability handshake for the plugins installed on the connected site.
 
@@ -24,12 +24,12 @@ Divi is a registered trademark of Elegant Themes, Inc. DiviOps Agent is not affi
 
 DiviOps Agent is a WordPress REST bridge. Normal Free plugin runtime does not require the plugin to contact DiviOps servers.
 
-To use the plugin, you run the separately distributed `@diviops/mcp-server` package, which is published through npm. Depending on your installation method, `npx` or npm may download that package from the npm registry. The MCP server then connects to your WordPress site with WordPress Application Password authentication.
+To use the plugin, you run the separately distributed `@rubicontv/diviops-mcp` package, which is published through npm. Depending on your installation method, `npx` or npm may download that package from the npm registry. The MCP server then connects to your WordPress site with WordPress Application Password authentication.
 
 Relevant external service:
 
-* Service: npm registry, used to distribute `@diviops/mcp-server`
-* Package: https://www.npmjs.com/package/@diviops/mcp-server
+* Service: npm registry, used to distribute `@rubicontv/diviops-mcp`
+* Package: https://www.npmjs.com/package/@rubicontv/diviops-mcp
 * Terms: https://www.npmjs.com/policies/terms
 
 Do not paste Application Passwords, license keys, access tokens, cookies, or other secrets into issue comments, documentation examples, screenshots, or repository files. Keep credentials in your AI client's local MCP configuration or environment variables.

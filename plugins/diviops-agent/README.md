@@ -2,7 +2,7 @@
 
 **REST API bridge inside the DiviOps AI harness for WordPress — Divi-native today, WordPress-wide by design.**
 
-The WordPress companion plugin for `@diviops/mcp-server`. Pairs with the MCP server to expose Divi 5 page authoring, data model introspection, and site auditing as `/diviops/v1/*` REST endpoints behind Application Password auth. SCF management and CPT/post population reach WordPress through the MCP server's own WP-CLI tools rather than through this plugin — see [What this plugin does not implement](#what-this-plugin-does-not-implement).
+The WordPress companion plugin for `@rubicontv/diviops-mcp`. Pairs with the MCP server to expose Divi 5 page authoring, data model introspection, and site auditing as `/diviops/v1/*` REST endpoints behind Application Password auth. SCF management and CPT/post population reach WordPress through the MCP server's own WP-CLI tools rather than through this plugin — see [What this plugin does not implement](#what-this-plugin-does-not-implement).
 
 Divi is a registered trademark of Elegant Themes, Inc. DiviOps Agent is not affiliated with or endorsed by Elegant Themes.
 
@@ -75,7 +75,7 @@ claude mcp add diviops-mcp \
   --env WP_URL=http://your-site.local \
   --env WP_USER=your-wp-username \
   --env WP_APP_PASSWORD=xxxxXXXXxxxxXXXXxxxxXXXX \
-  -- npx -y --package @diviops/mcp-server diviops-mcp
+  -- npx -y --package @rubicontv/diviops-mcp diviops-mcp
 ```
 
 For Codex, add the same server to `~/.codex/config.toml`:
@@ -83,7 +83,7 @@ For Codex, add the same server to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.diviops-mcp]
 command = "npx"
-args = ["-y", "--package", "@diviops/mcp-server", "diviops-mcp"]
+args = ["-y", "--package", "@rubicontv/diviops-mcp", "diviops-mcp"]
 
 [mcp_servers.diviops-mcp.env]
 WP_URL = "http://your-site.local"
