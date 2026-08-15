@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.8.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.7.0...mcp-server-v1.8.0) (2026-08-15)
+
+
+### Features
+
+* **#37:** extend TSF SEO adapter with OG/Twitter title and description fields ([#179](https://github.com/rubicon/diviops/issues/179)) ([a7fbe59](https://github.com/rubicon/diviops/commit/a7fbe594d1ed7e3e7b129705817ea683de88180d)), closes [#37](https://github.com/rubicon/diviops/issues/37)
+* **server:** publish as @rubicontv/diviops-mcp with a smoke-gated workflow ([#164](https://github.com/rubicon/diviops/issues/164)) ([2997e59](https://github.com/rubicon/diviops/commit/2997e59e5293e9e3c4cef6b71774024fd83ade13))
+
+
+### Bug Fixes
+
+* **preset:** give preset_reassign snapshots, a write guard, and an honest envelope ([#196](https://github.com/rubicon/diviops/issues/196)) ([079bf20](https://github.com/rubicon/diviops/commit/079bf201bd69c705e6e6a913240d9aca9950b760))
+* **server:** recover wp-cli JSON payloads from a polluted stdout stream ([#178](https://github.com/rubicon/diviops/issues/178)) ([b802f98](https://github.com/rubicon/diviops/commit/b802f98fa030e0aad6e76064ed79598287b63ebf)), closes [#167](https://github.com/rubicon/diviops/issues/167)
+* **server:** scf_field_group_get reports a JSON-parse failure instead of not_found ([#176](https://github.com/rubicon/diviops/issues/176)) ([d03ae50](https://github.com/rubicon/diviops/commit/d03ae50d7e97d8c943feda13e1a73ce52b8a6c0e)), closes [#168](https://github.com/rubicon/diviops/issues/168)
+
 ## [1.7.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.6.2...mcp-server-v1.7.0) (2026-08-14)
 
 

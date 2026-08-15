@@ -10,6 +10,25 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.16.0](https://github.com/rubicon/diviops/compare/v1.15.0...v1.16.0) (2026-08-15)
+
+
+### Features
+
+* **#118:** clean-room remaining shared decoration families (Tier 2) ([#174](https://github.com/rubicon/diviops/issues/174)) ([4f35df6](https://github.com/rubicon/diviops/commit/4f35df6d49794d9b26a2c33f3dd4bb0650d7e736))
+* **#37:** extend TSF SEO adapter with OG/Twitter title and description fields ([#179](https://github.com/rubicon/diviops/issues/179)) ([a7fbe59](https://github.com/rubicon/diviops/commit/a7fbe594d1ed7e3e7b129705817ea683de88180d)), closes [#37](https://github.com/rubicon/diviops/issues/37)
+* **plugin:** point plugin-facing surfaces at @rubicontv/diviops-mcp ([#197](https://github.com/rubicon/diviops/issues/197)) ([b5083b5](https://github.com/rubicon/diviops/commit/b5083b589d9793edd4ae956a948e1df7ff4ac23f)), closes [#169](https://github.com/rubicon/diviops/issues/169)
+* **server:** publish as @rubicontv/diviops-mcp with a smoke-gated workflow ([#164](https://github.com/rubicon/diviops/issues/164)) ([2997e59](https://github.com/rubicon/diviops/commit/2997e59e5293e9e3c4cef6b71774024fd83ade13))
+
+
+### Bug Fixes
+
+* **plugin:** bound the rollback snapshot store and stop the inventory hiding the newest snapshots ([#194](https://github.com/rubicon/diviops/issues/194)) ([2de9341](https://github.com/rubicon/diviops/commit/2de93416ceb4235a915c7875314e498aa3385053)), closes [#187](https://github.com/rubicon/diviops/issues/187)
+* **plugin:** str_contains() is PHP 8.0+ but the plugin declares Requires PHP 7.4 ([#182](https://github.com/rubicon/diviops/issues/182)) ([892c1c1](https://github.com/rubicon/diviops/commit/892c1c151ea69c520dc292089c141beb3761eb33))
+* **preset:** give preset_reassign snapshots, a write guard, and an honest envelope ([#196](https://github.com/rubicon/diviops/issues/196)) ([079bf20](https://github.com/rubicon/diviops/commit/079bf201bd69c705e6e6a913240d9aca9950b760))
+* **server:** recover wp-cli JSON payloads from a polluted stdout stream ([#178](https://github.com/rubicon/diviops/issues/178)) ([b802f98](https://github.com/rubicon/diviops/commit/b802f98fa030e0aad6e76064ed79598287b63ebf)), closes [#167](https://github.com/rubicon/diviops/issues/167)
+* **tests:** wp-shim.php used PHP 8.0 syntax under a 7.4 floor ([#184](https://github.com/rubicon/diviops/issues/184)) ([dbc5d08](https://github.com/rubicon/diviops/commit/dbc5d080f6a16b4a4fbe8c5ab10466200425706f)), closes [#183](https://github.com/rubicon/diviops/issues/183)
+
 ## [1.15.0](https://github.com/rubicon/diviops/compare/v1.14.2...v1.15.0) (2026-08-14)
 
 
