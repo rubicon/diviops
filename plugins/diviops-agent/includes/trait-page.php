@@ -1694,6 +1694,54 @@ trait DiviOps_Agent_Page {
 	}
 
 	/**
+	 * Expand an `attrs` payload to the effective leaf dot paths it will write.
+	 *
+	 * Validation-only. Apply semantics are unchanged: object values still MERGE
+	 * (apply_module_attr_updates()), they are not rewritten into flat leaf writes.
+	 * This exists so path-based guards judge what a payload actually targets
+	 * rather than how the caller chose to spell it.
+	 *
+	 * Lists terminate the walk — a list is a value, not a branch — which matches
+	 * the merge rule that lists replace wholesale.
+	 *
+	 * @param array $attrs Caller payload, keyed by dot path.
+	 * @return array Effective leaf path => value.
+	 */
+	private static function expand_attr_paths_for_validation( array $attrs ): array {
+		$expanded = array();
+		foreach ( $attrs as $path => $value ) {
+			self::expand_attr_path_recursive( (string) $path, $value, $expanded );
+		}
+
+		return $expanded;
+	}
+
+	/**
+	 * Recursive worker for expand_attr_paths_for_validation().
+	 *
+	 * @param string $path     Path accumulated so far.
+	 * @param mixed  $value    Value at that path.
+	 * @param array  $expanded Accumulator, by reference.
+	 * @return void
+	 */
+	private static function expand_attr_path_recursive( string $path, $value, array &$expanded ): void {
+		if ( is_array( $value ) && array() !== $value && ! self::is_list_like_array( $value ) ) {
+			foreach ( $value as $key => $child ) {
+				// Re-escape literal dots so split_dot_path() reproduces this exact
+				// segment. Composable Settings slots such as
+				// groupPreset["title.decoration.spacing"] would otherwise re-split
+				// into a bogus `title` content root and be rejected on sight.
+				$segment = str_replace( '.', '\\.', (string) $key );
+				self::expand_attr_path_recursive( $path . '.' . $segment, $child, $expanded );
+			}
+
+			return;
+		}
+
+		$expanded[ $path ] = $value;
+	}
+
+	/**
 	 * Read the value at a dot path, or null when any segment is missing.
 	 *
 	 * Shared by dry_run's before- and after-capture so both sides read the tree
@@ -1800,6 +1848,15 @@ trait DiviOps_Agent_Page {
 		if ( ! isset( $content_roots_by_type[ $module_type ] ) ) {
 			return null;
 		}
+
+		// Decide on EFFECTIVE leaf paths, not the caller's spelling. This guard
+		// reads path segments, so an object value hides `innerContent` inside the
+		// value where the segments never show it: `{"title":{"innerContent":...}}`
+		// segments to just ['title'] and sails through, while the identical edit
+		// written as `title.innerContent.desktop.value` is correctly rejected.
+		// Harmless while the nested form was destructive nonsense; reachable now
+		// that it merges cleanly and is documented (#206).
+		$attrs = self::expand_attr_paths_for_validation( $attrs );
 
 		$allowed_roots = array_fill_keys( $content_roots_by_type[ $module_type ], true );
 		foreach ( $attrs as $path => $_value ) {

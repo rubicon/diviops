@@ -289,6 +289,67 @@ assert_same(
 	'a dot path may still create a branch that did not exist'
 );
 
+/* ── The content-slot guard must see through nested payloads ── */
+
+/*
+ * Raised by adversarial review of this change, and reproduced before accepting:
+ * `find_module_update_content_slot_mismatch()` rejects a heading-only content slot
+ * written into a `divi/text` block, but it decides by inspecting the PATH SEGMENTS.
+ * A nested object hides `innerContent` in the VALUE, so the segments are just
+ * `['title']`, the guard sees nothing to check, and the write proceeds.
+ *
+ * The hole predates this change — the guard always read segments only — but the
+ * nested form used to be destructive nonsense nobody would deliberately send. Now
+ * that it merges cleanly and is documented, it is a form callers will actually use,
+ * which turns a latent bypass into a reachable one. So it belongs to this fix.
+ *
+ * Both spellings of the same edit must therefore reach the same verdict.
+ */
+$dotted_mismatch = diviops_call(
+	'find_module_update_content_slot_mismatch',
+	array( 'text', array( 'title.innerContent.desktop.value' => 'Bad' ) )
+);
+assert_true(
+	is_array( $dotted_mismatch ) && 'module_attr_path_mismatch' === ( $dotted_mismatch['reason'] ?? '' ),
+	'dot-path form: a heading content slot written into divi/text is rejected'
+);
+
+$nested_mismatch = diviops_call(
+	'find_module_update_content_slot_mismatch',
+	array( 'text', array( 'title' => array( 'innerContent' => array( 'desktop' => array( 'value' => 'Bad' ) ) ) ) )
+);
+assert_true(
+	is_array( $nested_mismatch ) && 'module_attr_path_mismatch' === ( $nested_mismatch['reason'] ?? '' ),
+	'nested-object form: the SAME mismatch is rejected, not silently written'
+);
+
+// The legitimate slot for this module type must still pass in both spellings, or
+// the guard has simply become a blanket refusal.
+assert_true(
+	null === diviops_call(
+		'find_module_update_content_slot_mismatch',
+		array( 'text', array( 'content' => array( 'innerContent' => array( 'desktop' => array( 'value' => 'Fine' ) ) ) ) )
+	),
+	'nested-object form: the module type\'s own content root is still allowed'
+);
+assert_true(
+	null === diviops_call(
+		'find_module_update_content_slot_mismatch',
+		array( 'text', array( 'module' => array( 'decoration' => array( 'spacing' => array( 'desktop' => array( 'value' => array( 'padding' => '1rem' ) ) ) ) ) ) )
+	),
+	'nested-object form: ordinary decoration payloads are not mistaken for content slots'
+);
+
+// Escaped dots must survive the expansion, or Composable Settings preset slots
+// (groupPreset["title.decoration.spacing"]) would re-split into wrong segments.
+assert_true(
+	null === diviops_call(
+		'find_module_update_content_slot_mismatch',
+		array( 'text', array( 'groupPreset' => array( 'title.decoration.spacing' => array( 'presetId' => array( 'uuid' ) ) ) ) )
+	),
+	'nested-object form: a key containing literal dots does not re-split into a bogus content root'
+);
+
 /* ── The structural invariant, which is what actually prevents recurrence ── */
 
 /*
