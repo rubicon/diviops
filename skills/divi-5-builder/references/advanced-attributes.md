@@ -11,7 +11,7 @@ border/background/spacing set. Two groups, documented in the same shape
   element name (`button.…`, `title.decoration.font.…`) rather than `module.`.
 
 Every other shared family Divi ships is listed and classified in
-[Shared family inventory](#shared-family-inventory-46-maps) below, so the ones that are
+[Shared family inventory](#shared-family-inventory-47-maps) below, so the ones that are
 not documented here are visibly not documented rather than silently missing.
 
 **Clean-room provenance**: every path and value shape below is derived from Divi 5's
@@ -1239,7 +1239,7 @@ Nothing in this family sets `responsive:false`.
 also reads `variationSettings` (an object keyed by four-letter variable-font axis tags —
 `WGHT`, `WDTH`, `SLNT`, and custom axes — emitted as `font-variation-settings`) and the
 `columnRuleWidth` / `columnRuleStyle` / `columnRuleColor` trio (emitted only while
-`columnCount > 1`). Neither appears in any of the 46 shared maps, so neither participates
+`columnCount > 1`). Neither appears in any of the 47 shared maps, so neither participates
 in preset save/load; they are still valid to write into a module's attrs.
 
 **Four opt-in flags add up to 8 more keys.** `get_map()` takes a second `$args` argument:
@@ -1249,7 +1249,7 @@ in preset save/load; they are still valid to write into a module's attrs.
 (the blockquote bar). All four default to false, which is why the base resolution is 44.
 The dropCap subfields (`.font__dropCapLineSize`, `.font__dropCapSpacing`) are not reached
 through this argument at all — they arrive through the `FontBody` group's own `dropCap`
-sub-element, which is [deferred](#shared-family-inventory-46-maps).
+sub-element, which is [deferred](#shared-family-inventory-47-maps).
 
 Minimal copy-paste `attrs` fragment (module-wrapper font, hover color swap):
 
