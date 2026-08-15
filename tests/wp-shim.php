@@ -315,8 +315,309 @@ if ( ! function_exists( 'update_option' ) ) {
 	 */
 	function update_option( $option, $value, $autoload = null ) {
 		$GLOBALS['diviops_test_options'][ $option ] = $value;
+		diviops_test_option_row( $option, null === $autoload ? null : ( $autoload ? 'yes' : 'no' ) );
 		return true;
 	}
+}
+
+/*
+ * Options-table row metadata.
+ *
+ * $GLOBALS['diviops_test_options'] stays the flat name => value map several tests
+ * write into directly, and remains authoritative for values. Anything that needs
+ * the row's identity rather than its value — option_id insertion sequence and the
+ * autoload column, both of which the real wp_options table carries and the
+ * rollback-snapshot queries select on — reads this parallel map instead. Keeping
+ * them separate is what lets a test keep assigning
+ * $GLOBALS['diviops_test_options']['active_plugins'] directly.
+ */
+if ( ! isset( $GLOBALS['diviops_test_option_rows'] ) ) {
+	$GLOBALS['diviops_test_option_rows'] = array();
+}
+if ( ! isset( $GLOBALS['diviops_test_option_sequence'] ) ) {
+	$GLOBALS['diviops_test_option_sequence'] = 0;
+}
+
+if ( ! function_exists( 'diviops_test_option_row' ) ) {
+	/**
+	 * Return an option's row metadata, assigning an option_id on first sight.
+	 *
+	 * Rows created by a direct write into $GLOBALS['diviops_test_options'] never
+	 * passed through add_option(), so they have no sequence yet. Assigning lazily
+	 * here — rather than refusing to see them — keeps those rows visible to the
+	 * $wpdb fake in the same insertion order the writes happened.
+	 *
+	 * @param string      $option   Option name.
+	 * @param string|null $autoload 'yes'/'no' to set, or null to leave unchanged.
+	 * @return array{option_id:int, autoload:string}
+	 */
+	function diviops_test_option_row( string $option, ?string $autoload = null ): array {
+		if ( ! isset( $GLOBALS['diviops_test_option_rows'][ $option ] ) ) {
+			$GLOBALS['diviops_test_option_rows'][ $option ] = array(
+				'option_id' => ++$GLOBALS['diviops_test_option_sequence'],
+				'autoload'  => 'yes',
+			);
+		}
+		if ( null !== $autoload ) {
+			$GLOBALS['diviops_test_option_rows'][ $option ]['autoload'] = $autoload;
+		}
+		return $GLOBALS['diviops_test_option_rows'][ $option ];
+	}
+}
+
+if ( ! function_exists( 'add_option' ) ) {
+	/**
+	 * Model WP core's add_option(): create the row and return true, or return
+	 * false without touching anything when the option already exists.
+	 *
+	 * The false-on-existing branch is load-bearing, not incidental:
+	 * rollback_snapshot_create_for_post_write() treats a falsey add_option()
+	 * return as a storage failure and raises rollback_snapshot.storage_failed.
+	 * A shim that always returned true would hide that path entirely.
+	 */
+	function add_option( $option, $value = '', $deprecated = '', $autoload = 'yes' ) {
+		if ( array_key_exists( $option, $GLOBALS['diviops_test_options'] ) ) {
+			return false;
+		}
+		$GLOBALS['diviops_test_options'][ $option ] = $value;
+		diviops_test_option_row( (string) $option, ( 'no' === $autoload || false === $autoload ) ? 'no' : 'yes' );
+		return true;
+	}
+}
+
+if ( ! function_exists( 'delete_option' ) ) {
+	/**
+	 * Model WP core's delete_option(): true when a row was removed, false when
+	 * there was nothing to remove.
+	 */
+	function delete_option( $option ) {
+		if ( ! array_key_exists( $option, $GLOBALS['diviops_test_options'] ) ) {
+			return false;
+		}
+		unset( $GLOBALS['diviops_test_options'][ $option ] );
+		unset( $GLOBALS['diviops_test_option_rows'][ $option ] );
+		return true;
+	}
+}
+
+if ( ! function_exists( 'maybe_serialize' ) ) {
+	/**
+	 * Model WP core's maybe_serialize(): arrays and objects are serialized,
+	 * scalars pass through. The real options table stores a string in
+	 * option_value, and the rollback code measures strlen() on exactly that
+	 * string, so the $wpdb fake must hand back serialized text rather than a
+	 * live PHP array.
+	 */
+	function maybe_serialize( $data ) {
+		return ( is_array( $data ) || is_object( $data ) ) ? serialize( $data ) : $data;
+	}
+}
+
+if ( ! function_exists( 'maybe_unserialize' ) ) {
+	/**
+	 * Model WP core's maybe_unserialize(): unserialize serialized strings,
+	 * return anything else untouched.
+	 */
+	function maybe_unserialize( $data ) {
+		if ( ! is_string( $data ) ) {
+			return $data;
+		}
+		$trimmed = trim( $data );
+		if ( 'b:0;' === $trimmed ) {
+			return false;
+		}
+		$restored = @unserialize( $trimmed );
+		return false === $restored ? $data : $restored;
+	}
+}
+
+if ( ! function_exists( 'wp_rand' ) ) {
+	/**
+	 * Deterministic stand-in for wp_rand(). Snapshot IDs mix this into a hash
+	 * seed alongside microtime(), so uniqueness across calls still holds without
+	 * real randomness.
+	 */
+	function wp_rand( $min = 0, $max = 0 ) {
+		static $counter = 0;
+		++$counter;
+		$min = (int) $min;
+		$max = (int) $max;
+		if ( $max <= $min ) {
+			return $counter;
+		}
+		return $min + ( $counter % ( $max - $min + 1 ) );
+	}
+}
+
+if ( ! function_exists( 'metadata_exists' ) ) {
+	/**
+	 * Model WP core's metadata_exists(): whether the key is present at all,
+	 * which is a different question from whether its value is non-empty.
+	 */
+	function metadata_exists( $meta_type, $object_id, $meta_key ) {
+		return isset( $GLOBALS['diviops_test_post_meta'][ (int) $object_id ][ $meta_key ] );
+	}
+}
+
+if ( ! class_exists( 'DiviOps_Test_wpdb' ) ) {
+	/**
+	 * Options-table stand-in for $wpdb.
+	 *
+	 * This executes the SELECT it is handed rather than pattern-matching the
+	 * caller and returning a canned list. That distinction is the whole point:
+	 * the behavior under test in the rollback snapshot inventory *is* the
+	 * ORDER BY direction, so a fake that ignored the clause would report PASS
+	 * whether the production query said ASC or DESC. It honors the real
+	 * SELECT column list, the LIKE pattern including esc_like()'s backslash
+	 * escapes, ORDER BY on option_id/option_name in either direction, and LIMIT.
+	 *
+	 * Anything outside that shape throws instead of guessing, so an untested
+	 * query shape fails loudly rather than silently returning a wrong-but-
+	 * plausible row set.
+	 */
+	final class DiviOps_Test_wpdb {
+
+		/** @var string Options table name, matching $wpdb->options. */
+		public $options = 'wp_options';
+
+		/** @var array<int, string> Every query this fake has executed, for assertions. */
+		public $queries = array();
+
+		/**
+		 * Model $wpdb::esc_like(): backslash-escape LIKE's wildcards.
+		 */
+		public function esc_like( $text ) {
+			return addcslashes( (string) $text, '_%\\' );
+		}
+
+		/**
+		 * Model $wpdb::prepare() for the %s/%d placeholders this codebase uses.
+		 * Strings are single-quoted with SQL's doubled-quote escaping, which
+		 * leaves esc_like()'s backslashes intact for the LIKE matcher below.
+		 */
+		public function prepare( $query, ...$args ) {
+			$index = 0;
+			return (string) preg_replace_callback(
+				'/%[sd%]/',
+				static function ( $match ) use ( &$index, $args ) {
+					if ( '%%' === $match[0] ) {
+						return '%';
+					}
+					$value = $args[ $index ] ?? null;
+					++$index;
+					if ( '%d' === $match[0] ) {
+						return (string) (int) $value;
+					}
+					return "'" . str_replace( "'", "''", (string) $value ) . "'";
+				},
+				(string) $query
+			);
+		}
+
+		/**
+		 * Execute a supported SELECT against the in-memory options store.
+		 *
+		 * @param string $query Prepared SQL.
+		 * @return array<int, stdClass> Result rows.
+		 */
+		public function get_results( $query ) {
+			$this->queries[] = (string) $query;
+
+			$pattern = '/^\s*SELECT\s+(?P<columns>.+?)\s+FROM\s+\S+\s+WHERE\s+option_name\s+LIKE\s+'
+				. "'(?P<like>(?:[^']|'')*)'"
+				. '\s*(?:ORDER\s+BY\s+(?P<sort>option_id|option_name)\s+(?P<direction>ASC|DESC)\s*)?'
+				. '(?:LIMIT\s+(?P<limit>\d+)\s*)?$/is';
+			if ( ! preg_match( $pattern, (string) $query, $matches ) ) {
+				throw new RuntimeException( 'DiviOps_Test_wpdb cannot execute this query shape: ' . $query );
+			}
+
+			$columns = array_map( 'trim', explode( ',', $matches['columns'] ) );
+			if ( array( '*' ) === $columns ) {
+				$columns = array( 'option_id', 'option_name', 'option_value', 'autoload' );
+			}
+			$known = array( 'option_id', 'option_name', 'option_value', 'autoload' );
+			foreach ( $columns as $column ) {
+				if ( ! in_array( $column, $known, true ) ) {
+					throw new RuntimeException( 'DiviOps_Test_wpdb cannot select column: ' . $column );
+				}
+			}
+
+			$like    = str_replace( "''", "'", $matches['like'] );
+			$matched = array();
+			foreach ( array_keys( $GLOBALS['diviops_test_options'] ) as $name ) {
+				if ( preg_match( self::like_to_regex( $like ), (string) $name ) ) {
+					$matched[] = (string) $name;
+				}
+			}
+
+			$sort      = '' === ( $matches['sort'] ?? '' ) ? 'option_id' : $matches['sort'];
+			$direction = strtoupper( '' === ( $matches['direction'] ?? '' ) ? 'ASC' : $matches['direction'] );
+			usort(
+				$matched,
+				static function ( $left, $right ) use ( $sort, $direction ) {
+					$comparison = 'option_id' === $sort
+						? diviops_test_option_row( $left )['option_id'] <=> diviops_test_option_row( $right )['option_id']
+						: strcmp( $left, $right );
+					return 'DESC' === $direction ? -$comparison : $comparison;
+				}
+			);
+
+			if ( '' !== ( $matches['limit'] ?? '' ) ) {
+				$matched = array_slice( $matched, 0, (int) $matches['limit'] );
+			}
+
+			$rows = array();
+			foreach ( $matched as $name ) {
+				$meta = diviops_test_option_row( $name );
+				$row  = new stdClass();
+				foreach ( $columns as $column ) {
+					if ( 'option_id' === $column ) {
+						$row->option_id = (string) $meta['option_id'];
+					} elseif ( 'option_name' === $column ) {
+						$row->option_name = $name;
+					} elseif ( 'autoload' === $column ) {
+						$row->autoload = $meta['autoload'];
+					} else {
+						$row->option_value = maybe_serialize( $GLOBALS['diviops_test_options'][ $name ] );
+					}
+				}
+				$rows[] = $row;
+			}
+			return $rows;
+		}
+
+		/**
+		 * Translate a SQL LIKE pattern into an anchored regex, honoring the
+		 * backslash escapes esc_like() introduces so an escaped underscore
+		 * matches a literal underscore rather than any character.
+		 */
+		private static function like_to_regex( string $like ): string {
+			$regex  = '';
+			$length = strlen( $like );
+			for ( $index = 0; $index < $length; $index++ ) {
+				$character = $like[ $index ];
+				if ( '\\' === $character && $index + 1 < $length ) {
+					++$index;
+					$regex .= preg_quote( $like[ $index ], '/' );
+					continue;
+				}
+				if ( '%' === $character ) {
+					$regex .= '.*';
+					continue;
+				}
+				if ( '_' === $character ) {
+					$regex .= '.';
+					continue;
+				}
+				$regex .= preg_quote( $character, '/' );
+			}
+			return '/^' . $regex . '$/s';
+		}
+	}
+}
+
+if ( ! isset( $GLOBALS['wpdb'] ) ) {
+	$GLOBALS['wpdb'] = new DiviOps_Test_wpdb();
 }
 
 if ( ! function_exists( 'get_site_option' ) ) {
