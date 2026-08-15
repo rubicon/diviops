@@ -2,7 +2,7 @@
 
 **An AI harness for WordPress site authoring — Divi-native today, WordPress-wide by design.**
 
-The Node.js MCP server inside the DiviOps harness. It gives Claude Code, Codex, Claude Desktop, and other MCP clients a typed control layer over WordPress site state, dispatching to the DiviOps Agent plugin for Divi 5 page authoring, SCF and CPT data models, design tokens, presets, library and Theme Builder templates, site audits, and safe WP-CLI passthrough. Pairs with the `divi-5-builder` skill so the agent applies Divi's block format and design rules correctly.
+The Node.js MCP server inside the DiviOps harness. It gives Claude Code, Codex, Claude Desktop, and other MCP clients a typed control layer over WordPress site state, dispatching to the DiviOps Agent plugin for Divi 5 page authoring, design tokens, presets, library and Theme Builder templates, and site audits. SCF and CPT data models are handled by the server's own WP-CLI tools rather than by the plugin, alongside the general-purpose WP-CLI passthrough. Pairs with the `divi-5-builder` skill so the agent applies Divi's block format and design rules correctly.
 
 ```
 Claude Code <-> MCP Server (stdio) <-> WordPress REST API <-> DiviOps Agent plugin
