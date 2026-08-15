@@ -176,6 +176,80 @@ trait DiviOps_Agent_Rollback {
 		return $plan;
 	}
 
+	/**
+	 * Maximum snapshot rows the store retains.
+	 *
+	 * This — not `expires_at` — is what bounds the store. The ceiling that
+	 * actually matters is a count: rollback_snapshot_managed_inventory() reads at
+	 * most 1000 records and reports `truncated` past that, so a fail-closed
+	 * consumer loses managed recovery once the store crosses it. A time-based
+	 * policy cannot guarantee staying under a count ceiling — a busy site can
+	 * produce well over 1000 snapshots inside the 7-day expiry window — so the
+	 * bound is a count, held far enough below 1000 to leave headroom.
+	 */
+	private static function rollback_snapshot_retention_limit(): int {
+		return 500;
+	}
+
+	/**
+	 * Most rows a single write will evict.
+	 *
+	 * Retention runs inside a guarded write, so the work it adds has to be
+	 * bounded. In steady state the store is over the cap by exactly one and this
+	 * never binds. It exists for the upgrade case: a site that ran the previous
+	 * unbounded build can arrive with thousands of accumulated rows, and deleting
+	 * all of them inside one REST request risks the timeout that would turn a
+	 * good content write into a failed one. A backlog drains across subsequent
+	 * writes instead.
+	 */
+	private static function rollback_snapshot_retention_batch(): int {
+		return 50;
+	}
+
+	/**
+	 * Evict the oldest snapshots beyond the retention cap.
+	 *
+	 * Best-effort by design: this runs after the snapshot row is safely stored,
+	 * ignores individual deletion failures, and never returns an error. A problem
+	 * reclaiming space must not fail an otherwise-good content write.
+	 *
+	 * Ordering is newest-first so the surplus tail is the oldest rows, and the
+	 * snapshot just created — always first — can never evict itself. A restored
+	 * snapshot is evicted on age like any other; the cap bounds row count, a goal
+	 * indifferent to restore history.
+	 *
+	 * @return int Rows actually deleted.
+	 */
+	private static function rollback_snapshot_enforce_retention(): int {
+		global $wpdb;
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || empty( $wpdb->options ) ) {
+			return 0;
+		}
+
+		$limit = self::rollback_snapshot_retention_limit();
+		$like  = $wpdb->esc_like( self::rollback_snapshot_option_prefix() ) . '%';
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- `$wpdb->options` is the WordPress options table; this bounded retention scan prepares both values and has no stable cache API equivalent.
+		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s ORDER BY option_id DESC LIMIT %d", $like, $limit + self::rollback_snapshot_retention_batch() ) );
+		if ( ! is_array( $rows ) || count( $rows ) <= $limit ) {
+			return 0;
+		}
+
+		$deleted = 0;
+		foreach ( array_slice( $rows, $limit ) as $row ) {
+			$option_name = is_array( $row ) ? (string) ( $row['option_name'] ?? '' ) : (string) ( $row->option_name ?? '' );
+			// Only ever delete a row whose name parses as a snapshot id, so a
+			// prefix collision can never take an unrelated option with it.
+			if ( false === self::rollback_snapshot_id_from_option_name( $option_name ) ) {
+				continue;
+			}
+			if ( delete_option( $option_name ) ) {
+				++$deleted;
+			}
+		}
+
+		return $deleted;
+	}
+
 	private static function rollback_snapshot_create_for_post_write( $post, string $tool, array $operation ) {
 		$snapshot_id = self::rollback_snapshot_generate_id( (int) $post->ID, $tool );
 		$created_at  = self::rollback_snapshot_now();
@@ -216,6 +290,8 @@ trait DiviOps_Agent_Rollback {
 				]
 			);
 		}
+
+		self::rollback_snapshot_enforce_retention();
 
 		return $record;
 	}
@@ -524,8 +600,17 @@ trait DiviOps_Agent_Rollback {
 		$like    = $wpdb->esc_like( self::rollback_snapshot_option_prefix() ) . '%';
 		// Fetch one sentinel row beyond the supported ceiling so orchestration
 		// can fail closed instead of planning from a silently truncated subset.
+		//
+		// Newest-first (#187). The window used to be selected oldest-first, so
+		// once the store crossed the ceiling the records dropped were the most
+		// recent ones — precisely those a recovery is most likely to need.
+		// Ordering by option_id rather than option_name deliberately: option_id
+		// is the database's own monotonic insertion sequence, which this method
+		// already trusts and reports as `storage_sequence`, whereas option_name
+		// embeds a gmdate() stamp taken at creation and so misorders under clock
+		// skew. The presentation `usort` below is unchanged.
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- bounded internal inventory has no stable cache API equivalent.
-		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT option_id, option_name, option_value, autoload FROM {$wpdb->options} WHERE option_name LIKE %s ORDER BY option_name ASC LIMIT %d", $like, $maximum + 1 ) );
+		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT option_id, option_name, option_value, autoload FROM {$wpdb->options} WHERE option_name LIKE %s ORDER BY option_id DESC LIMIT %d", $like, $maximum + 1 ) );
 		if ( ! is_array( $rows ) ) {
 			return new WP_Error( 'rollback_snapshot.inventory_unavailable', 'Rollback snapshot inventory query failed.', [ 'status' => 500 ] );
 		}
