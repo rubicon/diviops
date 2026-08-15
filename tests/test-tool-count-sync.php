@@ -218,3 +218,75 @@ foreach ( $link_matches[1] as $link_target ) {
 	);
 }
 assert_true( $relative_links_checked > 0, 'plugins/diviops-agent/README.md contains relative links for this guard to check' );
+
+/*
+ * The divi-5-builder skill's tool reference (#191) is the last file stating these
+ * counts that this guard did not cover, and it had drifted furthest: 114/91/80/23
+ * against a real 145/115/104/30. It states all four figures in a single sentence,
+ * including the two component counts the other READMEs leave implicit, so each is
+ * asserted separately rather than as a sum -- a wrong split that happens to total
+ * correctly is still wrong, and is exactly what "80 plugin-routed + 11 local" was.
+ *
+ * #190 edited this same line for link depth without touching the numbers, which is
+ * how a maintained line keeps a stale figure: nothing was asserting them.
+ */
+$skill_tools_md = dirname( __DIR__ ) . '/skills/divi-5-builder/references/tools.md';
+assert_true( is_file( $skill_tools_md ), 'skills/divi-5-builder/references/tools.md exists where this test expects it' );
+
+$skill_content = (string) file_get_contents( $skill_tools_md );
+
+/**
+ * Pull one labelled figure out of the skill reference's counts sentence, failing when
+ * the pattern matches nothing so a reworded sentence cannot silently retire the check.
+ *
+ * @param string $pattern Regex with a single capturing group around the number.
+ * @param string $label   Human description of the figure, for the failure message.
+ * @param string $content tools.md content.
+ */
+function diviops_find_skill_count( string $pattern, string $label, string $content ): int {
+	$found = preg_match( $pattern, $content, $m );
+	assert_true( 1 === $found, "a $label figure was located in skills/divi-5-builder/references/tools.md" );
+	return 1 === $found ? (int) $m[1] : -1;
+}
+
+assert_same(
+	$plugin_count + $local_count + $pro_count,
+	diviops_find_skill_count( '/registers (\d+) tools/', 'total registered tools', $skill_content ),
+	'tools.md\'s stated total tool count matches all three registration helpers in index.ts'
+);
+assert_same(
+	$always_on,
+	diviops_find_skill_count( '/(\d+) always-on tools/', 'always-on tools', $skill_content ),
+	'tools.md\'s stated always-on tool count matches registerPluginTool + registerLocalTool call sites in index.ts'
+);
+assert_same(
+	$plugin_count,
+	diviops_find_skill_count( '/\((\d+) plugin-routed/', 'plugin-routed tools', $skill_content ),
+	'tools.md\'s stated plugin-routed tool count matches registerPluginTool call sites in index.ts'
+);
+assert_same(
+	$local_count,
+	diviops_find_skill_count( '/\+ (\d+) local\)/', 'server-local tools', $skill_content ),
+	'tools.md\'s stated local tool count matches registerLocalTool call sites in index.ts'
+);
+assert_same(
+	$pro_count,
+	diviops_find_skill_count( '/(\d+) conditional Pro tools/', 'conditional Pro tools', $skill_content ),
+	'tools.md\'s stated conditional Pro tool count matches registerProTool call sites in index.ts'
+);
+
+/*
+ * SCF attribution (#192). The plugin implements no SCF surface at all, so no README
+ * may describe the server as dispatching SCF to the plugin. The check is anchored on
+ * the dispatch clause rather than on the word "SCF" anywhere in the file, because the
+ * server README legitimately documents scf_* among its own tools; only the claim that
+ * the *plugin* serves them is false.
+ */
+$dispatch_found = preg_match( '/dispatching to the DiviOps Agent plugin for ([^.]*)\./', $srv_content, $dispatch_match );
+assert_true( 1 === $dispatch_found, 'diviops-server/README.md still describes what it dispatches to the plugin' );
+$dispatch_clause = 1 === $dispatch_found ? $dispatch_match[1] : 'SCF';
+assert_same(
+	0,
+	preg_match( '/\bSCF\b|\bCPT\b/i', $dispatch_clause ),
+	'diviops-server/README.md does not name SCF or CPT among the surfaces it dispatches to the plugin, which implements neither'
+);
