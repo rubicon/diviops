@@ -2767,7 +2767,7 @@ class DiviOps_Agent {
 					<li><?php esc_html_e( 'Install the DiviOps skill bundle for your AI client.', 'diviops-agent' ); ?></li>
 					<li>
 						<?php esc_html_e( 'Register the MCP server:', 'diviops-agent' ); ?>
-						<code>claude mcp add diviops-mysite --env WP_URL=https://example.com --env WP_USER=admin --env WP_APP_PASSWORD=xxxxXXXXxxxxXXXXxxxxXXXX -- npx -y --package @diviops/mcp-server diviops-mcp</code>
+						<code>claude mcp add diviops-mysite --env WP_URL=https://example.com --env WP_USER=admin --env WP_APP_PASSWORD=xxxxXXXXxxxxXXXXxxxxXXXX -- npx -y --package @rubicontv/diviops-mcp diviops-mcp</code>
 					</li>
 					<li>
 						<?php esc_html_e( 'Test: ask Claude Code to', 'diviops-agent' ); ?>
