@@ -36,8 +36,10 @@ function diviops_test_shared_thrown_message( callable $callback ): string {
 
 /*
  * The index. Groups are named after the map class rather than its directory, because
- * Divi puts two unrelated family maps in `Module/Options/FormField/` and a directory
- * key would silently drop one of them.
+ * Divi puts three unrelated family maps in `Module/Options/FormField/` and a directory
+ * key would silently drop two of them. It was two until Divi 5.11.0 added
+ * `NativeChoicePresetAttrsMap.php` alongside them — the collision this index was
+ * designed for is getting worse, not going away.
  */
 $shared_index = diviops_preset_attrs_map_shared_index( $shared_fixtures );
 
@@ -173,7 +175,7 @@ assert_true(
 );
 
 /*
- * And a map that returns nothing is a failure rather than a result. Every one of the 46
+ * And a map that returns nothing is a failure rather than a result. Every one of the 47
  * families Divi ships contributes at least one key, so an empty return means the class
  * was not exercised the way it expects.
  */
@@ -201,14 +203,20 @@ if ( is_string( $shared_builder5 ) && '' !== $shared_builder5 && is_dir( $shared
 	$shared_divi_packages = $shared_builder5 . '/server/Packages';
 	$shared_divi_index    = diviops_preset_attrs_map_shared_index( $shared_divi_packages );
 
+	// Pinned deliberately. A count that floats to whatever is on disk asserts nothing,
+	// so this is expected to fail on a Divi upgrade — that failure is the signal to go
+	// look at what changed, not a reason to soften the assertion. 5.9.0 shipped 46;
+	// 5.11.0 added NativeChoice.
 	assert_same(
-		46,
+		47,
 		count( $shared_divi_index ),
-		'Divi 5.9.0 ships 46 shared family maps under Module/Options'
+		'Divi 5.11.0 ships 47 shared family maps under Module/Options'
 	);
 	assert_true(
-		isset( $shared_divi_index['FieldDecoration'] ) && isset( $shared_divi_index['FormField'] ),
-		'both map files in Module/Options/FormField are indexed, which a directory-keyed index would not do'
+		isset( $shared_divi_index['FieldDecoration'] )
+			&& isset( $shared_divi_index['FormField'] )
+			&& isset( $shared_divi_index['NativeChoice'] ),
+		'all three map files in Module/Options/FormField are indexed, which a directory-keyed index would not do'
 	);
 
 	$unresolvable_families = array();
