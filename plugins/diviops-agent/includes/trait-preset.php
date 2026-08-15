@@ -2594,6 +2594,38 @@ trait DiviOps_Agent_Preset {
 	}
 
 	/**
+	 * The page ids an apply actually wrote, read from the recorded per-page
+	 * evidence rather than derived by arithmetic.
+	 *
+	 * No subtraction over `pages_modified` recovers this number. That counter is
+	 * incremented once a page clears the round-trip gate, which is *before* the
+	 * capability check, the global-layout drift check, the snapshot, and the
+	 * guarded write — so it includes four of the five failure modes and excludes
+	 * the fifth. `pages_modified - count(errors)` therefore removes the
+	 * round-trip refusals a second time, and bare `pages_modified` counts pages
+	 * that failed after the gate.
+	 *
+	 * A written page is exactly one whose detail carries the snapshot id it was
+	 * written behind and no `update_error`. A page whose guarded write failed
+	 * carries both, so snapshot ids alone are not the signal either.
+	 *
+	 * @param array $details Per-page details from the run summary.
+	 * @return array<int, mixed> Page ids, in the order they were written.
+	 */
+	private static function preset_reassign_written_page_ids( array $details ): array {
+		$written = [];
+		foreach ( $details as $detail ) {
+			if ( ! is_array( $detail ) ) {
+				continue;
+			}
+			if ( isset( $detail['snapshot_id'] ) && ! isset( $detail['update_error'] ) && isset( $detail['page_id'] ) ) {
+				$written[] = $detail['page_id'];
+			}
+		}
+		return $written;
+	}
+
+	/**
 	 * Shape the apply-mode response, failing the envelope when any page failed.
 	 *
 	 * This used to be an `envelope_success()` carrying a nested `success: false`.
@@ -2607,22 +2639,22 @@ trait DiviOps_Agent_Preset {
 	 * @return WP_REST_Response
 	 */
 	private static function preset_reassign_apply_response( array $payload ) {
-		$errors             = (array) ( $payload['summary']['errors'] ?? [] );
-		$payload['success'] = empty( $errors );
+		$errors  = (array) ( $payload['summary']['errors'] ?? [] );
+		$written = self::preset_reassign_written_page_ids( (array) ( $payload['summary']['details'] ?? [] ) );
+
+		$payload['success']                  = empty( $errors );
+		$payload['summary']['pages_written'] = count( $written );
 
 		if ( empty( $errors ) ) {
 			return self::envelope_success( $payload );
 		}
 
-		$failed   = count( $errors );
-		$modified = (int) ( $payload['summary']['pages_modified'] ?? 0 );
-
 		return self::envelope_error(
 			'preset.reassign_partial_failure',
 			sprintf(
 				'Preset reassign applied with failures: %d page(s) failed, %d page(s) were written.',
-				$failed,
-				max( 0, $modified - $failed )
+				count( $errors ),
+				count( $written )
 			),
 			'Inspect error.data.summary.errors for the per-page reason. Pages that were written carry a snapshot_id in error.data.summary.details — restore one with diviops_rollback_snapshot_restore.',
 			207,

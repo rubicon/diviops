@@ -318,6 +318,87 @@ assert_same(
 	'the snapshot ids of pages that WERE written survive into error.data, so a partial run stays recoverable'
 );
 
+// ── (1e) the written count is read from evidence, not arithmetic ─────────
+//
+// `pages_modified` counts every page that passed the round-trip gate,
+// including ones that then failed their capability check, drift check,
+// snapshot, or guarded write. So no subtraction of the error count recovers
+// the written total: round-trip refusals were never counted in
+// `pages_modified` at all, and the other four failure modes still are.
+//
+// The mixed fixture below falsifies both arithmetic candidates at once —
+// `pages_modified - failed` reports 1, bare `pages_modified` reports 4, and the
+// truth is 2. Getting this wrong is worse than an off-by-one: the failure hint
+// tells the caller to recover written pages via their snapshot_id, so a run
+// that under-reports written pages suppresses recovery on the exact path this
+// tool's partial-failure envelope exists to make honest.
+
+$mixed_details = array(
+	// Written: a snapshot id and no update_error.
+	array( 'page_id' => 11, 'snapshot_id' => 'snap_11' ),
+	array( 'page_id' => 12, 'snapshot_id' => 'snap_12' ),
+	// Attempted and reverted by the integrity guard: carries BOTH a snapshot id
+	// and an update_error. Counting snapshot ids alone would call this written.
+	array( 'page_id' => 14, 'update_error' => 'preset.content_write_corruption', 'snapshot_id' => 'snap_14' ),
+	// Never attempted: refused before a snapshot was created.
+	array( 'page_id' => 15, 'update_error' => 'Current user cannot edit this post' ),
+);
+
+assert_same(
+	array( 11, 12 ),
+	diviops_call( 'preset_reassign_written_page_ids', array( $mixed_details ) ),
+	'only pages carrying a snapshot id and no update_error count as written'
+);
+assert_same(
+	array(),
+	diviops_call( 'preset_reassign_written_page_ids', array( array() ) ),
+	'no details means no pages written'
+);
+
+// Page 13 was refused by the round-trip gate, so it appears in errors with no
+// details entry at all — which is exactly why pages_modified (4) is neither the
+// written count nor the written count plus the failure count.
+$mixed_payload = array(
+	'mode'    => 'apply',
+	'summary' => array(
+		'pages_modified' => 4,
+		'errors'         => array(
+			array( 'page_id' => 13, 'code' => 'preset.round_trip_lossy' ),
+			array( 'page_id' => 14, 'code' => 'preset.content_write_corruption' ),
+			array( 'page_id' => 15, 'code' => 'preset.page_not_editable' ),
+		),
+		'details'        => $mixed_details,
+	),
+);
+
+$mixed_response = diviops_call( 'preset_reassign_apply_response', array( $mixed_payload ) );
+$mixed_data     = $mixed_response->get_data();
+
+assert_same(
+	2,
+	$mixed_data['error']['data']['summary']['pages_written'],
+	'a mixed run reports the pages it actually wrote, matching the details entries that carry a snapshot id'
+);
+assert_true(
+	false !== strpos( $mixed_data['error']['message'], '3 page(s) failed, 2 page(s) were written' ),
+	'the partial-failure message names the real written count'
+);
+assert_true(
+	false === strpos( $mixed_data['error']['message'], '1 page(s) were written' ),
+	'the message does not report pages_modified minus the error count (1), which drops the round-trip refusals a second time'
+);
+assert_true(
+	false === strpos( $mixed_data['error']['message'], '4 page(s) were written' ),
+	'the message does not report bare pages_modified (4), which counts pages that failed after the round-trip gate'
+);
+
+$clean_written = diviops_call( 'preset_reassign_apply_response', array( $clean_payload ) );
+assert_same(
+	2,
+	$clean_written->get_data()['data']['summary']['pages_written'],
+	'a clean apply reports its written count too, so callers do not have to infer it from ok alone'
+);
+
 // ── (3) per-page write wiring (defects 1, 2, 3) ──────────────────────────
 //
 // These live inside the per-page loop, past a parse_blocks() call this harness
@@ -354,4 +435,4 @@ assert_true(
 	'preset_reassign() shapes its apply response through the helper that fails the envelope on any per-page error (defect 4)'
 );
 
-echo "PASS: preset-reassign-write-safety (38 assertions)\n";
+echo "PASS: preset-reassign-write-safety (45 assertions)\n";
