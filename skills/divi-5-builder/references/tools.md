@@ -1,6 +1,6 @@
 # MCP Tool Reference
 
-Curated Divi-builder authoring subset. The full DiviOps server currently registers 114 tools: 91 always-on tools (80 plugin-routed + 11 local) and 23 conditional Pro tools. See [`diviops-server/README.md`](../../../../diviops-server/README.md) for the complete inventory. The six `diviops_scf_*` tools are documented in [scf-fields.md](scf-fields.md) (they are local WP-CLI wrappers, not plugin-routed). The separate `diviops-scf/` coverage slice named in the primer does not ship in this repository. Cross-cutting harness conventions (response envelope, capability handshake, `dry_run` plan shape, idempotency) live in the [diviops/](../../diviops/SKILL.md) primer skill.
+Curated Divi-builder authoring subset. The full DiviOps server currently registers 114 tools: 91 always-on tools (80 plugin-routed + 11 local) and 23 conditional Pro tools. See [`diviops-server/README.md`](../../../diviops-server/README.md) for the complete inventory. The six `diviops_scf_*` tools are documented in [scf-fields.md](scf-fields.md) (they are local WP-CLI wrappers, not plugin-routed). The separate `diviops-scf/` coverage slice named in the primer does not ship in this repository. Cross-cutting harness conventions (response envelope, capability handshake, `dry_run` plan shape, idempotency) live in the [diviops/](../../diviops/SKILL.md) primer skill.
 
 ## Response shape
 
