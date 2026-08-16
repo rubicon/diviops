@@ -1654,6 +1654,168 @@ trait DiviOps_Agent_Page {
 	}
 
 	/**
+	 * Apply an `attrs` payload onto a block's attribute tree (#206).
+	 *
+	 * Every key is a dot path. A key with no dots is simply a one-segment path,
+	 * which is where the data-loss bug lived: the leaf branch assigned straight
+	 * over `$block_attrs['module']`, discarding `meta.adminLabel`,
+	 * `decoration.layout`, and `decoration.spacing` in a single write that
+	 * reported success. The same destruction was reachable one level down with
+	 * any dotted path whose value is an object.
+	 *
+	 * Leaf writes therefore merge instead of overwriting whenever BOTH the
+	 * existing and incoming values are associative maps. Scalars and nulls still
+	 * assign, so targeted reset via `"a.b.c": null` keeps working.
+	 *
+	 * @param array $block_attrs Existing attribute tree.
+	 * @param array $attrs       Caller payload, keyed by dot path.
+	 * @return array
+	 */
+	private static function apply_module_attr_updates( array $block_attrs, array $attrs ): array {
+		foreach ( $attrs as $path => $value ) {
+			$keys  = self::split_dot_path( (string) $path );
+			$last  = count( $keys ) - 1;
+			$ref   = &$block_attrs;
+			foreach ( $keys as $i => $key ) {
+				if ( $i === $last ) {
+					$existing    = array_key_exists( $key, $ref ) ? $ref[ $key ] : null;
+					$ref[ $key ] = self::merge_module_attr_value( $existing, $value );
+				} else {
+					if ( ! isset( $ref[ $key ] ) || ! is_array( $ref[ $key ] ) ) {
+						$ref[ $key ] = array();
+					}
+					$ref = &$ref[ $key ];
+				}
+			}
+			unset( $ref );
+		}
+
+		return $block_attrs;
+	}
+
+	/**
+	 * Expand an `attrs` payload to the effective leaf dot paths it will write.
+	 *
+	 * Validation-only. Apply semantics are unchanged: object values still MERGE
+	 * (apply_module_attr_updates()), they are not rewritten into flat leaf writes.
+	 * This exists so path-based guards judge what a payload actually targets
+	 * rather than how the caller chose to spell it.
+	 *
+	 * Lists terminate the walk — a list is a value, not a branch — which matches
+	 * the merge rule that lists replace wholesale.
+	 *
+	 * @param array $attrs Caller payload, keyed by dot path.
+	 * @return array Effective leaf path => value.
+	 */
+	private static function expand_attr_paths_for_validation( array $attrs ): array {
+		$expanded = array();
+		foreach ( $attrs as $path => $value ) {
+			self::expand_attr_path_recursive( (string) $path, $value, $expanded );
+		}
+
+		return $expanded;
+	}
+
+	/**
+	 * Recursive worker for expand_attr_paths_for_validation().
+	 *
+	 * @param string $path     Path accumulated so far.
+	 * @param mixed  $value    Value at that path.
+	 * @param array  $expanded Accumulator, by reference.
+	 * @return void
+	 */
+	private static function expand_attr_path_recursive( string $path, $value, array &$expanded ): void {
+		if ( is_array( $value ) && array() !== $value && ! self::is_list_like_array( $value ) ) {
+			foreach ( $value as $key => $child ) {
+				// Re-escape literal dots so split_dot_path() reproduces this exact
+				// segment. Composable Settings slots such as
+				// groupPreset["title.decoration.spacing"] would otherwise re-split
+				// into a bogus `title` content root and be rejected on sight.
+				$segment = str_replace( '.', '\\.', (string) $key );
+				self::expand_attr_path_recursive( $path . '.' . $segment, $child, $expanded );
+			}
+
+			return;
+		}
+
+		$expanded[ $path ] = $value;
+	}
+
+	/**
+	 * Read the value at a dot path, or null when any segment is missing.
+	 *
+	 * Shared by dry_run's before- and after-capture so both sides read the tree
+	 * the same way; `after` is taken from the mutated tree rather than echoing
+	 * the caller's payload, which merging would make inaccurate.
+	 *
+	 * @param array  $attrs Attribute tree to read.
+	 * @param string $path  Dot-separated attr path.
+	 * @return mixed
+	 */
+	private static function read_module_attr_path( array $attrs, string $path ) {
+		$current = $attrs;
+		foreach ( self::split_dot_path( $path ) as $key ) {
+			if ( is_array( $current ) && array_key_exists( $key, $current ) ) {
+				$current = $current[ $key ];
+			} else {
+				return null;
+			}
+		}
+
+		return $current;
+	}
+
+	/**
+	 * Merge one attr value into another for apply_module_attr_updates().
+	 *
+	 * NOT `_deep_merge()` (trait-core.php), despite the apparent reuse: that
+	 * helper merges by key with no list awareness, so overriding
+	 * `["class-a","class-b"]` with `["class-c"]` yields `["class-c","class-b"]`.
+	 * That is wrong for every list-valued attr — including the CSS-classes array
+	 * at `module.decoration.attributes.desktop.value.attributes` — and stays
+	 * invisible until someone edits one. Lists replace wholesale here; only
+	 * associative maps merge.
+	 *
+	 * @param mixed $existing Current value, or null when the key is absent.
+	 * @param mixed $incoming Caller-supplied value.
+	 * @return mixed
+	 */
+	private static function merge_module_attr_value( $existing, $incoming ) {
+		if ( ! is_array( $existing ) || ! is_array( $incoming ) ) {
+			return $incoming;
+		}
+		// An empty array is indistinguishable from an empty list, and an explicit
+		// `[]` reads as "clear this", so both sides short-circuit to replacement.
+		if ( self::is_list_like_array( $existing ) || self::is_list_like_array( $incoming ) ) {
+			return $incoming;
+		}
+
+		foreach ( $incoming as $key => $value ) {
+			$existing[ $key ] = array_key_exists( $key, $existing )
+				? self::merge_module_attr_value( $existing[ $key ], $value )
+				: $value;
+		}
+
+		return $existing;
+	}
+
+	/**
+	 * Sequential-integer-keyed array test. Hand-rolled because `array_is_list()`
+	 * is PHP 8.1+ and this plugin's floor is 7.4 (see the PHP-floor scanner in
+	 * tests/).
+	 *
+	 * @param array $value Array to classify.
+	 * @return bool
+	 */
+	private static function is_list_like_array( array $value ): bool {
+		if ( array() === $value ) {
+			return true;
+		}
+
+		return array_keys( $value ) === range( 0, count( $value ) - 1 );
+	}
+
+	/**
 	 * Catch the narrow high-risk case where a text selector resolves to one
 	 * module type but the caller writes a content slot belonging to another.
 	 *
@@ -1686,6 +1848,15 @@ trait DiviOps_Agent_Page {
 		if ( ! isset( $content_roots_by_type[ $module_type ] ) ) {
 			return null;
 		}
+
+		// Decide on EFFECTIVE leaf paths, not the caller's spelling. This guard
+		// reads path segments, so an object value hides `innerContent` inside the
+		// value where the segments never show it: `{"title":{"innerContent":...}}`
+		// segments to just ['title'] and sails through, while the identical edit
+		// written as `title.innerContent.desktop.value` is correctly rejected.
+		// Harmless while the nested form was destructive nonsense; reachable now
+		// that it merges cleanly and is documented (#206).
+		$attrs = self::expand_attr_paths_for_validation( $attrs );
 
 		$allowed_roots = array_fill_keys( $content_roots_by_type[ $module_type ], true );
 		foreach ( $attrs as $path => $_value ) {
@@ -2107,46 +2278,30 @@ trait DiviOps_Agent_Page {
 		$before_values = [];
 		if ( $dry_run ) {
 			foreach ( $attrs as $path => $_unused ) {
-				$keys = self::split_dot_path( $path );
-				$cur  = $block_attrs;
-				foreach ( $keys as $key ) {
-					if ( is_array( $cur ) && array_key_exists( $key, $cur ) ) {
-						$cur = $cur[ $key ];
-					} else {
-						$cur = null;
-						break;
-					}
-				}
-				$before_values[ $path ] = $cur;
+				$before_values[ $path ] = self::read_module_attr_path( $block_attrs, (string) $path );
 			}
 		}
 
-		// Apply dot-notation attrs.
-		foreach ( $attrs as $path => $value ) {
-			$keys = self::split_dot_path( $path );
-			$ref  = &$block_attrs;
-			foreach ( $keys as $i => $key ) {
-				if ( $i === count( $keys ) - 1 ) {
-					$ref[ $key ] = $value;
-				} else {
-					if ( ! isset( $ref[ $key ] ) || ! is_array( $ref[ $key ] ) ) {
-						$ref[ $key ] = [];
-					}
-					$ref = &$ref[ $key ];
-				}
-			}
-			unset( $ref );
-		}
+		// Apply attrs. Keys are dot paths; object values merge into what is
+		// already there rather than replacing it, so an edit cannot destroy
+		// untouched siblings (#206).
+		$block_attrs = self::apply_module_attr_updates( $block_attrs, $attrs );
 
 		if ( $dry_run ) {
 			$target_desc = 'auto_index' === $mode ? $auto_index : ( 'label' === $mode ? $label : "text:{$match_text}" );
 			$changes     = [];
 			foreach ( $attrs as $path => $value ) {
+				// Read `after` back out of the mutated tree rather than echoing the
+				// submitted value. Since object values now merge (#206), the
+				// submitted subtree is NOT the resulting one, and reporting it
+				// would understate what survives — the same class of misleading
+				// dry_run output that let the old replace-everything behavior go
+				// unnoticed, just inverted.
 				$changes[] = [
 					'kind'   => 'module.update',
 					'target' => "page#{$post_id}/{$type}/{$target_desc}#{$path}",
 					'before' => $before_values[ $path ] ?? null,
-					'after'  => $value,
+					'after'  => self::read_module_attr_path( $block_attrs, (string) $path ),
 				];
 			}
 			$extra = $backup ? [ 'backup' => self::rollback_snapshot_plan_for_post_write( $post, 'diviops_module_update', [ 'tool_operation' => 'module.update', 'target' => $target_desc, 'updated' => array_keys( $attrs ) ] ) ] : [];
@@ -2162,12 +2317,51 @@ trait DiviOps_Agent_Page {
 		if ( ! empty( $empty_object_paths ) ) {
 			$block_attrs = self::restore_empty_objects( $block_attrs, $empty_object_paths );
 		}
-		$new_json    = wp_json_encode( $block_attrs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
+		// Serialize the way WordPress will (#206). A plain wp_json_encode() leaves
+		// raw `<`, `>`, `&`, `"` in the attr JSON; core's serialize_blocks() then
+		// hex-escapes exactly those bytes when it re-serializes post_content on
+		// save, and the integrity guard — which compares byte-for-byte — reads
+		// that canonicalization as corruption and reverts a correct write.
+		// Design tokens carry `"` and prose carries HTML, so this fired on most
+		// real modules, including when the offending bytes sat in a sibling
+		// attribute the caller never touched.
+		$new_json = self::serialize_block_attrs_canonical( $block_attrs );
+		if ( null === $new_json ) {
+			return self::envelope_error(
+				'invalid_input',
+				'Updated module attributes could not be JSON-encoded safely.',
+				'Check the submitted attrs for values that cannot be serialized (resources, closures, invalid UTF-8).',
+				400,
+				[ 'field' => 'attrs' ]
+			);
+		}
 		$prefix      = self::BLOCK_OPEN_PREFIX . self::block_name_from_identifier( $type ) . ' ';
 		$suffix      = $is_self_closing ? ' /-->' : ' -->';
 		$new_comment = $prefix . $new_json . $suffix;
 
 		$content = substr_replace( $content, $new_comment, $pos, $comment_end - $pos );
+
+		// Normalize the WHOLE document, not just the block we rewrote — this is
+		// the root-cause fix, and what every other write path already does
+		// (trait-page.php 208/1097/1245/1374/1504, trait-theme-builder.php
+		// 1065/1298/1419). module_update was the sole omission. Canonicalizing
+		// only the edited block would still leave sibling blocks written by an
+		// earlier version non-canonical, and WordPress canonicalizes those too on
+		// save — so the guard would keep tripping on a page it never edited.
+		// Normalizing already-canonical content is a no-op, so this cannot
+		// itself introduce drift.
+		$normalized = self::normalize_divi_full_content_for_write( $content );
+		if ( empty( $normalized['ok'] ) ) {
+			$error = $normalized['error'] ?? [];
+			return self::envelope_error(
+				'invalid_input',
+				$error['message'] ?? 'Updated content contains unsafe Divi block attribute JSON.',
+				$error['hint'] ?? 'Raw HTML inside Divi block attributes is allowed, but malformed escapes must be corrected before writing.',
+				400,
+				array_merge( [ 'field' => 'attrs' ], $error )
+			);
+		}
+		$content = $normalized['content'];
 
 		$target_desc = '';
 		$matched_by  = $mode;
