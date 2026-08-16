@@ -1,0 +1,30 @@
+# Opt this repository out of the Pull app (wei/pull) WITHOUT uninstalling it (#211).
+#
+# The app is installed across all repos deliberately, so per-repo installation
+# selection is not the lever. Instead this overrides the behaviour that causes the
+# unwanted PRs.
+#
+# From wei/pull source (src/utils/get-pull-config.ts), config resolution is:
+#   1. archived repo            -> skip
+#   2. valid .github/pull.yml   -> use it
+#   3. no config + repo is fork -> synthesize a rule syncing the PARENT's default
+#                                  branch  <-- this repo is a fork of oaris-dev/diviops,
+#                                              which is what kept reopening #114, #161,
+#                                              #185, #205
+#
+# Supplying a valid config replaces step 3. Pointing `upstream` at THIS repository's
+# own main means nothing is ever ahead of base, so no sync PR is ever opened.
+# `upstream` is `owner:branch` with the repo name implied, so `rubicon:main` is
+# rubicon/diviops@main -- the same ref as `base`.
+#
+# Do NOT express this as `rules: []`: the schema is `z.array(...).min(1)`, and an
+# INVALID config throws rather than no-opping, which would trade the unwanted PRs for
+# an error on every scheduled run.
+#
+# mergeMethod: none is belt-and-braces -- if a PR ever were created, nothing
+# auto-merges it.
+version: "1"
+rules:
+  - base: main
+    upstream: rubicon:main
+    mergeMethod: none

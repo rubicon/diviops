@@ -24,3 +24,8 @@ dist-test/
 # PHP dev-tooling deps (PHPStan + WordPress stubs, #71) -- composer.lock is
 # committed and pins versions; vendor/ is installed fresh by composer.json.
 vendor/
+
+# Local codebase-memory knowledge-graph index (#211). Regenerates deterministically
+# from source via index_repository, changes on every reindex, and is binary -- so
+# committing it would churn reviewed diffs for no benefit a local reindex lacks.
+.codebase-memory/
