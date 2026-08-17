@@ -1,21 +1,102 @@
 # Contributing
 
-Thanks for your interest in DiviOps. A note on how this repo works before you open a PR.
+Thanks for your interest in DiviOps. **Pull requests are welcome here** — this repository
+is where the work happens, not a mirror of it.
 
-## This is a distribution repo
+## What this repository is
 
-`oaris-dev/diviops` is a **sync target** — every commit here is produced by an automated release dance from a private upstream repo we manage. Direct PRs against this repo will not be merged, because the next sync would overwrite them.
+`rubicon/diviops` is a **maintained fork** of [`oaris-dev/diviops`](https://github.com/oaris-dev/diviops).
+We set the roadmap, the release process, and the test suite. Upstream is an occasional
+source of good ideas and fixes, not something this repo syncs from automatically — so
+changes made here stay here.
 
-## How to contribute
+See [FORK.md](FORK.md) for what diverges from upstream and why, and read it before
+changing anything that originated upstream.
 
-- **Found a bug?** Open an issue on this repo. Include WP version, Divi version, MCP server version (`@rubicontv/diviops-mcp`), plugin version, and reproduction steps. The bug-report template prompts for these.
-- **Have a feature idea?** Open an issue using the feature-request template. Concrete use cases beat abstract requests.
-- **Spotted a docs problem?** Open an issue. We'll fix it upstream and the next sync will land it here.
+## Before you open a PR
 
-## Triage and response windows
+**Open an issue first.** It does not need to be long — a paragraph of what is wrong or
+missing, and how you would approach it. This is so we can agree on the approach before
+you spend real effort, not a formality. The only exception is a genuinely trivial change:
+a typo, a comment, a metadata field, with no behaviour change.
 
-DiviOps is **beta software** under active development. We triage free-distribution issues opportunistically — responses are best-effort, not guaranteed. For guaranteed support windows, see the Pro distribution (planned for the v2.0 commercial launch).
+## Workflow
 
-## Security issues
+1. **Issue first**, per above.
+2. **Branch** as `dev/<issue-number>-<short-slug>`, e.g. `dev/206-module-update-encode`.
+3. **Write the test first.** Every behaviour change needs coverage — see below.
+4. **Commit** using [Conventional Commits](https://www.conventionalcommits.org/)
+   (`fix(module_update): …`, `feat(preset): …`, `docs(divi): …`). Release automation reads
+   these to compute the version bump, so the prefix is load-bearing.
+5. **Sign your commits.** `git commit -S`. Unsigned commits will be asked to be re-signed.
+6. **Open a PR** with `Closes #<issue>` in the body, and say what you verified and how.
+   "Tests pass" is less useful than the actual command and its output.
 
-Don't open public issues for security vulnerabilities. See [SECURITY.md](SECURITY.md) for the disclosure flow.
+A maintainer reviews before merge. Nothing self-merges.
+
+## Testing
+
+No Composer, no PHPUnit, no build step. The suite is plain PHP:
+
+```bash
+php tests/run.php
+```
+
+Test files are `tests/test-*.php`. A few conventions that are not obvious:
+
+- **The runner fails when it discovers no test files, and when a filter matches nothing.**
+  That is deliberate. A gate that reports what it inspected but derives pass/fail only
+  from problems found will pass while inspecting nothing — which has genuinely happened
+  here before. If you add a gate, assert that it actually inspected something.
+- **Divi-dependent assertions are environment-gated.** CI has no Divi install. Set
+  `DIVIOPS_DIVI_BUILDER5_PATH` to a Divi `includes/builder-5` directory to run them:
+
+  ```bash
+  DIVIOPS_DIVI_BUILDER5_PATH=/path/to/Divi/includes/builder-5 php tests/run.php
+  ```
+
+- **Prefer a test that fails for the right reason.** If you are fixing a bug, show the
+  test failing before the fix. Mutation-checking a new assertion — break the thing it
+  guards, confirm it fails — is cheap and catches assertions that never had teeth.
+
+The MCP server has its own checks:
+
+```bash
+cd diviops-server && npm ci && npm run build && npm run smoke
+```
+
+## Four identifiers that must never be renamed
+
+Plugin slug `diviops-agent`, class `DiviOps_Agent`, REST namespace `diviops/v1`, filter
+`diviops_agent_handshake_extensions`.
+
+DiviOps Agent Pro (separate and commercial) attaches through `class_exists( 'DiviOps_Agent' )`
+and that filter, and the published `@rubicontv/diviops-mcp` calls `/diviops/v1/*`. Renaming
+any of the four **silently** disables Pro and makes MCP tools vanish without an error,
+because a failed capability gate removes a tool rather than reporting a problem. There is a
+test guarding this; if it fails, that is why.
+
+## Versioning and releases
+
+Do **not** hand-edit the version or `CHANGELOG.md`. release-please owns both, computes the
+bump from your commit prefixes, and curates the changelog on a release PR. The plugin
+version lives in two places in `diviops-agent.php` and a test guards that they stay in sync.
+
+## Reporting bugs
+
+Open an issue with the WordPress version, Divi version, MCP server version
+(`@rubicontv/diviops-mcp`), plugin version, and reproduction steps. The bug-report template
+prompts for these. A minimal reproduction beats a description.
+
+For anything touching write paths, include whether the write reported success — a write
+that reports success and does the wrong thing is a different and more serious bug than one
+that errors.
+
+## Security
+
+Don't open public issues for security vulnerabilities. See [SECURITY.md](SECURITY.md) for
+the disclosure flow.
+
+## Status
+
+DiviOps is **beta software** under active development. Triage is best-effort.

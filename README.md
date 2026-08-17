@@ -29,7 +29,7 @@ Claude Code ◄──► MCP Server (stdio) ◄──► WordPress REST API ◄�
 | **DiviOps Agent** WordPress plugin | REST API endpoints for Divi page data, section targeting, block validation, preset management. The contract layer between WordPress + Divi and the MCP server. | `diviops-agent.zip` at repo root |
 | **`diviops-agent-pro`** WordPress plugin | Pro add-on for paid coverage slices, Pro license activation, and update gating. Requires `diviops-agent`. | `diviops-agent-pro.zip` at repo root in the Pro distribution |
 | **`@rubicontv/diviops-mcp`** | Node.js MCP server that bridges MCP clients to WordPress. Distributed via npm — no clone, no build. | `npx -y --package @rubicontv/diviops-mcp diviops-mcp` |
-| **`divi-5-builder`** skill | Block format rules, verified attribute paths, design patterns. Without it, agents guess attr formats and produce broken pages. | `skills/divi-5-builder/` (Claude: `claude plugin install oaris-dev/diviops`; Codex: copy `skills/*` into `~/.codex/skills`) |
+| **`divi-5-builder`** skill | Block format rules, verified attribute paths, design patterns. Without it, agents guess attr formats and produce broken pages. | `skills/divi-5-builder/` (Claude: `claude plugin install rubicon/diviops`; Codex: copy `skills/*` into `~/.codex/skills`) |
 | **`diviops-design-library`** plugin | Optional. CSS entrance animations, gradient text, glass effects, Three.js WebGL shaders. | `diviops-design-library.zip` at repo root |
 
 ## Use cases
@@ -103,7 +103,7 @@ Restart your client, then ask: **"List the pages on my site."** The assistant ca
 The skill teaches the assistant the correct Divi 5 block format. Without it, the agent guesses attr formats and produces broken pages.
 
 ```bash
-claude plugin install oaris-dev/diviops
+claude plugin install rubicon/diviops
 ```
 
 Verify with `What skills do you have?` — you should see `divi-5-builder` listed.
@@ -232,7 +232,7 @@ DiviOps is a harness. The Free distribution carries the core Divi authoring surf
 
 ### What ships in Free (v1.x today)
 
-The Free distribution (`oaris-dev/diviops`) carries the core DiviOps execution surface:
+The Free distribution (`rubicon/diviops`) carries the core DiviOps execution surface:
 
 - `diviops-agent` WordPress plugin (REST bridge, Divi 5 + SCF + CPT + WP-CLI handlers)
 - `diviops-design-library` plugin (CSS effects, gradients, glass, Three.js shaders)
@@ -314,7 +314,7 @@ Full troubleshooting matrix and environment-specific setup (DDEV, wp-env, WordPr
 - **[SETUP.md](SETUP.md)** — full onboarding walkthrough (containerized envs, HTTPS, environment variables, WP-CLI security, design-system bootstrap)
 - **[diviops-server/README.md](diviops-server/README.md)** — MCP server reference (response contract, error codes, `dry_run` plan shape, per-tool registration)
 - **[skills/divi-5-builder/SKILL.md](skills/divi-5-builder/SKILL.md)** — block format rules, design patterns, workflow guidance
-- **[Releases](https://github.com/oaris-dev/diviops/releases)** — release history
+- **[Releases](https://github.com/rubicon/diviops/releases)** — release history
 
 ## License
 

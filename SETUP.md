@@ -242,7 +242,7 @@ claude mcp add diviops-mysite \
 
 For CSS entrance animations (`ddl-fade-up`, `ddl-scale-in`), gradient text effects, and Three.js WebGL shaders:
 
-1. Download `diviops-design-library.zip` from the dist repo root (also at the top level of `oaris-dev/diviops` and `oaris-dev/diviops-internal`)
+1. Download `diviops-design-library.zip` from the [repository root](https://github.com/rubicon/diviops)
 2. Upload and activate in **WP Admin → Plugins → Add New → Upload Plugin**
 
 This is optional — the MCP agent works without it.
@@ -253,7 +253,7 @@ The skill teaches the assistant the correct Divi 5 block format — module attri
 
 **Option A — Install as a Claude Code plugin** (recommended):
 ```bash
-claude plugin install oaris-dev/diviops
+claude plugin install rubicon/diviops
 ```
 
 This installs the `divi-5-builder` skill from this repo. Works from any directory — no need to clone or copy files. To update later:
@@ -263,7 +263,7 @@ claude plugin update divi-5-builder
 
 **Option B — Load from cloned repo**:
 ```bash
-git clone https://github.com/oaris-dev/diviops.git
+git clone https://github.com/rubicon/diviops.git
 cd diviops
 claude --plugin-dir .
 ```
@@ -402,7 +402,7 @@ Also create .claude/instructions/design-system.md with my project's brand
 personality and design preferences.
 ```
 
-See [SKILL.md — Design System Lifecycle](https://github.com/oaris-dev/diviops/blob/main/skills/divi-5-builder/SKILL.md#design-system-lifecycle) for the full technical reference.
+See [SKILL.md — Design System Lifecycle](https://github.com/rubicon/diviops/blob/main/skills/divi-5-builder/SKILL.md#design-system-lifecycle) for the full technical reference.
 
 ## Quick Test: Generate Your First Page
 
@@ -494,7 +494,7 @@ Each registration is independent — different site, different credentials, diff
 1. `diviops-agent.zip` installed in their WordPress site
 2. For Pro seats, `diviops-agent-pro.zip` installed and activated with their license key
 3. `claude mcp add ... npx -y --package @rubicontv/diviops-mcp diviops-mcp` with their own `WP_URL`, `WP_USER`, `WP_APP_PASSWORD`
-4. The bundled skills via `claude plugin install oaris-dev/diviops` or by copying `skills/*` into their Codex skill directory
+4. The bundled skills via `claude plugin install rubicon/diviops` or by copying `skills/*` into their Codex skill directory
 
 No clone, no build.
 
