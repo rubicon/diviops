@@ -10,6 +10,13 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.16.2](https://github.com/rubicon/diviops/compare/v1.16.1...v1.16.2) (2026-08-17)
+
+
+### Bug Fixes
+
+* **readme:** sync Stable tag with the plugin version and guard all three locations ([#216](https://github.com/rubicon/diviops/issues/216)) ([9ada9f5](https://github.com/rubicon/diviops/commit/9ada9f511672c31c808e28d10b22a2174f47f9d2))
+
 ## [1.16.1](https://github.com/rubicon/diviops/compare/v1.16.0...v1.16.1) (2026-08-17)
 
 
