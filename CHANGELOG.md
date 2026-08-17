@@ -10,6 +10,13 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.16.1](https://github.com/rubicon/diviops/compare/v1.16.0...v1.16.1) (2026-08-17)
+
+
+### Bug Fixes
+
+* **module_update:** serialize canonically and merge object attrs instead of replacing ([#207](https://github.com/rubicon/diviops/issues/207)) ([8671c2b](https://github.com/rubicon/diviops/commit/8671c2bd8f32106f3e0e15a2767a4ac96b91394a))
+
 ## [1.16.0](https://github.com/rubicon/diviops/compare/v1.15.0...v1.16.0) (2026-08-15)
 
 
