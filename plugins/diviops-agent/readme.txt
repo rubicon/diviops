@@ -4,7 +4,7 @@ Tags: divi, mcp, ai, rest-api, site-builder
 Requires at least: 6.5
 Tested up to: 7.0
 x-release-please-start-version
-Stable tag: 1.16.1
+Stable tag: 1.16.2
 x-release-please-end
 Requires PHP: 7.4
 License: GPLv2 or later
