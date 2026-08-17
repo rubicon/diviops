@@ -9,9 +9,7 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "diviops-mcp": "dist/index.js",
-    "diviops-preset": "dist/preset-cli/bin.js",
-    "diviops-cross-env-preflight": "dist/cross-env-preflight/bin.js"
+    "diviops-mcp": "dist/index.js"
   },
   "files": [
     "dist/**/*",

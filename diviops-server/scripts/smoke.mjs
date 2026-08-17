@@ -14,7 +14,7 @@
 // a zero-tool listing, a drifted count, a missing representative tool, or a
 // handshake version that disagrees with package.json all exit non-zero.
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -162,6 +162,25 @@ try {
   const unique = new Set(names);
   if (unique.size !== names.length) {
     fail(`duplicate tool names registered (${names.length} listed, ${unique.size} unique)`);
+  }
+
+  // Every declared bin must resolve in the build (#222). This gate validated the
+  // TOOL surface and nothing else, so 1.8.1 shipped advertising three bins while
+  // the tarball carried one: `diviops-preset` had no source in this fork at all,
+  // and the cross-env-preflight vendor step copies library modules but not the
+  // entry point. Same shape as #214's Stable tag — a declaration nothing asserts.
+  const { bin } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  const declaredBins = Object.entries(bin ?? {});
+  if (declaredBins.length === 0) {
+    fail('package.json declares no bin entries — expected at least the server entry point');
+  }
+  const danglingBins = declaredBins.filter(([, target]) => !existsSync(join(root, target)));
+  if (danglingBins.length > 0) {
+    fail(
+      `package.json declares bin(s) with no built target: ${danglingBins
+        .map(([name, target]) => `${name} -> ${target}`)
+        .join(', ')}. Either ship the entry point or remove the bin entry — never publish one that cannot run.`,
+    );
   }
 
   console.log(
