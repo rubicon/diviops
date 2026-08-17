@@ -3,7 +3,9 @@ Contributors: diviops
 Tags: divi, mcp, ai, rest-api, site-builder
 Requires at least: 6.5
 Tested up to: 7.0
-Stable tag: 1.5.10
+x-release-please-start-version
+Stable tag: 1.16.1
+x-release-please-end
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
