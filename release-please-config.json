@@ -12,6 +12,10 @@
         {
           "type": "generic",
           "path": "plugins/diviops-agent/diviops-agent.php"
+        },
+        {
+          "type": "generic",
+          "path": "plugins/diviops-agent/readme.txt"
         }
       ]
     },

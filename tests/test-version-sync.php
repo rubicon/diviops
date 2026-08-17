@@ -46,3 +46,31 @@ assert_true(
 	1 === preg_match( '/const\s+VERSION\s*=\s*\'' . $semver . '\';\s*\/\/\s*x-release-please-version/', $plugin_src ),
 	'the VERSION constant carries the inline x-release-please-version marker'
 );
+
+/*
+ * THIRD location (#214). `readme.txt`'s `Stable tag` is also a version declaration, and
+ * it was the one nothing watched: it sat at 1.5.10 against a 1.16.1 plugin — eleven
+ * minors of drift — while the readme's own changelog claimed it "Keeps `Stable tag`
+ * aligned with the plugin header version."
+ *
+ * It drifted precisely because this guard covered two of three locations and
+ * release-please's extra-files listed only the PHP file. An unwatched invariant is not
+ * an invariant. Asserting the marker too, so a future config change that stops updating
+ * the readme fails here rather than rotting quietly for another eleven releases.
+ */
+$readme_src = (string) file_get_contents( dirname( __DIR__ ) . '/plugins/diviops-agent/readme.txt' );
+
+assert_true(
+	1 === preg_match( '/^Stable tag:\s*(' . $semver . ')\s*$/m', $readme_src, $stable_match ),
+	'readme.txt declares a semver Stable tag'
+);
+assert_same(
+	$header_match[1],
+	$stable_match[1],
+	'readme.txt Stable tag agrees with the plugin header Version — release-please must bump all three locations'
+);
+assert_true(
+	false !== strpos( $readme_src, 'x-release-please-start-version' )
+		&& false !== strpos( $readme_src, 'x-release-please-end' ),
+	'the Stable tag line is wrapped in x-release-please block markers'
+);
