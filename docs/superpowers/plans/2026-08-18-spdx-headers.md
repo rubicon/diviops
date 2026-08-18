@@ -12,8 +12,10 @@ MIT-looking tree has nothing telling them it is GPL.
 | `plugins/diviops-agent/`, `plugins/diviops-design-library/` | GPL-2.0-or-later |
 | `diviops-server/src/`, `scripts/`, `tests/` | MIT |
 
-File counts at plan time: 21 GPL PHP, 31 MIT TypeScript, 7 MIT script PHP, 60 MIT test
-PHP. 119 total. 8 vendored files excluded (below).
+File counts at plan time: 21 GPL PHP, 27 MIT TypeScript, 7 MIT script PHP, 60 MIT test
+PHP. 115 total. (An earlier revision said 31 TypeScript; that was wrong. `find -name '*.ts'`
+also matches `.d.ts`, so it counted the vendored declaration files. The gate written in
+Task 1 implements the real constraint, 27.) 8 vendored files excluded (below).
 
 ## Global Constraints
 
@@ -81,7 +83,7 @@ must still pass, since it parses those headers.
 
 Add `// SPDX-License-Identifier: MIT` to:
 
-- 31 TypeScript files under `diviops-server/src/`, EXCLUDING
+- 27 TypeScript files under `diviops-server/src/`, EXCLUDING
   `diviops-server/src/cross-env-preflight/*.js` and `*.d.ts`
 - 7 PHP files under `scripts/`
 - 60 PHP files under `tests/`
