@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Minimal WordPress shim for the plain-PHP test harness.
  *

@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Dynamic-content introspection, builder, and validation (#36).
  *

@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * find_block() must span a module correctly when its own attribute JSON carries
  * a `-->` sequence inside a string value.

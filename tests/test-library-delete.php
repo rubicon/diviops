@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * library_delete() — programmatic removal for Divi Library items (#26).
  *

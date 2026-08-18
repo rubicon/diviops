@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Structural regression guard: every function that actually parses block
  * markup for a save/validate round trip must call parse_blocks_for_write()

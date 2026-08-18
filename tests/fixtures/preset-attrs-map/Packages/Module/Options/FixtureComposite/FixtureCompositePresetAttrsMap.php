@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Fixture: a shared family map that delegates most of its vocabulary to a sibling.
  *

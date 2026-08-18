@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Tests for the DIVIOPS_WP_CLI_ALLOW opt-in mechanism (buildAllowlist() in
  * wp-cli.ts). The effective allowlist is computed once, at module load

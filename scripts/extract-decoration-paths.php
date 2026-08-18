@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 // Usage: php scripts/extract-decoration-paths.php <builder5-path> <ModuleName>
 //   or: php scripts/extract-decoration-paths.php <builder5-path> --shared
 // Clean-room provenance helper: prints canonical module.decoration.* dot-paths

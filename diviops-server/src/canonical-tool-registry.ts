@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Transport-neutral ownership of DiviOps MCP registrations.
  *

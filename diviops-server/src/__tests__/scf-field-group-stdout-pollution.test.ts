@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * `diviops_scf_field_group_list` / `_get` against a polluted wp-cli stdout
  * stream (#167).

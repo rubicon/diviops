@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Production-consumed tool metadata + cancellation utility, vendored from
  * upstream ba008d2's health-tools.ts.

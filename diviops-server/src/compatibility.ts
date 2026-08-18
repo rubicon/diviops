@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Server↔plugin compatibility surface.
  *

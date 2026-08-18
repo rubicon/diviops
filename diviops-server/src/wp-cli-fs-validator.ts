@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Filesystem flag validation for wp-cli commands that read/write outside
  * the standard WP data surface (options, posts, meta, etc.).

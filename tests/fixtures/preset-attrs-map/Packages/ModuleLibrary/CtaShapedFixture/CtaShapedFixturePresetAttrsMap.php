@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Fixture: the hazard `CTAPresetAttrsMap.php` poses, in miniature.
  *

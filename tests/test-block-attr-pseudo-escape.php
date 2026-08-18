@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * find_malformed_block_attr_escape() false-positives on Divi's own
  * `$variable({...})$` token wrapper (#97).

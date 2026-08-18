@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * divi/global-layout wrapper counting parity between read and write paths.
  *

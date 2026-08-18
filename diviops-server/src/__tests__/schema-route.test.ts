@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Tests for schema-route.ts — the URL builder behind `diviops_schema_get_module`.
  *

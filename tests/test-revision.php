@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * revision_list / revision_get / revision_restore / revision_diff (#34).
  *

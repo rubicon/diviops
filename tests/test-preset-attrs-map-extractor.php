@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * The merge-aware per-module preset-attrs extractor.
  *

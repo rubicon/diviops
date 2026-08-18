@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Rollback snapshot retention and inventory windowing (#187).
  *

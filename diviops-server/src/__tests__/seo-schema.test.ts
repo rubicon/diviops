@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Tests for seo-schema.ts — the Zod validation gate in front of
  * `diviops_seo_metadata_update`'s `changes` array (#37).

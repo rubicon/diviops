@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Plugin-artifact build guard (#229, reworked by #238).
  *

@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * find_all_sections() must not depth-scan a self-closing section opener.
  *

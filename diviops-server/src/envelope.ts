@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Standardized response envelope (#489).
  *

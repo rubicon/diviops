@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * module_get() / module_move() must actually route into the parser fallback
  * when the raw find_block() scanner hits malformed markup, not just when a

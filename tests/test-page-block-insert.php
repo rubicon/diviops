@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * page_block_insert() — insert a row/column (any block) at a path/selector on a
  * page, without rebuilding the section (#32 / G5).

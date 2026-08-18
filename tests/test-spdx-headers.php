@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * SPDX-License-Identifier coverage guard (#233).
  *

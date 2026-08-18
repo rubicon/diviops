@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Handshake client-runtime reporting (#123).
  *
