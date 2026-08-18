@@ -11,6 +11,12 @@ name: release-please
 on:
   push:
     branches: [main]
+  # Manual trigger. release-please only reacts to pushes on main, so any state
+  # that stops it from cutting a release also removes the only way to re-run it
+  # once the state is repaired. Recovering #221 required repairing the tag by
+  # hand and then waiting for an unrelated push. This gives that recovery its
+  # own trigger.
+  workflow_dispatch:
 
 permissions:
   contents: write
