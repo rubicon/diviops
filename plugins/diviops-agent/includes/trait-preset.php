@@ -2139,8 +2139,36 @@ trait DiviOps_Agent_Preset {
 			$truncated = true;
 		}
 
+		// #199: every applied page takes a mandatory rollback snapshot (#196), and the
+		// snapshot store is capped (#194) and shared with every other write tool. An
+		// apply larger than the remaining budget evicts its own earliest snapshots as
+		// it runs and still reports success for those pages, which silently reproduces
+		// the unrecoverability #196 exists to remove. Refuse instead, and report the
+		// budget either way so a dry run shows it before anyone commits.
+		//
+		// Fail closed rather than exempting the run from eviction: exempting would let
+		// the store exceed the cap by up to the run size, which is the unbounded
+		// options table #194 exists to prevent.
+		$snapshot_budget = self::rollback_snapshot_budget_remaining();
+		if ( 'apply' === $mode && count( $posts ) > $snapshot_budget ) {
+			return self::envelope_error(
+				'preset.snapshot_budget_exceeded',
+				'This apply covers ' . count( $posts ) . ' page(s) but only ' . $snapshot_budget . ' rollback snapshot slot(s) remain, so the run would evict its own earliest snapshots and report success for pages it could no longer restore.',
+				$snapshot_budget > 0
+					? 'Chunk the request into batches of at most ' . $snapshot_budget . ' page(s), or free slots first by deleting snapshots you no longer need.'
+					: 'The snapshot store is at its retention cap. Free slots by deleting snapshots you no longer need, then retry.',
+				409,
+				[
+					'planned_pages'   => count( $posts ),
+					'snapshot_budget' => $snapshot_budget,
+					'retention_limit' => self::rollback_snapshot_retention_limit(),
+				]
+			);
+		}
+
 		$summary = [
 			'scope'           => $effective_scope,
+			'snapshot_budget' => $snapshot_budget,
 			'pages_scanned'   => count( $posts ),
 			'pages_modified'  => 0,
 			'uuid_swaps'      => 0,

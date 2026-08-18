@@ -208,6 +208,43 @@ trait DiviOps_Agent_Rollback {
 	}
 
 	/**
+	 * Snapshot rows currently stored.
+	 *
+	 * Counted with the same LIKE-prefix query the retention scan uses, and
+	 * deliberately without the id-parses filter that scan applies at delete
+	 * time: the cap is enforced on the raw matched-row count, so a budget
+	 * derived from a stricter count would promise slots retention will not
+	 * actually honor. Bounded one past the limit because every caller only
+	 * needs to know how much room is left, and past the cap the answer is
+	 * zero regardless of how far past.
+	 */
+	private static function rollback_snapshot_stored_count(): int {
+		global $wpdb;
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || empty( $wpdb->options ) ) {
+			return 0;
+		}
+
+		$like = $wpdb->esc_like( self::rollback_snapshot_option_prefix() ) . '%';
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- `$wpdb->options` is the WordPress options table; this bounded count mirrors the retention scan and has no stable cache API equivalent.
+		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s ORDER BY option_id DESC LIMIT %d", $like, self::rollback_snapshot_retention_limit() + 1 ) );
+
+		return is_array( $rows ) ? count( $rows ) : 0;
+	}
+
+	/**
+	 * Snapshot slots still available before retention starts evicting (#199).
+	 *
+	 * The cap is shared by every write tool rather than owned by any one of
+	 * them, so a caller planning a multi-page write cannot reason about
+	 * headroom from its own page count alone. Floors at zero: a negative
+	 * budget compared against a page count would read as "room available" and
+	 * let exactly the oversized run through that this exists to stop.
+	 */
+	private static function rollback_snapshot_budget_remaining(): int {
+		return max( 0, self::rollback_snapshot_retention_limit() - self::rollback_snapshot_stored_count() );
+	}
+
+	/**
 	 * Evict the oldest snapshots beyond the retention cap.
 	 *
 	 * Best-effort by design: this runs after the snapshot row is safely stored,
