@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: GPL-2.0-or-later
 if ( ! defined( 'ABSPATH' ) ) { exit; }
 
 trait DiviOps_Agent_Media {
