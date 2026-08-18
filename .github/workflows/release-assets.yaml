@@ -1,0 +1,75 @@
+# Attach the WordPress plugin zips to a published plugin Release (#229).
+#
+# Every install path this project documents pointed at a tracked `<slug>.zip` at the
+# repository root, and nothing rebuilt those zips. `diviops-agent.zip` shipped plugin
+# 1.5.10 while source was at 1.16.2, missing three fork-authored traits, because it
+# was an inherited upstream artifact. `tests/test-plugin-zip-sync.php` now fails the
+# suite when the tracked zip drifts from source; this workflow additionally publishes
+# a versioned copy on each Release, so install instructions can point at an immutable
+# release asset instead of a mutable `raw/main` path.
+#
+# Deliberately a separate file from publish.yaml rather than another job in it.
+# publish.yaml holds NPM_TOKEN and `id-token: write` for provenance, and is pinned
+# and scoped tightly for that reason. Uploading release assets needs
+# `contents: write`, which that workflow must not have. Two files, two credentials,
+# neither able to do the other's job.
+#
+# This repository cuts TWO release streams: the plugin as `vX.Y.Z` and the MCP server
+# as `mcp-server-vX.Y.Z`. publish.yaml runs only for the `mcp-server-v` prefix; this
+# one runs only for the other, so a server release never republishes plugin assets.
+name: Release assets
+
+on:
+  release:
+    types: [published]
+  # Backfills assets onto a Release cut before this workflow existed, and gives the
+  # upload its own trigger when a Release is published while this job is broken.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing plugin release tag to attach assets to, e.g. v1.16.2
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-assets-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  attach:
+    runs-on: ubuntu-latest
+    # Plugin releases only. A `mcp-server-v` tag is the npm train and ships no zip.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      !startsWith(github.event.release.tag_name, 'mcp-server-v')
+    steps:
+      # SHA-pinned, matching publish.yaml and test.yaml (#200).
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Build the plugin zips from source
+        run: php scripts/build-plugin-zip.php
+
+      # The build is only trustworthy if the artifact it produced matches source.
+      # Runs the same guard the suite runs, so a drifted zip fails here too rather
+      # than being uploaded.
+      - name: Verify the built zips match source
+        run: php tests/run.php plugin-zip-sync
+
+      - name: Checksums
+        run: sha256sum diviops-agent.zip diviops-design-library.zip > SHA256SUMS.txt
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          gh release upload "$TAG" \
+            diviops-agent.zip \
+            diviops-design-library.zip \
+            SHA256SUMS.txt \
+            --clobber
