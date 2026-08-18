@@ -10,6 +10,15 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.16.3](https://github.com/rubicon/diviops/compare/v1.16.2...v1.16.3) (2026-08-18)
+
+
+### Bug Fixes
+
+* **ci:** build release assets from main's tooling and the tag's source ([#237](https://github.com/rubicon/diviops/issues/237)) ([133315c](https://github.com/rubicon/diviops/commit/133315ce13a77f6239402cbf959e9d96a8371c0f)), closes [#236](https://github.com/rubicon/diviops/issues/236)
+* **dist:** rebuild the plugin zips from source and gate them against drift ([#234](https://github.com/rubicon/diviops/issues/234)) ([3433a1c](https://github.com/rubicon/diviops/commit/3433a1c97284141da602bee2ec6c42d2c2312dcb)), closes [#229](https://github.com/rubicon/diviops/issues/229)
+* **dist:** stop tracking the plugin zips and verify the builder instead ([#239](https://github.com/rubicon/diviops/issues/239)) ([70ea48c](https://github.com/rubicon/diviops/commit/70ea48cc587def1d5ee5e0ed6ecebb4bc5b22bc5)), closes [#238](https://github.com/rubicon/diviops/issues/238)
+
 ## [1.16.2](https://github.com/rubicon/diviops/compare/v1.16.1...v1.16.2) (2026-08-17)
 
 
