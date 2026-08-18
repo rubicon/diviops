@@ -10,8 +10,14 @@
  * `tests/test-plugin-zip-sync.php` fails the suite when the two drift.
  *
  * Usage:
- *   php scripts/build-plugin-zip.php              Build every plugin zip
- *   php scripts/build-plugin-zip.php diviops-agent  Build one
+ *   php scripts/build-plugin-zip.php                       Build every plugin zip
+ *   php scripts/build-plugin-zip.php diviops-agent         Build one
+ *   php scripts/build-plugin-zip.php --out-dir=/tmp/x      Build elsewhere
+ *
+ * The output directory defaults to the repository root, which is what
+ * `.github/workflows/release-assets.yaml` uploads from. `--out-dir` exists so
+ * `tests/test-plugin-zip-sync.php` can build into a temporary directory and verify
+ * the result without writing into the working tree.
  *
  * Entries are added in sorted order so a rebuild from unchanged source produces a
  * stable listing rather than filesystem-iteration order.
@@ -24,7 +30,20 @@ declare( strict_types = 1 );
 $root    = dirname( __DIR__ );
 $plugins = array( 'diviops-agent', 'diviops-design-library' );
 
-$only = isset( $argv[1] ) ? (string) $argv[1] : '';
+$out_dir = $root;
+$only    = '';
+foreach ( array_slice( $argv, 1 ) as $arg ) {
+	if ( 0 === strpos( $arg, '--out-dir=' ) ) {
+		$out_dir = rtrim( substr( $arg, 10 ), '/' );
+		continue;
+	}
+	$only = (string) $arg;
+}
+if ( ! is_dir( $out_dir ) ) {
+	fwrite( STDERR, sprintf( "output directory does not exist: %s\n", $out_dir ) );
+	exit( 1 );
+}
+
 if ( '' !== $only ) {
 	if ( ! in_array( $only, $plugins, true ) ) {
 		fwrite( STDERR, sprintf( "unknown plugin: %s\n", $only ) );
@@ -61,7 +80,7 @@ foreach ( $plugins as $slug ) {
 		exit( 1 );
 	}
 
-	$out = $root . '/' . $slug . '.zip';
+	$out = $out_dir . '/' . $slug . '.zip';
 	if ( is_file( $out ) && ! unlink( $out ) ) {
 		fwrite( STDERR, sprintf( "could not remove the previous %s.zip\n", $slug ) );
 		exit( 1 );

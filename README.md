@@ -26,7 +26,7 @@ Claude Code ◄──► MCP Server (stdio) ◄──► WordPress REST API ◄�
 
 | Component | What it is | Where it lives |
 |---|---|---|
-| **DiviOps Agent** WordPress plugin | REST API endpoints for Divi page data, section targeting, block validation, preset management. The contract layer between WordPress + Divi and the MCP server. | `diviops-agent.zip` at repo root |
+| **DiviOps Agent** WordPress plugin | REST API endpoints for Divi page data, section targeting, block validation, preset management. The contract layer between WordPress + Divi and the MCP server. | `diviops-agent.zip` on the [latest release](https://github.com/rubicon/diviops/releases/latest) |
 | **`diviops-agent-pro`** WordPress plugin | Pro add-on for paid coverage slices, Pro license activation, and update gating. Requires `diviops-agent`. | `diviops-agent-pro.zip` at repo root in the Pro distribution |
 | **`@rubicontv/diviops-mcp`** | Node.js MCP server that bridges MCP clients to WordPress. Distributed via npm — no clone, no build. | `npx -y --package @rubicontv/diviops-mcp diviops-mcp` |
 | **`divi-5-builder`** skill | Block format rules, verified attribute paths, design patterns. Without it, agents guess attr formats and produce broken pages. | `skills/divi-5-builder/` (Claude: `claude plugin install rubicon/diviops`; Codex: copy `skills/*` into `~/.codex/skills`) |
@@ -49,7 +49,7 @@ Three steps to your first tool call. For containerized environments, HTTPS confi
 
 ### 1. Install the WordPress plugin
 
-Upload **`diviops-agent.zip`** (at the root of this repo) via **WP Admin → Plugins → Add New → Upload Plugin**, then activate it. Requires Divi 5.1+ on WordPress 6.5+.
+Download **`diviops-agent.zip`** from the [latest release](https://github.com/rubicon/diviops/releases/latest) — each release also carries `SHA256SUMS.txt` — then upload it via **WP Admin → Plugins → Add New → Upload Plugin** and activate it. Requires Divi 5.1+ on WordPress 6.5+.
 
 Verify: visit `http://your-site.local/wp-json/diviops/v1/schema/settings` — you should get a 401 (auth required).
 
@@ -269,7 +269,7 @@ Pro also includes `diviops-agent-pro`. When the Pro plugin and a supported targe
 ### Purchased Pro install path
 
 1. Download the Pro package from your customer account
-2. Install and activate `diviops-agent.zip`
+2. Install and activate `diviops-agent.zip` from the [latest release](https://github.com/rubicon/diviops/releases/latest)
 3. Install and activate `diviops-agent-pro.zip`
 4. Open **DiviOps → Pro License**
 5. Paste your license key and confirm the license is active

@@ -15,7 +15,7 @@ Get from zero to generating Divi 5 pages with Claude Code or Codex in ~15 minute
 ## Step 1: Install the WordPress Plugin
 
 1. If installing from WordPress.org after listing, go to **WP Admin → Plugins → Add New**, search for **DiviOps Agent**, install it, and activate it.
-2. For a pre-listing package or manual fallback install, upload `diviops-agent.zip` via **WP Admin → Plugins → Add New → Upload Plugin** and activate it.
+2. For a pre-listing package or manual fallback install, download `diviops-agent.zip` from the [latest release](https://github.com/rubicon/diviops/releases/latest), verify it against the release's `SHA256SUMS.txt`, then upload it via **WP Admin → Plugins → Add New → Upload Plugin** and activate it.
 3. Verify: visit `http://your-site.local/wp-json/diviops/v1/schema/settings` — you should get a 401 (auth required)
 
 > **If Divi is not active**, authenticated requests return `503 divi_unavailable`. Unauthenticated requests return 401 first.
@@ -26,7 +26,7 @@ The npm MCP server updates with `npx`/npm. Once the Free WordPress plugin is pub
 
 For pre-listing test packages or a manual fallback install, replace the plugin ZIP through WordPress admin:
 
-1. Download `diviops-agent.zip` from the public dist repo root
+1. Download `diviops-agent.zip` from the [latest release](https://github.com/rubicon/diviops/releases/latest)
 2. Go to **WP Admin → Plugins → Add New → Upload Plugin**
 3. Upload the new `diviops-agent.zip`
 4. When WordPress asks, choose **Replace current with uploaded**

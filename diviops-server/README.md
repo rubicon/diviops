@@ -25,7 +25,7 @@ Three steps to your first tool call.
 
 ### 1. Install the WordPress plugin
 
-Download and activate the **DiviOps Agent** plugin from WordPress.org once it is listed there. For pre-listing test packages or a manual fallback install, take `diviops-agent.zip` from the [latest release](https://github.com/rubicon/diviops/releases/latest), which carries a `SHA256SUMS.txt` alongside it, or from the [repository root](https://github.com/rubicon/diviops/raw/main/diviops-agent.zip). Requires Divi 5.1+ on WordPress 6.5+.
+Download and activate the **DiviOps Agent** plugin from WordPress.org once it is listed there. For pre-listing test packages or a manual fallback install, take `diviops-agent.zip` from the [latest release](https://github.com/rubicon/diviops/releases/latest), which carries a `SHA256SUMS.txt` alongside it. Requires Divi 5.1+ on WordPress 6.5+.
 
 The npm MCP server updates through npm. WordPress.org installs of the Free plugin update through the normal WordPress plugin update flow. For pre-listing test packages or a manual fallback install, replace `diviops-agent.zip` through **WP Admin → Plugins → Add New → Upload Plugin** and choose **Replace current with uploaded**.
 

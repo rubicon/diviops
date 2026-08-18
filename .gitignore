@@ -29,3 +29,8 @@ vendor/
 # from source via index_repository, changes on every reindex, and is binary -- so
 # committing it would churn reviewed diffs for no benefit a local reindex lacks.
 .codebase-memory/
+
+# Built by scripts/build-plugin-zip.php and attached to releases (#238).
+# Not tracked: a committed binary cannot stay in sync with a version release-please bumps.
+/diviops-agent.zip
+/diviops-design-library.zip
