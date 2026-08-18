@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.8.2](https://github.com/rubicon/diviops/compare/mcp-server-v1.8.1...mcp-server-v1.8.2) (2026-08-18)
+
+
+### Bug Fixes
+
+* **npm:** stop declaring bins the package does not ship, and gate it ([#223](https://github.com/rubicon/diviops/issues/223)) ([d855aac](https://github.com/rubicon/diviops/commit/d855aac86de1c0107a001c85b045c081debb5614))
+
 ## [1.8.1](https://github.com/rubicon/diviops/compare/mcp-server-v1.8.0...mcp-server-v1.8.1) (2026-08-17)
 
 
