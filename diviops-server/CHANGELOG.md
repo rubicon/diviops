@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.8.3](https://github.com/rubicon/diviops/compare/mcp-server-v1.8.2...mcp-server-v1.8.3) (2026-08-18)
+
+
+### Bug Fixes
+
+* **dist:** rebuild the plugin zips from source and gate them against drift ([#234](https://github.com/rubicon/diviops/issues/234)) ([3433a1c](https://github.com/rubicon/diviops/commit/3433a1c97284141da602bee2ec6c42d2c2312dcb)), closes [#229](https://github.com/rubicon/diviops/issues/229)
+* **dist:** stop tracking the plugin zips and verify the builder instead ([#239](https://github.com/rubicon/diviops/issues/239)) ([70ea48c](https://github.com/rubicon/diviops/commit/70ea48cc587def1d5ee5e0ed6ecebb4bc5b22bc5)), closes [#238](https://github.com/rubicon/diviops/issues/238)
+
 ## [1.8.2](https://github.com/rubicon/diviops/compare/mcp-server-v1.8.1...mcp-server-v1.8.2) (2026-08-18)
 
 
