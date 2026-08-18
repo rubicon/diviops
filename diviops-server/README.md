@@ -25,7 +25,7 @@ Three steps to your first tool call.
 
 ### 1. Install the WordPress plugin
 
-Download and activate the **DiviOps Agent** plugin from WordPress.org once it is listed there. For pre-listing test packages or a manual fallback install, use the [direct zip](https://github.com/oaris-dev/diviops/raw/main/diviops-agent.zip) or browse the [public distribution repo](https://github.com/oaris-dev/diviops). Requires Divi 5.1+ on WordPress 6.5+.
+Download and activate the **DiviOps Agent** plugin from WordPress.org once it is listed there. For pre-listing test packages or a manual fallback install, take `diviops-agent.zip` from the [latest release](https://github.com/rubicon/diviops/releases/latest), which carries a `SHA256SUMS.txt` alongside it, or from the [repository root](https://github.com/rubicon/diviops/raw/main/diviops-agent.zip). Requires Divi 5.1+ on WordPress 6.5+.
 
 The npm MCP server updates through npm. WordPress.org installs of the Free plugin update through the normal WordPress plugin update flow. For pre-listing test packages or a manual fallback install, replace `diviops-agent.zip` through **WP Admin → Plugins → Add New → Upload Plugin** and choose **Replace current with uploaded**.
 
@@ -314,6 +314,14 @@ These appear on the MCP surface only when their gates are satisfied (see [Tools 
 
 ## Bundled CLI — `diviops-preset`
 
+> **Not in the published package.** `diviops-preset` is documented here but is not currently
+> shipped: the declaration was removed in
+> [#223](https://github.com/rubicon/diviops/pull/223) because it pointed at a binary
+> the tarball did not contain, and restoring it is tracked in
+> [#230](https://github.com/rubicon/diviops/issues/230). The section below describes the
+> intended command and is kept as the specification for that work. `diviops-mcp` is the
+> only executable this package installs today.
+
 The package also ships a standalone command-line preset emitter, `diviops-preset`,
 that produces byte-canonical Divi 5.5.x preset JSON gated by the verified-attrs
 registry (`data/verified-attrs.json`). It is independent of the MCP stdio server —
@@ -350,12 +358,18 @@ REST route, reusing the same `WP_URL` / `WP_USER` / `WP_APP_PASSWORD` env vars.
 The CLI's coverage is intentionally narrow: only the (module, group, variant)
 combinations whose canonical shape is VB-verified in the registry are
 emittable. It is **not** an all-module or all-font-family emitter — each
-additional vertical slice lands with its own verified evidence. See the
-[preset-cli reference](https://github.com/oaris-dev/diviops/blob/main/diviops-server/src/preset-cli/README.md)
-for the full command reference (the `src/` tree is not part of the published
-npm package — this link resolves on the repository).
+additional vertical slice lands with its own verified evidence. A full command reference will land with the source, tracked in
+[#230](https://github.com/rubicon/diviops/issues/230).
 
 ## Bundled CLI — `diviops-cross-env-preflight`
+
+> **Not in the published package.** `diviops-cross-env-preflight` is documented here but is not currently
+> shipped: the declaration was removed in
+> [#223](https://github.com/rubicon/diviops/pull/223) because it pointed at a binary
+> the tarball did not contain, and restoring it is tracked in
+> [#230](https://github.com/rubicon/diviops/issues/230). The section below describes the
+> intended command and is kept as the specification for that work. `diviops-mcp` is the
+> only executable this package installs today.
 
 The package also ships a dry-run-only cross-environment Theme Builder header
 sync preflight:
