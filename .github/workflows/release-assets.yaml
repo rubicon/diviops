@@ -47,9 +47,23 @@ jobs:
       !startsWith(github.event.release.tag_name, 'mcp-server-v')
     steps:
       # SHA-pinned, matching publish.yaml and test.yaml (#200).
+      #
+      # Checks out the DEFAULT BRANCH, not the release tag, then materializes the
+      # tag's plugin tree over it. The two come from different commits on purpose
+      # (#236): the build tooling only exists on main, so checking out an older tag
+      # gave `Could not open input file: scripts/build-plugin-zip.php` and made the
+      # backfill input inert, while the plugin source must come from the tag so the
+      # artifact matches what that release actually shipped.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          fetch-depth: 0
+
+      - name: Materialize the released plugin source
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          git checkout "$TAG" -- plugins/
+          git --no-pager diff --stat HEAD -- plugins/ || true
 
       - name: Build the plugin zips from source
         run: php scripts/build-plugin-zip.php
