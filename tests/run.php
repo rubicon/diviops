@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Plain-PHP test runner.
  *
@@ -121,9 +122,20 @@ if ( array() === $files ) {
 	exit( 1 );
 }
 
+/*
+ * Each test file is required inside its own closure rather than directly at this
+ * top level. A `require` executes in the scope of the code that calls it, so a
+ * test file that assigns a top-level variable — `$files`, `$file`, anything — would
+ * otherwise land in this scope and could silently overwrite the runner's own state
+ * (this is exactly how tests/test-spdx-headers.php once corrupted the "in N
+ * file(s)" count below). The closure gives every test file a scope of its own, so
+ * that class of collision can't recur even for a test that isn't careful about it.
+ */
 foreach ( $files as $file ) {
 	DiviOps_Test_Runner::$current = basename( $file );
-	require $file;
+	( static function ( string $file ): void {
+		require $file;
+	} )( $file );
 }
 
 $failed = count( DiviOps_Test_Runner::$failures );

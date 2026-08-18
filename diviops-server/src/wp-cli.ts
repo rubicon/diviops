@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * WP-CLI Wrapper for Local by Flywheel
  *

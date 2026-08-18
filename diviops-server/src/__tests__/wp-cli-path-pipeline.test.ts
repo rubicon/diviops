@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Integration test for the full path-handling pipeline behind
  * `createWpCli(...).run(command)`:

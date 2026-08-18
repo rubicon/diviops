@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Merge-aware resolution of a Divi module's preset-attributes map.
  *

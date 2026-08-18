@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Third-party Divi 5 modules must be addressable by every targeting operation.
  *

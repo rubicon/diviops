@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * media_validate_positive_id() — REST-boundary positive-integer validation
  * for the media route target-id params (#81).

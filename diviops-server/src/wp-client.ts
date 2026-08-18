@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * WordPress REST API client with Application Password authentication.
  *

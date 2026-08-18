@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * seo_provider_list / seo_metadata_get / seo_metadata_update (#37).
  *

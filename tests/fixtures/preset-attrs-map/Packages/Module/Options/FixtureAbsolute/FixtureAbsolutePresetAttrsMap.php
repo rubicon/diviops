@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Fixture: a shared family map that takes no prefix and returns absolute paths.
  *

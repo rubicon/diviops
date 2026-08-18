@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * The drop-in constraint is the one thing in this fork that breaks silently.
  *

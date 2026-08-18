@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Admin-configurable capability gate for SVG uploads (#73).
  *

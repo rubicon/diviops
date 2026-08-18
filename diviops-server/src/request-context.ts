@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Per-MCP-request context, carried ambiently for the duration of a tool call (#134).
  *

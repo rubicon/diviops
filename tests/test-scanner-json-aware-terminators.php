@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Every remaining `strpos($content, '-->', $pos)` comment-terminator site must
  * be as string/escape-aware as block_opening_comment_end() (added for

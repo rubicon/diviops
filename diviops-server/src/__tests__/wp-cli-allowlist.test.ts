@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Tests for the DEFAULT-tier command allowlist in wp-cli.ts, exercised via
  * the `__wpCliTesting` testing surface the module exports for this purpose.

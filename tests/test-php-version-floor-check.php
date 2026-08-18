@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * The `Requires PHP: 7.4` floor is asserted by nothing that can actually detect a
  * PHP 8-only *function call* -- `php -l` on 7.4 is a syntax lint, and

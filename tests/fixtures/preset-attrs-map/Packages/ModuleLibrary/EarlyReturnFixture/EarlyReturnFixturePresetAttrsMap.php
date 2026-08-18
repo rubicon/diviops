@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Fixture: a map file that names a module it does not serve.
  *

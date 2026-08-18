@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * media_ip_is_reserved() / media_url_is_safe() — SSRF address guard (#28).
  *

@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Fail when plugins/ calls a PHP builtin function newer than the plugin's own
  * declared `Requires PHP` floor. See scripts/lib/php-version-floor-check.php for

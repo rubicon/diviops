@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * Plugin-tool cancellation at the MCP tool boundary (#134).
  *

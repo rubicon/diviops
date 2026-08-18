@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * CanonicalToolRegistry finalization behavior (upstream ba008d2, hand-ported
  * as PR 3 of the upstream-sync reconciliation).

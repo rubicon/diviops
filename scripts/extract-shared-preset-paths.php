@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Print the preset-attribute dot-paths one shared decoration family really contributes.
  *

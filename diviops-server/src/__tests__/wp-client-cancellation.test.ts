@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * WPClient cancellation + fetch injection (upstream ba008d2, adopted as PR 1).
  *

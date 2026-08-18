@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Client-runtime reporting — the real WP-CLI indicator (#123).
  *

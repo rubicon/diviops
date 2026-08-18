@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Build the distributable zip for each WordPress plugin (#229).
  *

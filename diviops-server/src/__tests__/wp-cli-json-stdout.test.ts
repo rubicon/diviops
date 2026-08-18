@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 /**
  * `parseWpCliJson` — recovering a `--format=json` payload from a polluted
  * stdout stream (#167).

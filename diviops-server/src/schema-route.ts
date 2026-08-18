@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 export function normalizeSchemaModuleName(moduleName: string): string {
   const trimmed = moduleName.trim();
   return trimmed.startsWith("divi/") ? trimmed.slice("divi/".length) : trimmed;

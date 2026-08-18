@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Plugin Name: The SEO Framework (test fixture)
  * Description: Minimal header-only stand-in for the real autodescription.php

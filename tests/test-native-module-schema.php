@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Native Divi 5 module schema introspection (#42).
  *

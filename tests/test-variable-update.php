@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * variable_update() — update-in-place for Variable Manager design tokens (#25).
  *

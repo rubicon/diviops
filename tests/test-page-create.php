@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * page_create() post_type support (#31 / G2).
  *

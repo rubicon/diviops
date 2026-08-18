@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * page_duplicate() — same-site whole-page duplication (#35 / G4, owner-split
  * comment 2026-07-29).

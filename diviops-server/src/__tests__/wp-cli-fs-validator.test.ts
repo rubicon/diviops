@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, mkdirSync, symlinkSync, writeFileSync, existsSync } from 'node:fs';

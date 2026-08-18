@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Detect calls to PHP builtin functions newer than this plugin's declared
  * `Requires PHP` floor.

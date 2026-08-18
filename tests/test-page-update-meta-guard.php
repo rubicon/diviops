@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * page_update_content Divi-meta re-init guard (#45).
  *

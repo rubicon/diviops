@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Faithful stub of The SEO Framework's (TSF) public API surface that
  * DiviOps_SEO_TSF_Adapter (trait-seo.php) depends on.

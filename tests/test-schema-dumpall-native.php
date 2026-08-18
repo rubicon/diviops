@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Native modules in schema_get_module_dump_all (#61, part of the skills epic #50).
  *

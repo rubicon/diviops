@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * `module_update` write safety (#206) — two independent defects on one call path.
  *

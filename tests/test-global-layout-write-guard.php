@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * global_layout_wrapper_drift() — the Layer 2 backstop for #11.
  *

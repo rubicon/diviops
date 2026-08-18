@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Menu CRUD — menu_delete / menu_item_remove / menu_item_reorder /
  * menu_location_unassign (#30).

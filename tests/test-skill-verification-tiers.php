@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * Skill reference integrity guard for `variable-bindings.md` (#64).
  *

@@ -1,4 +1,5 @@
 <?php
+// SPDX-License-Identifier: MIT
 /**
  * dashboard_capabilities() — the admin dashboard's Capabilities list (#123).
  *
