@@ -6,8 +6,8 @@
  * x-release-please-start-version
  * Version: 1.16.2
  * x-release-please-end
- * Author: oaris.de
- * Author URI: https://oaris.de
+ * Author: Dax Davis
+ * Author URI: https://daxdavis.com
  * Text Domain: diviops-agent
  * Requires at least: 6.5
  * Requires PHP: 7.4

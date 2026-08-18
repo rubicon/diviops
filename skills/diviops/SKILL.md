@@ -2,7 +2,7 @@
 name: diviops
 description: DiviOps harness primer — error envelope, capability handshake, dry-run plan shape, idempotency contract. Used as a shared primer by DiviOps target-coverage skills.
 metadata:
-  author: oaris-dev
+  author: Dax Davis
   version: "1.0"
 ---
 

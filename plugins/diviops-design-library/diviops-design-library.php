@@ -1,11 +1,11 @@
 <?php
 /**
  * Plugin Name: DiviOps Design Library
- * Plugin URI: https://github.com/oaris-dev/diviops
+ * Plugin URI: https://github.com/rubicon/diviops
  * Description: Modern design effects for Divi 5 with Three.js, CSS animations, and reusable design elements.
  * Version: 1.0.0-beta.22
- * Author: oaris.de
- * Author URI: https://oaris.de
+ * Author: Dax Davis
+ * Author URI: https://daxdavis.com
  * Requires at least: 6.0
  * Requires PHP: 7.4
  * Text Domain: diviops-design-library
