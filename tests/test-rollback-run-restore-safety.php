@@ -245,3 +245,103 @@ $label_single = diviops_call(
 	)
 );
 assert_same( 'page #900', $label_single, 'a single-target snapshot renders exactly as it did before run records existed' );
+
+/*
+ * ---------------------------------------------------------------------------
+ * The discriminating page_ids case.
+ *
+ * The loop above asserts only ok:false and code=invalid_input, and an adversarial
+ * review showed that is not enough: with the strict check reverted to absint(),
+ * ALL of those shapes are still refused as invalid_input — by the pre-existing
+ * unknown-page-id branch — so the assertions pass against the unfixed code. They
+ * test the mechanism, not the property.
+ *
+ * The shape that discriminates is digits-then-junk that absint() coerces into a
+ * REAL covered page id. Under absint() that call succeeds and reverts a page the
+ * caller never named. Asserting the page's content is what makes this fail when
+ * the fix is removed.
+ * ---------------------------------------------------------------------------
+ */
+
+$coerce = run_safety_seed( 87000, 2 );
+
+$coerced = run_safety_call(
+	'rollback_snapshot_restore',
+	array( 'snapshot_id' => $coerce['chunk'], 'page_ids' => array( '87000abc' ) )
+);
+
+assert_same( false, $coerced['ok'] ?? null, 'a digits-then-junk page id is refused rather than coerced into a real page id' );
+assert_same(
+	array( '87000abc' ),
+	$coerced['error']['data']['invalid_page_ids'] ?? null,
+	'the refusal names the malformed id, proving it was rejected as malformed and not merely as an unknown page'
+);
+assert_same(
+	'AFTER-87000',
+	(string) get_post( 87000 )->post_content,
+	'the page the malformed id would have coerced to still holds its post-run content — nothing was reverted'
+);
+
+$record_after = get_option( $coerce['option'], null );
+assert_true(
+	empty( $record_after['restore']['restored_page_ids'] ),
+	'no restore ledger was written by a refused call'
+);
+
+/*
+ * An empty page_ids array restores nothing, so it must not report success — the
+ * same class of lie as an all-refused run reporting ok:true.
+ */
+$empty_selection = run_safety_call(
+	'rollback_snapshot_restore',
+	array( 'snapshot_id' => $coerce['chunk'], 'page_ids' => array() )
+);
+assert_same( false, $empty_selection['ok'] ?? null, 'an empty page_ids selection is refused rather than reported as a successful restore of nothing' );
+
+delete_option( $coerce['option'] );
+
+/*
+ * The route contract. This harness has no register_rest_route()/REST-dispatch
+ * machinery — tests/test-media-positive-id-validation.php records the same
+ * limitation — so the validator is a named method and is tested directly, and the
+ * wiring is guarded structurally by reading the registration source. What stays
+ * unverified here, exactly as for every other validate_callback in this codebase,
+ * is that WordPress itself invokes the callback for this route.
+ */
+
+assert_true(
+	is_wp_error( DiviOps_Agent::rollback_snapshot_validate_page_ids_param( array( '87000abc' ) ) ),
+	'the route validator rejects a digits-then-junk id before the handler is reached'
+);
+assert_true(
+	is_wp_error( DiviOps_Agent::rollback_snapshot_validate_page_ids_param( array( -1 ) ) ),
+	'the route validator rejects a negative id'
+);
+assert_true(
+	is_wp_error( DiviOps_Agent::rollback_snapshot_validate_page_ids_param( 'not-an-array' ) ),
+	'the route validator rejects a bare scalar, which is what page_ids= sends'
+);
+assert_same(
+	true,
+	DiviOps_Agent::rollback_snapshot_validate_page_ids_param( array( 87000 ) ),
+	'the route validator accepts a legitimate integer id'
+);
+assert_same(
+	true,
+	DiviOps_Agent::rollback_snapshot_validate_page_ids_param( array( '87000' ) ),
+	'the route validator accepts a legitimate digit string'
+);
+
+$registration = file_get_contents( dirname( __DIR__ ) . '/plugins/diviops-agent/diviops-agent.php' );
+$restore_route_pos = strpos( $registration, "/rollback-snapshot/restore/" );
+assert_true( false !== $restore_route_pos, 'the rollback restore route registration is locatable, so the next assertion measures something' );
+
+$restore_block = substr( $registration, $restore_route_pos, 1200 );
+assert_true(
+	false !== strpos( $restore_block, "'page_ids'" ),
+	'page_ids is declared on the restore route rather than being an undeclared body field'
+);
+assert_true(
+	false !== strpos( $restore_block, 'rollback_snapshot_validate_page_ids_param' ),
+	'the restore route wires page_ids to the validator asserted above, so the two cannot drift apart'
+);

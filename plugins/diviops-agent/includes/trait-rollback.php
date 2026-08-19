@@ -483,6 +483,36 @@ trait DiviOps_Agent_Rollback {
 	}
 
 	/**
+	 * Validate the page_ids parameter on the rollback restore route.
+	 *
+	 * A named method rather than an inline closure, following
+	 * tests/test-media-positive-id-validation.php's precedent: this harness has no
+	 * register_rest_route()/REST-dispatch machinery, so an inline validate_callback
+	 * cannot be covered at all. Naming it puts the logic somewhere a test can reach.
+	 *
+	 * Strict on purpose. absint('72301abc') is 72301 and absint(-1) is 1, so a
+	 * permissive parse lets a caller revert a page it never named — which defeats
+	 * the point of refusing unknown ids.
+	 *
+	 * @param mixed $value Raw parameter value.
+	 * @return true|WP_Error
+	 */
+	public static function rollback_snapshot_validate_page_ids_param( $value ) {
+		if ( ! is_array( $value ) ) {
+			return new WP_Error( 'invalid_input', 'page_ids must be an array of positive integer post ids.', [ 'status' => 400 ] );
+		}
+		foreach ( $value as $candidate ) {
+			if ( ! is_int( $candidate ) && ! ( is_string( $candidate ) && ctype_digit( $candidate ) ) ) {
+				return new WP_Error( 'invalid_input', 'page_ids must contain positive integer post ids.', [ 'status' => 400 ] );
+			}
+			if ( (int) $candidate <= 0 ) {
+				return new WP_Error( 'invalid_input', 'page_ids must contain positive integer post ids.', [ 'status' => 400 ] );
+			}
+		}
+		return true;
+	}
+
+	/**
 	 * Split a run summary's entries into the ones this caller may see.
 	 *
 	 * The singular paths gate on rollback_snapshot_target_access(); a run chunk
@@ -495,16 +525,26 @@ trait DiviOps_Agent_Rollback {
 	 */
 	private static function rollback_snapshot_run_access( array $summary ): array {
 		$visible = [];
+		$missing = 0;
 		foreach ( $summary['targets'] as $entry ) {
 			$post = get_post( (int) $entry['id'] );
-			if ( $post && self::can_inspect_post_object( $post ) ) {
+			if ( ! $post ) {
+				// A page that no longer exists cannot be permission-checked. Counting
+				// it as "not permitted" would make a chunk covering any deleted page
+				// permanently undeletable through the REST route, leaving retention as
+				// the only thing that could ever reclaim it.
+				++$missing;
+				continue;
+			}
+			if ( self::can_inspect_post_object( $post ) ) {
 				$visible[] = $entry;
 			}
 		}
 
 		return [
 			'visible' => $visible,
-			'all'     => count( $visible ) === count( $summary['targets'] ),
+			'missing' => $missing,
+			'all'     => ( count( $visible ) + $missing ) === count( $summary['targets'] ),
 			'total'   => count( $summary['targets'] ),
 		];
 	}
@@ -555,6 +595,13 @@ trait DiviOps_Agent_Rollback {
 			return null;
 		}
 
+		// The ledger of pages already restored from this chunk. Read here so the
+		// per-entry `restorable` flag tells the truth: restore refuses an
+		// already-restored page, and this flag exists precisely so a caller learns
+		// that up front rather than discovering it when recovery fails.
+		$stored_restore   = self::rollback_snapshot_as_array( $record['restore'] ?? [] );
+		$already_restored = array_map( 'absint', self::rollback_snapshot_as_array( $stored_restore['restored_page_ids'] ?? [] ) );
+
 		$targets = [];
 		foreach ( $record['targets'] as $entry ) {
 			$entry = self::rollback_snapshot_as_array( $entry );
@@ -578,10 +625,14 @@ trait DiviOps_Agent_Rollback {
 					'checksum'    => $after['checksum'] ?? null,
 					'byte_length' => $after['byte_length'] ?? null,
 				],
-				// An entry with no after.checksum was captured and never marked.
-				// Restore refuses it, so say so here rather than letting a caller
-				// discover it only when recovery fails.
-				'restorable'  => ! empty( $after['checksum'] ) && array_key_exists( 'value', $before ),
+				// False for an entry that was captured and never marked (restore
+				// refuses it), AND for one already restored from this chunk (restore
+				// refuses that too). Either way the point is that a caller learns it
+				// here rather than when recovery fails.
+				'restorable'  => ! empty( $after['checksum'] )
+					&& array_key_exists( 'value', $before )
+					&& ! in_array( $id, $already_restored, true ),
+				'restored'    => in_array( $id, $already_restored, true ),
 			];
 		}
 
@@ -638,20 +689,24 @@ trait DiviOps_Agent_Rollback {
 			return $refuse( 'unrestorable', 'This page was captured but its write was never recorded, so there is no verified state to restore from.' );
 		}
 
-		// A page this tool already restored WILL fail the drift check below, because
-		// the restore is itself the change. Naming it separately matters: a caller
-		// triaging a bad rollback has to tell "already reverted" apart from "someone
-		// edited this after the run", and the drift wording says the second.
-		if ( in_array( $post_id, $already_restored, true ) ) {
-			return $refuse( 'already_restored', 'This page was already restored from this run.' );
-		}
-
 		$post = get_post( $post_id );
 		if ( ! $post ) {
 			return $refuse( 'not_found', 'The page this entry covers no longer exists.' );
 		}
 		if ( ! self::can_inspect_post_object( $post ) ) {
 			return $refuse( 'forbidden', 'You cannot restore this page.' );
+		}
+
+		// Below the object gate deliberately: restore state is information about the
+		// page, so a caller with no rights over it must be stonewalled before
+		// learning anything, including whether it was already reverted.
+		//
+		// A page this tool already restored WILL fail the drift check below, because
+		// the restore is itself the change. Naming it separately matters: a caller
+		// triaging a bad rollback has to tell "already reverted" apart from "someone
+		// edited this after the run", and the drift wording says the second.
+		if ( in_array( $post_id, $already_restored, true ) ) {
+			return $refuse( 'already_restored', 'This page was already restored from this run.' );
 		}
 		if ( ! self::rollback_snapshot_supported_target( $post ) ) {
 			return $refuse( 'unsupported_target', 'This target type is not supported by the restore MVP.', [ 'post_type' => (string) $post->post_type ] );
@@ -782,6 +837,19 @@ trait DiviOps_Agent_Rollback {
 					[ 'snapshot_id' => $chunk_id, 'received_type' => gettype( $requested ) ]
 				);
 			}
+			if ( [] === $requested ) {
+				// A caller that built page_ids from a filter which matched nothing
+				// would otherwise be told the rollback succeeded. Same class of lie
+				// as the all-refused case below.
+				return self::envelope_error(
+					'invalid_input',
+					'page_ids was empty, so there is nothing to restore.',
+					'Omit page_ids entirely to restore the whole run.',
+					400,
+					[ 'snapshot_id' => $chunk_id, 'covered_page_ids' => array_keys( $entries ) ]
+				);
+			}
+
 			$selected = [];
 			$unknown  = [];
 			$invalid  = [];
@@ -864,7 +932,20 @@ trait DiviOps_Agent_Rollback {
 			// Status has to move off write_applied, or a caller filtering for
 			// restored runs never finds one and rollback_snapshot_get keeps
 			// reporting already-reverted entries as restorable.
-			$record['status'] = count( $ledger ) >= count( $record['targets'] ) ? 'restore_applied' : 'partially_restored';
+			// Counted against entries that CAN restore, not every stored target. An
+			// entry captured but never marked can never enter the ledger, so counting
+			// it would pin such a chunk at partially_restored forever — with no way to
+			// tell "work remains" from "done as much as is possible".
+			$restorable_total = 0;
+			foreach ( $record['targets'] as $stored_entry ) {
+				$stored_entry = self::rollback_snapshot_as_array( $stored_entry );
+				$entry_after  = self::rollback_snapshot_as_array( $stored_entry['after'] ?? [] );
+				$entry_before = self::rollback_snapshot_as_array( $stored_entry['before'] ?? [] );
+				if ( absint( $stored_entry['id'] ?? 0 ) > 0 && ! empty( $entry_after['checksum'] ) && array_key_exists( 'value', $entry_before ) ) {
+					++$restorable_total;
+				}
+			}
+			$record['status'] = count( $ledger ) >= $restorable_total ? 'restore_applied' : 'partially_restored';
 
 			foreach ( $record['targets'] as $index => $stored_entry ) {
 				$stored_entry = self::rollback_snapshot_as_array( $stored_entry );

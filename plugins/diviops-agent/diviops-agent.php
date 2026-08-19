@@ -1026,20 +1026,7 @@ class DiviOps_Agent {
 					'required'          => false,
 					'type'              => 'array',
 					'items'             => [ 'type' => 'integer' ],
-					'validate_callback' => static function ( $value ) {
-						if ( ! is_array( $value ) ) {
-							return new WP_Error( 'invalid_input', 'page_ids must be an array of positive integer post ids.', [ 'status' => 400 ] );
-						}
-						foreach ( $value as $candidate ) {
-							if ( ! is_int( $candidate ) && ! ( is_string( $candidate ) && ctype_digit( $candidate ) ) ) {
-								return new WP_Error( 'invalid_input', 'page_ids must contain positive integer post ids.', [ 'status' => 400 ] );
-							}
-							if ( (int) $candidate <= 0 ) {
-								return new WP_Error( 'invalid_input', 'page_ids must contain positive integer post ids.', [ 'status' => 400 ] );
-							}
-						}
-						return true;
-					},
+					'validate_callback' => [ __CLASS__, 'rollback_snapshot_validate_page_ids_param' ],
 				],
 			],
 		] );
