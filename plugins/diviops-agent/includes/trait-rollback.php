@@ -260,6 +260,175 @@ trait DiviOps_Agent_Rollback {
 	}
 
 	/**
+	 * Open a run-scoped snapshot.
+	 *
+	 * Returns a handle the caller threads through capture/mark/flush by
+	 * reference. Deliberately not stored anywhere yet: nothing is written until a
+	 * chunk fills or the run flushes, so an aborted run before its first write
+	 * leaves no orphan row behind.
+	 *
+	 * @param string               $tool      Tool identifier recorded on each chunk.
+	 * @param array<string, mixed> $operation Operation detail recorded on each chunk.
+	 * @return array<string, mixed>
+	 */
+	private static function rollback_snapshot_run_begin( string $tool, array $operation ): array {
+		return [
+			'run_id'     => self::rollback_snapshot_generate_run_id( $tool ),
+			'tool'       => $tool,
+			'operation'  => $operation,
+			'created_at' => self::rollback_snapshot_now(),
+			'seq'        => 0,
+			'open'       => [],
+			'chunks'     => [],
+		];
+	}
+
+	/**
+	 * Capture a page's prior state into the run's open chunk.
+	 *
+	 * Flushes as soon as the chunk fills rather than accumulating the whole run,
+	 * so peak memory is one chunk and not one run — which is the difference
+	 * between a 1000-page apply costing a few megabytes and costing hundreds.
+	 *
+	 * Keyed by post id so a page captured twice in one run overwrites rather than
+	 * duplicating; a run that touched the same page twice should still restore to
+	 * the state before the run, not to an intermediate.
+	 *
+	 * @param array<string, mixed> $run  Run handle, by reference.
+	 * @param object               $post Post being written.
+	 * @return array<string, mixed> The captured entry.
+	 */
+	private static function rollback_snapshot_run_capture( array &$run, $post ): array {
+		// Flush a full chunk on the way IN to the next capture, never on the way
+		// out of this one. Flushing immediately after filling would write the
+		// boundary page before its own rollback_snapshot_run_mark() call could
+		// land, freezing that entry with a null after.checksum — and restore
+		// refuses outright on an empty after.checksum, so exactly one page per
+		// chunk would have been silently unrestorable. Peak memory is one chunk
+		// plus one entry.
+		if ( count( $run['open'] ) >= self::rollback_snapshot_run_chunk_size() ) {
+			self::rollback_snapshot_run_flush_open( $run );
+		}
+
+		$target = self::rollback_snapshot_target_from_post( $post );
+		$entry  = [
+			'id'        => (int) $post->ID,
+			'kind'      => (string) ( $target['kind'] ?? 'post' ),
+			'post_type' => (string) ( $target['post_type'] ?? '' ),
+			'status'    => 'created',
+			'before'    => self::rollback_snapshot_before_from_post( $post ),
+			'after'     => [
+				'checksum'     => null,
+				'byte_length'  => null,
+				'side_effects' => null,
+			],
+		];
+
+		if ( ! isset( $run['open'][ (int) $post->ID ] ) ) {
+			$run['open'][ (int) $post->ID ] = $entry;
+		}
+
+		return $entry;
+	}
+
+	/**
+	 * Record the outcome of a page's write on its run entry.
+	 *
+	 * rollback_snapshot_restore() refuses outright unless after.checksum is
+	 * non-empty, so an entry that is captured and never marked is permanently
+	 * unrestorable. Every write path that captures must therefore mark, on both
+	 * the success and the failure branch.
+	 *
+	 * @param array<string, mixed> $run            Run handle, by reference.
+	 * @param int                  $post_id        Post the entry belongs to.
+	 * @param string               $status         Terminal status for this entry.
+	 * @param string|null          $after_content  Post-write content, or null when no write landed.
+	 */
+	private static function rollback_snapshot_run_mark( array &$run, int $post_id, string $status, ?string $after_content ): void {
+		if ( ! isset( $run['open'][ $post_id ] ) ) {
+			return;
+		}
+
+		$run['open'][ $post_id ]['status'] = $status;
+		if ( null === $after_content ) {
+			return;
+		}
+
+		$run['open'][ $post_id ]['after'] = [
+			'checksum'     => self::rollback_snapshot_checksum( $after_content ),
+			'byte_length'  => strlen( $after_content ),
+			'side_effects' => self::rollback_snapshot_capture_side_effects( $post_id ),
+		];
+	}
+
+	/**
+	 * Write the open chunk as one record and start a new one.
+	 *
+	 * Retention runs after the write, exactly as it does for a per-page snapshot:
+	 * a run record is one row against the cap like any other and gets no
+	 * exemption. Exempting an in-progress run would let the store exceed the cap
+	 * by the run's size, which is the unbounded options table the cap exists to
+	 * prevent.
+	 *
+	 * @param array<string, mixed> $run Run handle, by reference.
+	 * @return string|null Option name written, or null when the chunk was empty.
+	 */
+	private static function rollback_snapshot_run_flush_open( array &$run ): ?string {
+		if ( array() === $run['open'] ) {
+			return null;
+		}
+
+		++$run['seq'];
+		$snapshot_id = $run['run_id'] . '_c' . $run['seq'];
+		$record      = [
+			'schema_version' => 2,
+			'snapshot_id'    => $snapshot_id,
+			'run_id'         => $run['run_id'],
+			'chunk'          => $run['seq'],
+			'status'         => 'write_applied',
+			'created_at'     => $run['created_at'],
+			'expires_at'     => gmdate( 'c', time() + self::rollback_snapshot_expiry_seconds() ),
+			'created_by'     => [
+				'user_id' => self::rollback_snapshot_current_user_id(),
+				'login'   => self::rollback_snapshot_user_login(),
+			],
+			'tool'           => $run['tool'],
+			'operation'      => $run['operation'],
+			'targets'        => array_values( $run['open'] ),
+			'restore'        => [ 'restorable' => true, 'restored_at' => null, 'restored_by' => null ],
+			'cleanup'        => [ 'deleted_at' => null, 'deleted_by' => null ],
+		];
+
+		$option_name = self::rollback_snapshot_option_name( $snapshot_id );
+		$added       = add_option( $option_name, $record, '', 'no' );
+		if ( ! $added ) {
+			// Leave the chunk open rather than dropping it: the caller decides
+			// whether a storage failure aborts the run, and silently discarding
+			// captured pages here would remove their restore path without a signal.
+			--$run['seq'];
+			return null;
+		}
+
+		$run['open']     = [];
+		$run['chunks'][] = $option_name;
+
+		self::rollback_snapshot_enforce_retention();
+
+		return $option_name;
+	}
+
+	/**
+	 * Close the run, writing any partial trailing chunk.
+	 *
+	 * @param array<string, mixed> $run Run handle, by reference.
+	 * @return array<int, string> Option names written for this run, in order.
+	 */
+	private static function rollback_snapshot_run_flush( array &$run ): array {
+		self::rollback_snapshot_run_flush_open( $run );
+		return $run['chunks'];
+	}
+
+	/**
 	 * Evict the oldest snapshots beyond the retention cap.
 	 *
 	 * Best-effort by design: this runs after the snapshot row is safely stored,
