@@ -208,6 +208,58 @@ trait DiviOps_Agent_Rollback {
 	}
 
 	/**
+	 * Pages per run-snapshot record (#199).
+	 *
+	 * A bulk run stores one record per chunk of pages rather than one per page,
+	 * because one per page is what overflows the retention cap: an apply of
+	 * 501-1000 pages evicts its own earliest snapshots as it runs and still
+	 * reports success for those pages.
+	 *
+	 * The bound is 100 rather than the whole run because `before.value` holds a
+	 * page's full prior post_content. A thousand of them in one option row could
+	 * reach tens of megabytes, and get_option() loads a row whole — a memory
+	 * cliff on constrained hosting and a max_allowed_packet risk on write. 100
+	 * keeps a worst-case record in the low single-digit megabytes while still
+	 * turning a 1000-page run from 1000 rows into 10, which is the entire point.
+	 *
+	 * Lower this on evidence; do not raise it without re-testing both ceilings.
+	 */
+	private static function rollback_snapshot_run_chunk_size(): int {
+		return 100;
+	}
+
+	/**
+	 * Identifier for a run-scoped record.
+	 *
+	 * Prefixed `run_` rather than `snap_` so a run record is distinguishable from
+	 * a per-page snapshot by id alone — in logs, in an error envelope, and in a
+	 * caller's hands — without loading the row to look at its schema_version. The
+	 * shape still satisfies rollback_snapshot_validate_id(), including once a
+	 * `_c<n>` chunk suffix is appended, so run records store and address exactly
+	 * like any other snapshot.
+	 */
+	private static function rollback_snapshot_generate_run_id( string $tool ): string {
+		$seed = $tool . '|run|' . microtime( true ) . '|' . wp_rand();
+		return 'run_' . gmdate( 'YmdHis' ) . '_' . substr( hash( 'sha256', $seed ), 0, 16 );
+	}
+
+	/**
+	 * Whether a stored record is run-scoped.
+	 *
+	 * Keyed on the targets payload and not on schema_version alone: a record
+	 * claiming version 2 without targets to back it is malformed, and treating it
+	 * as a run record would send the restore path walking an empty list and
+	 * reporting success for a recovery that restored nothing.
+	 *
+	 * @param array<string, mixed> $record Stored snapshot record.
+	 */
+	private static function rollback_snapshot_is_run_record( array $record ): bool {
+		return 2 === absint( $record['schema_version'] ?? 0 )
+			&& is_array( $record['targets'] ?? null )
+			&& array() !== $record['targets'];
+	}
+
+	/**
 	 * Evict the oldest snapshots beyond the retention cap.
 	 *
 	 * Best-effort by design: this runs after the snapshot row is safely stored,
