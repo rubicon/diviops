@@ -131,9 +131,20 @@ carry a positive scalar `target.id`.
 - `rollback_snapshot_managed_inventory()` is the PHP service seam **DiviOps Agent Pro's
   managed recovery reads**. Pro is closed-source, separately shipped, and cannot be
   updated or tested from this repository.
-- Because v2 records normalize to `null`, every existing reader — Pro's included — skips
-  them as unrecognized rather than misreading them. Pro's behavior for single-target
-  snapshots is bit-for-bit unchanged.
+- Normalizing to `null` is **necessary but not sufficient**, and the first implementation
+  of this design got that wrong. Most readers treat a null normalization as "skip"
+  (`rollback_snapshot_scan_records()` does), but `rollback_snapshot_managed_inventory()`
+  — the one seam that matters here — does not: it emits a synthetic
+  `{ malformed: true, viability_reasons: [ 'record_identity_invalid' ] }` record instead.
+  Left alone, a single 1000-page reassign would have shown Pro ten records it reads as
+  store corruption, and those records would also have been undeletable through
+  `rollback_snapshot_managed_delete_exact()`, which refuses a malformed record.
+- So `managed_inventory()` carries an **explicit `continue` for run records**, placed
+  before normalization. With that guard, Pro's view is what it was before v2 existed.
+- The test asserts the **property** — that the inventory excludes a seeded v2 record and
+  reports zero malformed rows — and not merely the mechanism. Asserting the mechanism
+  alone is exactly what let the defect through: `normalize_record()` returned `null` as
+  designed while the guarantee it stood proxy for was false.
 - Pro loses nothing: it cannot recover a >500-page run's early snapshots today either,
   because they do not exist.
 
@@ -219,9 +230,13 @@ shape, not write shape.
 
 ## Risks
 
-**Pro compatibility.** Mitigated by D3 and testable only in the negative: a test must
-assert that a v2 record normalizes to `null` through the v1 path. If that assertion ever
-fails, Pro's managed recovery is being handed a shape it was not built for.
+**Pro compatibility.** Mitigated by D3. The test must assert the **property** — seed a v2
+record, call `rollback_snapshot_managed_inventory()`, and confirm it is absent and that no
+row is reported malformed — and not only the mechanism that a v2 record normalizes to
+`null`. The mechanism-only version of this assertion passed against an implementation
+where the guarantee was false, which is why the distinction is written into the spec
+rather than left to reviewer judgement. Any new reader added later must be checked
+against this property; a null normalization does not automatically mean "skipped".
 
 **Record size.** Mitigated by D2. The plan must include an explicit test at the chunk
 bound with realistic `post_content` sizes, not a token fixture — a size test that passes on

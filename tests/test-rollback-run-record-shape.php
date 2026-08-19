@@ -90,8 +90,16 @@ assert_true(
 );
 
 /*
- * The compatibility guarantee. If this assertion ever fails, Pro's managed
- * recovery is being handed a record shape it was not built for.
+ * The MECHANISM the compatibility guarantee leans on: a v2 record is rejected by
+ * the v1 normalizer.
+ *
+ * Asserting only this was not enough, and the gap is worth recording. Every
+ * reader that treats a null normalization as "skip" is safe — but
+ * rollback_snapshot_managed_inventory(), the seam Pro actually reads, does not
+ * skip on null. It emits a synthetic { malformed: true } record. So this
+ * assertion passed while the property it stood proxy for was false, and a
+ * 1000-page run would have shown Pro ten records it reads as store corruption.
+ * The property itself is asserted directly below.
  */
 assert_same(
 	null,
@@ -99,5 +107,81 @@ assert_same(
 		'rollback_snapshot_normalize_record',
 		array( $record, 'diviops_rollback_snapshot_' . $run_id . '_c1', $record )
 	),
-	'a v2 run record normalizes to null through the v1 path, so every legacy reader skips it'
+	'a v2 run record is rejected by the v1 normalizer'
 );
+
+/*
+ * ---------------------------------------------------------------------------
+ * The PROPERTY, asserted against the real reader.
+ *
+ * If this fails, DiviOps Agent Pro's managed recovery is being shown records it
+ * was not built for. Pro is closed-source and cannot be updated or tested from
+ * this repository, so this is the only place the guarantee can be held.
+ * ---------------------------------------------------------------------------
+ */
+
+$v1_id     = 'snap_20260819000000_1111111111111111';
+$v1_option = 'diviops_rollback_snapshot_' . $v1_id;
+add_option(
+	$v1_option,
+	array(
+		'schema_version' => 1,
+		'snapshot_id'    => $v1_id,
+		'status'         => 'write_applied',
+		'created_at'     => gmdate( 'c' ),
+		'expires_at'     => gmdate( 'c', time() + 604800 ),
+		'created_by'     => array( 'user_id' => 1, 'login' => 'dax' ),
+		'tool'           => 'diviops_page_update_content',
+		'target'         => array( 'kind' => 'post', 'id' => 900, 'post_type' => 'page' ),
+		'before'         => array(
+			'checksum'     => 'sha256:' . str_repeat( 'a', 64 ),
+			'byte_length'  => 3,
+			'value'        => 'old',
+			'side_effects' => array( 'post_meta' => array() ),
+		),
+		'after'          => array(
+			'checksum'     => 'sha256:' . str_repeat( 'b', 64 ),
+			'byte_length'  => 3,
+			'side_effects' => array( 'post_meta' => array() ),
+		),
+		'restore'        => array( 'restorable' => true, 'restored_at' => null, 'restored_by' => null ),
+		'cleanup'        => array( 'deleted_at' => null, 'deleted_by' => null ),
+	),
+	'',
+	'no'
+);
+
+$v2_option = 'diviops_rollback_snapshot_' . $run_id . '_c1';
+add_option( $v2_option, $record, '', 'no' );
+
+$inventory = diviops_call( 'rollback_snapshot_managed_inventory' );
+assert_true(
+	is_array( $inventory ) && isset( $inventory['records'] ) && is_array( $inventory['records'] ),
+	'the managed inventory returns a records list, so the assertions below measure something'
+);
+
+$inventory_ids = array();
+$malformed     = 0;
+foreach ( $inventory['records'] as $row ) {
+	$inventory_ids[] = (string) ( $row['snapshot_id'] ?? '' );
+	if ( ! empty( $row['malformed'] ) ) {
+		++$malformed;
+	}
+}
+
+assert_true(
+	in_array( $v1_id, $inventory_ids, true ),
+	'the v1 record appears in the managed inventory, so the exclusion below is targeted rather than the inventory being empty'
+);
+assert_true(
+	! in_array( $run_id . '_c1', $inventory_ids, true ),
+	'a v2 run record does not appear in the managed inventory Pro reads'
+);
+assert_same(
+	0,
+	$malformed,
+	'a v2 run record is never reported to Pro as malformed — it has to be invisible, not corrupt-looking'
+);
+
+delete_option( $v1_option );
+delete_option( $v2_option );

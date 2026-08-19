@@ -112,3 +112,149 @@ assert_true(
 foreach ( $big_stored as $option_name ) {
 	delete_option( $option_name );
 }
+
+/*
+ * ---------------------------------------------------------------------------
+ * Marking has to be detectable, not silent.
+ *
+ * run_mark() finds its entry in the OPEN chunk. Once a chunk flushes, its pages
+ * are gone from open — so a caller that looks even one page ahead before marking
+ * would leave one unmarked entry per chunk, with a null after.checksum, which
+ * restore refuses. That is the exact defect this change exists to remove,
+ * reintroduced at 1/100th the scale. A void return makes it undetectable, so
+ * marking reports whether it landed.
+ * ---------------------------------------------------------------------------
+ */
+
+$signal = diviops_call( 'rollback_snapshot_run_begin', array( 'diviops_preset_reassign', array() ) );
+$post   = diviops_test_register_post( 63000, 'content' );
+
+$cap_args = array( &$signal, $post );
+diviops_call_ref( 'rollback_snapshot_run_capture', $cap_args );
+
+$ok_args = array( &$signal, 63000, 'write_applied', 'after' );
+assert_same( true, diviops_call_ref( 'rollback_snapshot_run_mark', $ok_args ), 'marking a captured page reports success' );
+
+$miss_args = array( &$signal, 999999, 'write_applied', 'after' );
+assert_same( false, diviops_call_ref( 'rollback_snapshot_run_mark', $miss_args ), 'marking a page that is not in the open chunk reports failure instead of returning silently' );
+
+$signal_flush = array( &$signal );
+foreach ( diviops_call_ref( 'rollback_snapshot_run_flush', $signal_flush ) as $option_name ) {
+	delete_option( $option_name );
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * A duplicate capture returns what is actually stored.
+ *
+ * First-write-wins is correct: a run touching the same page twice must restore
+ * to the state from before the run, not to an intermediate. But returning the
+ * discarded entry would hand a caller the intermediate state it just rejected.
+ * ---------------------------------------------------------------------------
+ */
+
+$dup      = diviops_call( 'rollback_snapshot_run_begin', array( 'diviops_preset_reassign', array() ) );
+$dup_post = diviops_test_register_post( 64000, 'ORIGINAL pre-run content' );
+
+$dup_first = array( &$dup, $dup_post );
+diviops_call_ref( 'rollback_snapshot_run_capture', $dup_first );
+
+$dup_post->post_content = 'INTERMEDIATE content after the first write';
+$dup_second             = array( &$dup, $dup_post );
+$returned               = diviops_call_ref( 'rollback_snapshot_run_capture', $dup_second );
+
+assert_same(
+	'ORIGINAL pre-run content',
+	$returned['before']['value'],
+	'a duplicate capture returns the stored pre-run entry, not the intermediate state it discarded'
+);
+
+$dup_mark = array( &$dup, 64000, 'write_applied', 'after' );
+diviops_call_ref( 'rollback_snapshot_run_mark', $dup_mark );
+$dup_flush = array( &$dup );
+foreach ( diviops_call_ref( 'rollback_snapshot_run_flush', $dup_flush ) as $option_name ) {
+	delete_option( $option_name );
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * A storage failure stops the run instead of growing the chunk.
+ *
+ * The chunk bound exists to keep a record inside the get_option() memory ceiling
+ * and max_allowed_packet. If a failed write left the chunk open and captures kept
+ * appending, the response to "that insert was too big" would be to make the next
+ * insert bigger — self-amplifying, and the likeliest real cause of the failure in
+ * the first place.
+ *
+ * add_option() is forced to fail by pre-creating the chunk's option name, which
+ * is exactly what WordPress does when the row already exists.
+ * ---------------------------------------------------------------------------
+ */
+
+$fail_run = diviops_call( 'rollback_snapshot_run_begin', array( 'diviops_preset_reassign', array() ) );
+$blocker  = 'diviops_rollback_snapshot_' . $fail_run['run_id'] . '_c1';
+add_option( $blocker, array( 'blocking' => true ), '', 'no' );
+
+$capture_results = array();
+for ( $i = 0; $i < $chunk + 3; $i++ ) {
+	$post_id  = 65000 + $i;
+	$fail_post = diviops_test_register_post( $post_id, 'content ' . $i );
+
+	$fail_cap                 = array( &$fail_run, $fail_post );
+	$capture_results[ $post_id ] = diviops_call_ref( 'rollback_snapshot_run_capture', $fail_cap );
+
+	$fail_mark = array( &$fail_run, $post_id, 'write_applied', 'after ' . $i );
+	diviops_call_ref( 'rollback_snapshot_run_mark', $fail_mark );
+}
+
+assert_true(
+	in_array( false, $capture_results, true ),
+	'a capture that cannot flush a full chunk reports failure rather than appending past the bound'
+);
+assert_true(
+	count( $fail_run['open'] ) <= $chunk,
+	'the open chunk never grows past the bound, even when its write keeps failing'
+);
+assert_true(
+	! empty( $fail_run['storage_failed'] ),
+	'the run handle records that storage failed, so a caller can tell it apart from an empty run'
+);
+
+$fail_flush = array( &$fail_run );
+foreach ( diviops_call_ref( 'rollback_snapshot_run_flush', $fail_flush ) as $option_name ) {
+	delete_option( $option_name );
+}
+delete_option( $blocker );
+
+/*
+ * ---------------------------------------------------------------------------
+ * A chunk's record status reflects its entries.
+ *
+ * Hardcoding write_applied would report a chunk whose every page aborted before
+ * its write as applied, and managed_inventory gates on record status for v1 —
+ * so a future v2-aware reader would inherit the same lie.
+ * ---------------------------------------------------------------------------
+ */
+
+$aborted      = diviops_call( 'rollback_snapshot_run_begin', array( 'diviops_preset_reassign', array() ) );
+$aborted_post = diviops_test_register_post( 66000, 'content' );
+
+$ab_cap = array( &$aborted, $aborted_post );
+diviops_call_ref( 'rollback_snapshot_run_capture', $ab_cap );
+
+$ab_mark = array( &$aborted, 66000, 'aborted_before_write', null );
+diviops_call_ref( 'rollback_snapshot_run_mark', $ab_mark );
+
+$ab_flush  = array( &$aborted );
+$ab_stored = diviops_call_ref( 'rollback_snapshot_run_flush', $ab_flush );
+$ab_record = get_option( $ab_stored[0], null );
+
+assert_same(
+	'aborted_before_write',
+	$ab_record['status'],
+	'a chunk whose every entry aborted before its write is not recorded as applied'
+);
+
+foreach ( $ab_stored as $option_name ) {
+	delete_option( $option_name );
+}

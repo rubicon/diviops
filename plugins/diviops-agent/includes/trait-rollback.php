@@ -273,13 +273,14 @@ trait DiviOps_Agent_Rollback {
 	 */
 	private static function rollback_snapshot_run_begin( string $tool, array $operation ): array {
 		return [
-			'run_id'     => self::rollback_snapshot_generate_run_id( $tool ),
-			'tool'       => $tool,
-			'operation'  => $operation,
-			'created_at' => self::rollback_snapshot_now(),
-			'seq'        => 0,
-			'open'       => [],
-			'chunks'     => [],
+			'run_id'         => self::rollback_snapshot_generate_run_id( $tool ),
+			'tool'           => $tool,
+			'operation'      => $operation,
+			'created_at'     => self::rollback_snapshot_now(),
+			'seq'            => 0,
+			'open'           => [],
+			'chunks'         => [],
+			'storage_failed' => false,
 		];
 	}
 
@@ -290,15 +291,19 @@ trait DiviOps_Agent_Rollback {
 	 * so peak memory is one chunk and not one run — which is the difference
 	 * between a 1000-page apply costing a few megabytes and costing hundreds.
 	 *
-	 * Keyed by post id so a page captured twice in one run overwrites rather than
-	 * duplicating; a run that touched the same page twice should still restore to
-	 * the state before the run, not to an intermediate.
+	 * Keyed by post id, first capture wins: a run that touches the same page
+	 * twice must still restore to the state from before the run, never to an
+	 * intermediate one. A repeat capture returns the entry already stored rather
+	 * than the one it just discarded, so a caller reading the return value cannot
+	 * be handed the intermediate state.
 	 *
 	 * @param array<string, mixed> $run  Run handle, by reference.
 	 * @param object               $post Post being written.
-	 * @return array<string, mixed> The captured entry.
+	 * @return array<string, mixed>|false The captured entry, or false when a full
+	 *                                    chunk could not be written and the run
+	 *                                    must not continue.
 	 */
-	private static function rollback_snapshot_run_capture( array &$run, $post ): array {
+	private static function rollback_snapshot_run_capture( array &$run, $post ) {
 		// Flush a full chunk on the way IN to the next capture, never on the way
 		// out of this one. Flushing immediately after filling would write the
 		// boundary page before its own rollback_snapshot_run_mark() call could
@@ -307,7 +312,15 @@ trait DiviOps_Agent_Rollback {
 		// chunk would have been silently unrestorable. Peak memory is one chunk
 		// plus one entry.
 		if ( count( $run['open'] ) >= self::rollback_snapshot_run_chunk_size() ) {
-			self::rollback_snapshot_run_flush_open( $run );
+			if ( null === self::rollback_snapshot_run_flush_open( $run ) ) {
+				// The chunk is full and could not be stored. Appending anyway
+				// would grow the very insert that just failed, and the likeliest
+				// real cause of the failure is an oversized row — so the response
+				// to "that was too big" would be to make the next one bigger.
+				// Refuse instead and let the caller abort with pages still
+				// recoverable.
+				return false;
+			}
 		}
 
 		$target = self::rollback_snapshot_target_from_post( $post );
@@ -324,9 +337,11 @@ trait DiviOps_Agent_Rollback {
 			],
 		];
 
-		if ( ! isset( $run['open'][ (int) $post->ID ] ) ) {
-			$run['open'][ (int) $post->ID ] = $entry;
+		if ( isset( $run['open'][ (int) $post->ID ] ) ) {
+			return $run['open'][ (int) $post->ID ];
 		}
+
+		$run['open'][ (int) $post->ID ] = $entry;
 
 		return $entry;
 	}
@@ -341,17 +356,26 @@ trait DiviOps_Agent_Rollback {
 	 *
 	 * @param array<string, mixed> $run            Run handle, by reference.
 	 * @param int                  $post_id        Post the entry belongs to.
+	 * Returns whether the mark landed. A void return would make the one dangerous
+	 * caller ordering undetectable: run_mark() finds its entry in the OPEN chunk,
+	 * so a caller that captures even one page ahead of marking would leave one
+	 * unmarked entry per chunk — null after.checksum, permanently unrestorable,
+	 * no signal. A caller that gets false must treat the run as compromised.
+	 *
+	 * @param array<string, mixed> $run            Run handle, by reference.
+	 * @param int                  $post_id        Post the entry belongs to.
 	 * @param string               $status         Terminal status for this entry.
 	 * @param string|null          $after_content  Post-write content, or null when no write landed.
+	 * @return bool Whether the entry was found in the open chunk and marked.
 	 */
-	private static function rollback_snapshot_run_mark( array &$run, int $post_id, string $status, ?string $after_content ): void {
+	private static function rollback_snapshot_run_mark( array &$run, int $post_id, string $status, ?string $after_content ): bool {
 		if ( ! isset( $run['open'][ $post_id ] ) ) {
-			return;
+			return false;
 		}
 
 		$run['open'][ $post_id ]['status'] = $status;
 		if ( null === $after_content ) {
-			return;
+			return true;
 		}
 
 		$run['open'][ $post_id ]['after'] = [
@@ -359,6 +383,33 @@ trait DiviOps_Agent_Rollback {
 			'byte_length'  => strlen( $after_content ),
 			'side_effects' => self::rollback_snapshot_capture_side_effects( $post_id ),
 		];
+
+		return true;
+	}
+
+	/**
+	 * Derive a chunk's record status from the entries it holds.
+	 *
+	 * Hardcoding write_applied would record a chunk whose every page aborted
+	 * before its write as applied. rollback_snapshot_managed_inventory() already
+	 * gates on record status for v1 records, so any v2-aware reader added later
+	 * would inherit that lie from data written today.
+	 *
+	 * @param array<int, array<string, mixed>> $entries Chunk entries.
+	 */
+	private static function rollback_snapshot_run_chunk_status( array $entries ): string {
+		$applied = 0;
+		foreach ( $entries as $entry ) {
+			if ( ! empty( $entry['after']['checksum'] ) ) {
+				++$applied;
+			}
+		}
+
+		if ( 0 === $applied ) {
+			return 'aborted_before_write';
+		}
+
+		return $applied === count( $entries ) ? 'write_applied' : 'partially_applied';
 	}
 
 	/**
@@ -385,7 +436,7 @@ trait DiviOps_Agent_Rollback {
 			'snapshot_id'    => $snapshot_id,
 			'run_id'         => $run['run_id'],
 			'chunk'          => $run['seq'],
-			'status'         => 'write_applied',
+			'status'         => self::rollback_snapshot_run_chunk_status( $run['open'] ),
 			'created_at'     => $run['created_at'],
 			'expires_at'     => gmdate( 'c', time() + self::rollback_snapshot_expiry_seconds() ),
 			'created_by'     => [
@@ -402,10 +453,13 @@ trait DiviOps_Agent_Rollback {
 		$option_name = self::rollback_snapshot_option_name( $snapshot_id );
 		$added       = add_option( $option_name, $record, '', 'no' );
 		if ( ! $added ) {
-			// Leave the chunk open rather than dropping it: the caller decides
-			// whether a storage failure aborts the run, and silently discarding
-			// captured pages here would remove their restore path without a signal.
+			// Leave the chunk open rather than dropping it: silently discarding
+			// captured pages would remove their restore path with no signal, which
+			// is the failure being fixed, not an acceptable degradation. Flag the
+			// run so the caller can tell a storage failure apart from an empty
+			// chunk — both return null here, and only this flag distinguishes them.
 			--$run['seq'];
+			$run['storage_failed'] = true;
 			return null;
 		}
 
@@ -872,6 +926,22 @@ trait DiviOps_Agent_Rollback {
 					'viability_reasons' => [ 'record_not_array' ],
 					'option'           => [ 'autoload' => null === $autoload ? null : sanitize_key( (string) $autoload ), 'byte_size' => $byte_size ],
 				];
+				continue;
+			}
+
+			// #199: run-scoped records are deliberately outside this seam.
+			//
+			// This method is what DiviOps Agent Pro's managed recovery reads, and
+			// Pro is closed-source and cannot be updated or tested from this
+			// repository — so its view has to stay what it was before v2 records
+			// existed. rollback_snapshot_normalize_record() rejecting a v2 record
+			// is NOT sufficient on its own: unlike every other reader, this one
+			// does not skip on a null normalization, it reports the row as
+			// malformed below. Without this guard a single 1000-page reassign
+			// would show Pro ten records it reads as store corruption, and they
+			// would also be undeletable through rollback_snapshot_managed_delete_exact(),
+			// which refuses a malformed record.
+			if ( self::rollback_snapshot_is_run_record( $value ) ) {
 				continue;
 			}
 

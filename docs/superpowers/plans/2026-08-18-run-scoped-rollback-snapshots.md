@@ -4,7 +4,7 @@
 
 **Goal:** Let `preset_reassign` apply up to 1000 pages with every page restorable, by storing one snapshot record per chunk of pages instead of one per page.
 
-**Architecture:** A new `schema_version => 2` snapshot record holds a `targets` array of per-page entries, each with its own `before` and `after` blocks. Runs write `ceil(pages / 100)` such records. v2 records deliberately fail `rollback_snapshot_normalize_record()`'s positive-`target.id` check so every existing reader — including DiviOps Agent Pro's managed-recovery seam — skips them rather than misreading them; all v2 capability is served by additive, version-aware code paths.
+**Architecture:** A new `schema_version => 2` snapshot record holds a `targets` array of per-page entries, each with its own `before` and `after` blocks. Runs write `ceil(pages / 100)` such records. v2 records deliberately fail `rollback_snapshot_normalize_record()`'s positive-`target.id` check, which keeps them out of every reader that treats a null normalization as "skip"; `rollback_snapshot_managed_inventory()` — DiviOps Agent Pro's seam — does **not** do that, so it carries an explicit guard as well. All v2 capability is served by additive, version-aware code paths.
 
 **Tech Stack:** PHP 7.4+ (floor enforced by `tests/test-php-version-floor-check.php`), WordPress options API, no Composer/PHPUnit — the harness is `php tests/run.php`. TypeScript for the MCP server surface (`diviops-server/src`).
 
@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **Never rename** plugin slug `diviops-agent`, class `DiviOps_Agent`, REST namespace `diviops/v1`, or filter `diviops_agent_handshake_extensions`. Pro attaches through the class and the filter; the published `@rubicontv/diviops-mcp` calls `/diviops/v1/*`.
-- **A v2 record MUST normalize to `null` through `rollback_snapshot_normalize_record()`.** This is the Pro-compatibility mechanism (spec D3). Any change that makes a v2 record normalize successfully through the v1 path is a defect, not an improvement.
+- **A v2 record MUST be absent from `rollback_snapshot_managed_inventory()`, and MUST NOT appear there as a malformed row.** This is the Pro-compatibility property (spec D3). Normalizing to `null` through `rollback_snapshot_normalize_record()` is the necessary mechanism but is **not sufficient on its own** — `managed_inventory()` reports a rejected record as `malformed: true` rather than skipping it, so it needs an explicit guard. Assert the property against the real reader, never just the mechanism.
 - **Retention gets no exemption** (spec D7). A run record is one row against the 500-row cap and is evicted oldest-first like any other.
 - **Chunk bound is 100 pages per record** (spec D2), expressed as a named constant. May be lowered on evidence; may not be raised without re-testing memory and `max_allowed_packet` ceilings.
 - **Single-page write paths are unchanged** (spec D4). Only `preset_reassign` writes run records.
