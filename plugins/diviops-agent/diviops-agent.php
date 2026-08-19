@@ -1018,6 +1018,29 @@ class DiviOps_Agent {
 			'args'                => [
 				'snapshot_id' => [ 'required' => true, 'type' => 'string' ],
 				'dry_run'     => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
+				// #199: restrict a run restore to named pages. Declared here so the
+				// parameter is part of the route contract rather than an undeclared
+				// body field, and validated so a stray scalar cannot reach the
+				// handler's whole-run branch.
+				'page_ids'    => [
+					'required'          => false,
+					'type'              => 'array',
+					'items'             => [ 'type' => 'integer' ],
+					'validate_callback' => static function ( $value ) {
+						if ( ! is_array( $value ) ) {
+							return new WP_Error( 'invalid_input', 'page_ids must be an array of positive integer post ids.', [ 'status' => 400 ] );
+						}
+						foreach ( $value as $candidate ) {
+							if ( ! is_int( $candidate ) && ! ( is_string( $candidate ) && ctype_digit( $candidate ) ) ) {
+								return new WP_Error( 'invalid_input', 'page_ids must contain positive integer post ids.', [ 'status' => 400 ] );
+							}
+							if ( (int) $candidate <= 0 ) {
+								return new WP_Error( 'invalid_input', 'page_ids must contain positive integer post ids.', [ 'status' => 400 ] );
+							}
+						}
+						return true;
+					},
+				],
 			],
 		] );
 
@@ -2363,11 +2386,9 @@ class DiviOps_Agent {
 								$operation = self::rollback_snapshot_as_array( $snapshot['operation'] ?? [] );
 								$target    = self::rollback_snapshot_as_array( $snapshot['target'] ?? [] );
 								$created_by = self::rollback_snapshot_as_array( $snapshot['created_by'] ?? [] );
-								$target_label = sprintf(
-									'%s #%d',
-									sanitize_key( (string) ( $target['post_type'] ?? $target['kind'] ?? 'post' ) ),
-									absint( $target['id'] ?? 0 )
-								);
+								// #199: a run chunk carries `targets`, not a singular `target`,
+								// so the formatting below would render it as a phantom "#0".
+								$target_label = self::rollback_snapshot_display_label( $snapshot );
 								$operation_label = (string) ( $operation['tool_operation'] ?? $snapshot['tool'] ?? '' );
 								if ( '' === $operation_label ) {
 									$operation_label = '—';

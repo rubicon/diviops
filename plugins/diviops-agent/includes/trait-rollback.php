@@ -483,6 +483,56 @@ trait DiviOps_Agent_Rollback {
 	}
 
 	/**
+	 * Split a run summary's entries into the ones this caller may see.
+	 *
+	 * The singular paths gate on rollback_snapshot_target_access(); a run chunk
+	 * covers many pages, so the equivalent is a per-entry gate. Without one, a
+	 * chunk becomes a way to enumerate pages by side effect — the REST routes here
+	 * only require current_user_can('edit_posts'), which is Contributor tier.
+	 *
+	 * @param array<string, mixed> $summary Run summary.
+	 * @return array{visible: array<int, array<string, mixed>>, all: bool, total: int}
+	 */
+	private static function rollback_snapshot_run_access( array $summary ): array {
+		$visible = [];
+		foreach ( $summary['targets'] as $entry ) {
+			$post = get_post( (int) $entry['id'] );
+			if ( $post && self::can_inspect_post_object( $post ) ) {
+				$visible[] = $entry;
+			}
+		}
+
+		return [
+			'visible' => $visible,
+			'all'     => count( $visible ) === count( $summary['targets'] ),
+			'total'   => count( $summary['targets'] ),
+		];
+	}
+
+	/**
+	 * Human label for a snapshot row in the admin dashboard.
+	 *
+	 * A run chunk has no singular target, so the dashboard's "post_type #id"
+	 * formatting renders it as a phantom "#0". Branching here keeps that formatting
+	 * byte-identical for single-target rows while giving run rows something true.
+	 *
+	 * @param array<string, mixed> $snapshot Summary row.
+	 */
+	private static function rollback_snapshot_display_label( array $snapshot ): string {
+		if ( 'run' === ( $snapshot['kind'] ?? '' ) ) {
+			$count = absint( $snapshot['page_count'] ?? 0 );
+			return sprintf( '%d page%s (run)', $count, 1 === $count ? '' : 's' );
+		}
+
+		$target = self::rollback_snapshot_as_array( $snapshot['target'] ?? [] );
+		return sprintf(
+			'%s #%d',
+			sanitize_key( (string) ( $target['post_type'] ?? $target['kind'] ?? 'post' ) ),
+			absint( $target['id'] ?? 0 )
+		);
+	}
+
+	/**
 	 * Metadata view of a run chunk, without payload bytes.
 	 *
 	 * The v1 normalizer cannot be reused: it rejects anything without a singular
@@ -573,7 +623,7 @@ trait DiviOps_Agent_Rollback {
 	 * @param bool                 $dry_run Whether to report rather than write.
 	 * @return array<string, mixed> Outcome carrying at least id and ok.
 	 */
-	private static function rollback_snapshot_run_restore_entry( array $entry, string $chunk_id, bool $dry_run ): array {
+	private static function rollback_snapshot_run_restore_entry( array $entry, string $chunk_id, bool $dry_run, array $already_restored = [] ): array {
 		$post_id = absint( $entry['id'] ?? 0 );
 		$refuse  = static function ( string $reason, string $detail, array $extra = [] ) use ( $post_id ) {
 			return array_merge( [ 'id' => $post_id, 'ok' => false, 'reason' => $reason, 'detail' => $detail ], $extra );
@@ -586,6 +636,14 @@ trait DiviOps_Agent_Rollback {
 		// marked can never be restored, whatever the live page looks like.
 		if ( ! array_key_exists( 'value', $before ) || empty( $after['checksum'] ) ) {
 			return $refuse( 'unrestorable', 'This page was captured but its write was never recorded, so there is no verified state to restore from.' );
+		}
+
+		// A page this tool already restored WILL fail the drift check below, because
+		// the restore is itself the change. Naming it separately matters: a caller
+		// triaging a bad rollback has to tell "already reverted" apart from "someone
+		// edited this after the run", and the drift wording says the second.
+		if ( in_array( $post_id, $already_restored, true ) ) {
+			return $refuse( 'already_restored', 'This page was already restored from this run.' );
 		}
 
 		$post = get_post( $post_id );
@@ -644,7 +702,21 @@ trait DiviOps_Agent_Rollback {
 			$current_content
 		);
 		if ( is_wp_error( $result ) ) {
-			return $refuse( 'write_failed', (string) $result->get_error_message(), [ 'code' => (string) $result->get_error_code() ] );
+			// Carry the guard's own diagnostics through, not just its message.
+			// update_post_content_with_integrity_guard() reports byte counts, the
+			// specific issues it found, and whether its auto-revert verified — which
+			// is exactly what tells a caller whether the page is now holding neither
+			// its pre-run nor its post-run content. Collapsing that to a string is
+			// what turns a recoverable incident into a mystery.
+			$guard_data = $result->get_error_data();
+			return $refuse(
+				'write_failed',
+				(string) $result->get_error_message(),
+				[
+					'code'       => (string) $result->get_error_code(),
+					'diagnostics' => is_array( $guard_data ) ? $guard_data : null,
+				]
+			);
 		}
 
 		$side_effect_readback = self::rollback_snapshot_restore_side_effects( $post_id, self::rollback_snapshot_as_array( $before['side_effects'] ?? [] ) );
@@ -697,19 +769,50 @@ trait DiviOps_Agent_Rollback {
 		}
 
 		$requested = $request->get_param( 'page_ids' );
-		if ( null !== $requested && '' !== $requested ) {
+		if ( null !== $requested ) {
+			// An empty string is what a form-encoded or query-string REST client
+			// sends for "page_ids=". Treating it as "not supplied" would silently
+			// take the maximum-blast-radius branch and restore the whole run.
 			if ( ! is_array( $requested ) ) {
-				return self::envelope_error( 'invalid_input', 'page_ids must be an array of post ids.', 'Omit page_ids to restore the whole run.', 400, [ 'snapshot_id' => $chunk_id ] );
+				return self::envelope_error(
+					'invalid_input',
+					'page_ids must be an array of post ids.',
+					'Omit page_ids entirely to restore the whole run.',
+					400,
+					[ 'snapshot_id' => $chunk_id, 'received_type' => gettype( $requested ) ]
+				);
 			}
 			$selected = [];
 			$unknown  = [];
+			$invalid  = [];
 			foreach ( $requested as $raw ) {
-				$id = absint( $raw );
+				// Strict rather than absint(): absint('72301abc') is 72301 and
+				// absint(-1) is 1, so a caller sending a sentinel or a stringified
+				// float would revert a page it never named. That defeats the whole
+				// point of refusing unknown ids a few lines below.
+				if ( ! is_int( $raw ) && ! ( is_string( $raw ) && ctype_digit( $raw ) ) ) {
+					$invalid[] = $raw;
+					continue;
+				}
+				$id = (int) $raw;
+				if ( $id <= 0 ) {
+					$invalid[] = $raw;
+					continue;
+				}
 				if ( isset( $entries[ $id ] ) ) {
 					$selected[ $id ] = $entries[ $id ];
 					continue;
 				}
 				$unknown[] = $id;
+			}
+			if ( [] !== $invalid ) {
+				return self::envelope_error(
+					'invalid_input',
+					'page_ids must contain positive integer post ids.',
+					'Send page ids as integers; omit page_ids entirely to restore the whole run.',
+					400,
+					[ 'snapshot_id' => $chunk_id, 'invalid_page_ids' => array_map( 'strval', $invalid ) ]
+				);
 			}
 			if ( [] !== $unknown ) {
 				// Named but absent is an error, not a no-op: silently ignoring it
@@ -726,11 +829,15 @@ trait DiviOps_Agent_Rollback {
 			$entries = $selected;
 		}
 
-		$dry_run  = rest_sanitize_boolean( $request->get_param( 'dry_run' ) ?? false );
+		$dry_run = rest_sanitize_boolean( $request->get_param( 'dry_run' ) ?? false );
+
+		$stored_restore  = self::rollback_snapshot_as_array( $record['restore'] ?? [] );
+		$already_restored = array_map( 'absint', self::rollback_snapshot_as_array( $stored_restore['restored_page_ids'] ?? [] ) );
+
 		$restored = [];
 		$refused  = [];
 		foreach ( $entries as $entry ) {
-			$outcome = self::rollback_snapshot_run_restore_entry( $entry, $chunk_id, $dry_run );
+			$outcome = self::rollback_snapshot_run_restore_entry( $entry, $chunk_id, $dry_run, $already_restored );
 			if ( ! empty( $outcome['ok'] ) ) {
 				$restored[] = $outcome;
 				continue;
@@ -738,17 +845,39 @@ trait DiviOps_Agent_Rollback {
 			$refused[] = $outcome;
 		}
 
+		$restored_ids = array_values( array_map( static function ( $row ) {
+			return (int) $row['id'];
+		}, $restored ) );
+
 		if ( ! $dry_run && [] !== $restored ) {
-			$record['restore']                = self::rollback_snapshot_as_array( $record['restore'] ?? [] );
-			$record['restore']['restored_at'] = self::rollback_snapshot_now();
-			$record['restore']['restored_by'] = [ 'user_id' => self::rollback_snapshot_current_user_id(), 'login' => self::rollback_snapshot_user_login() ];
-			$record['restore']['restored_page_ids'] = array_values( array_map( static function ( $row ) {
-				return (int) $row['id'];
-			}, $restored ) );
+			// Accumulated, not overwritten. Multi-pass partial restore is this
+			// feature's headline use, so a second pass clobbering the first would
+			// leave the record asserting that only the last batch was ever reverted.
+			$ledger = array_values( array_unique( array_merge( $already_restored, $restored_ids ) ) );
+			sort( $ledger );
+
+			$record['restore']                      = $stored_restore;
+			$record['restore']['restored_at']       = self::rollback_snapshot_now();
+			$record['restore']['restored_by']       = [ 'user_id' => self::rollback_snapshot_current_user_id(), 'login' => self::rollback_snapshot_user_login() ];
+			$record['restore']['restored_page_ids'] = $ledger;
+
+			// Status has to move off write_applied, or a caller filtering for
+			// restored runs never finds one and rollback_snapshot_get keeps
+			// reporting already-reverted entries as restorable.
+			$record['status'] = count( $ledger ) >= count( $record['targets'] ) ? 'restore_applied' : 'partially_restored';
+
+			foreach ( $record['targets'] as $index => $stored_entry ) {
+				$stored_entry = self::rollback_snapshot_as_array( $stored_entry );
+				if ( in_array( absint( $stored_entry['id'] ?? 0 ), $restored_ids, true ) ) {
+					$stored_entry['status']        = 'restore_applied';
+					$record['targets'][ $index ] = $stored_entry;
+				}
+			}
+
 			update_option( $option_name, $record, false );
 		}
 
-		return self::envelope_success( [
+		$payload = [
 			'snapshot_id' => $chunk_id,
 			'kind'        => 'run',
 			'run_id'      => $summary['run_id'],
@@ -757,7 +886,26 @@ trait DiviOps_Agent_Rollback {
 			'restored'    => $restored,
 			'refused'     => $refused,
 			'force'       => [ 'supported' => false, 'used' => false ],
-		] );
+		];
+
+		if ( [] === $refused ) {
+			return self::envelope_success( $payload );
+		}
+
+		// A restore that refused anything is not a plain success. preset_reassign
+		// already sets this convention with preset.reassign_partial_failure: a
+		// caller checking `ok` must not be told a rollback worked when some or all
+		// of its pages still hold post-run content.
+		$none = [] === $restored;
+		return self::envelope_error(
+			$none ? 'rollback_snapshot.run_restore_failed' : 'rollback_snapshot.run_restore_partial',
+			$none
+				? 'No page in this rollback run was restored.'
+				: sprintf( 'Restored %d of %d pages; the rest were refused.', count( $restored ), count( $entries ) ),
+			'Inspect refused[] — each entry names the page and why it was refused.',
+			$none ? 409 : 207,
+			$payload
+		);
 	}
 
 	/**
@@ -1463,6 +1611,15 @@ trait DiviOps_Agent_Rollback {
 		// the v1 normalizer would answer 400 malformed for a perfectly good record.
 		$run_record = self::rollback_snapshot_run_summary( $record, $option_name );
 		if ( null !== $run_record ) {
+			// Gated per entry, same as the list path. Returning the whole chunk
+			// ungated would let an edit_posts-tier caller enumerate pages they
+			// cannot edit, along with each page's checksum and byte length.
+			$run_access = self::rollback_snapshot_run_access( $run_record );
+			if ( [] === $run_access['visible'] ) {
+				return self::envelope_error( 'forbidden', 'You cannot inspect any page this rollback run covers.', null, 403, [ 'snapshot_id' => $snapshot_id ] );
+			}
+			$run_record['targets']            = $run_access['visible'];
+			$run_record['page_count_visible'] = count( $run_access['visible'] );
 			return self::envelope_success( $run_record );
 		}
 
@@ -1516,6 +1673,19 @@ trait DiviOps_Agent_Rollback {
 		// remove one is retention eviction and a caller cannot clear space.
 		$run_record = self::rollback_snapshot_run_summary( $record, $option_name );
 		if ( null !== $run_record ) {
+			// Every covered page, not merely one: deleting a chunk destroys the
+			// only recovery record for every page in it, so partial rights are not
+			// enough to authorize it.
+			$run_access = self::rollback_snapshot_run_access( $run_record );
+			if ( ! $run_access['all'] ) {
+				return self::envelope_error(
+					'forbidden',
+					'You cannot delete this rollback run because it covers pages you cannot edit.',
+					'Deleting a run chunk removes the rollback for every page it covers.',
+					403,
+					[ 'snapshot_id' => $snapshot_id, 'page_count' => $run_access['total'], 'page_count_visible' => count( $run_access['visible'] ) ]
+				);
+			}
 			$run_deleted = delete_option( $option_name );
 			return self::envelope_success( [
 				'snapshot_id' => $snapshot_id,

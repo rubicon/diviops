@@ -179,10 +179,17 @@ get_post( 75001 )->post_content = 'EDITED BY SOMEONE ELSE AFTER THE RUN';
 
 $mixed = run_restore_call( 'rollback_snapshot_restore', array( 'snapshot_id' => $drift['chunk_id'] ) );
 
-assert_same( 2, count( $mixed['data']['restored'] ?? array() ), 'the two undrifted pages still restore' );
-assert_same( 1, count( $mixed['data']['refused'] ?? array() ), 'the drifted page is refused' );
+/*
+ * A run where anything was refused reports failure, and its payload therefore
+ * arrives under error.data. That is deliberate: a caller checking `ok` must not
+ * be told a rollback worked when some of its pages still hold post-run content —
+ * the same convention preset_reassign sets with preset.reassign_partial_failure.
+ */
+assert_same( false, $mixed['ok'] ?? null, 'a run with a refused page reports partial failure rather than success' );
+assert_same( 2, count( $mixed['error']['data']['restored'] ?? array() ), 'the two undrifted pages still restore' );
+assert_same( 1, count( $mixed['error']['data']['refused'] ?? array() ), 'the drifted page is refused' );
 
-$refused_entry = ( $mixed['data']['refused'] ?? array() )[0] ?? array();
+$refused_entry = ( $mixed['error']['data']['refused'] ?? array() )[0] ?? array();
 assert_same( 75001, $refused_entry['id'] ?? null, 'the refusal names the drifted page' );
 assert_same( 'conflict', $refused_entry['reason'] ?? null, 'the drifted page is refused as a conflict, matching the single-snapshot restore contract' );
 
@@ -202,10 +209,11 @@ delete_option( $drift['option'] );
 $unmarked = run_restore_seed( 76000, 2, false );
 
 $unmarked_result = run_restore_call( 'rollback_snapshot_restore', array( 'snapshot_id' => $unmarked['chunk_id'] ) );
-assert_same( 0, count( $unmarked_result['data']['restored'] ?? array() ), 'an unmarked entry is not restored' );
-assert_same( 2, count( $unmarked_result['data']['refused'] ?? array() ), 'every unmarked entry is reported rather than silently skipped' );
+assert_same( false, $unmarked_result['ok'] ?? null, 'a run where nothing could be restored reports failure' );
+assert_same( 0, count( $unmarked_result['error']['data']['restored'] ?? array() ), 'an unmarked entry is not restored' );
+assert_same( 2, count( $unmarked_result['error']['data']['refused'] ?? array() ), 'every unmarked entry is reported rather than silently skipped' );
 
-$unmarked_entry = ( $unmarked_result['data']['refused'] ?? array() )[0] ?? array();
+$unmarked_entry = ( $unmarked_result['error']['data']['refused'] ?? array() )[0] ?? array();
 assert_same(
 	'unrestorable',
 	$unmarked_entry['reason'] ?? null,
