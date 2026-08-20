@@ -382,6 +382,16 @@ $trait_files  = glob( $includes_dir . '/trait-*.php' );
  */
 $canonical_markers = array(
 	'normalize_divi_full_content_for_write(',
+	// #208: the rollback paths canonicalize through this thin wrapper, which
+	// delegates to normalize_divi_full_content_for_write(). Listed so the scan sees
+	// through the indirection.
+	//
+	// Stated plainly because the list should not overclaim: the wrapper is
+	// best-effort. If the normalizer cannot parse a record's stored bytes it returns
+	// them unchanged, and the guard then rejects the write exactly as it did before
+	// this fix. That is deliberate — refusing at the wrapper would turn a snapshot
+	// that is merely hard to restore into one that cannot be restored at all.
+	'rollback_snapshot_canonical_restore_value(',
 	'serialize_blocks(',
 	'serialize_block(',
 	'serialize_block_attrs_canonical(',
@@ -408,11 +418,7 @@ $canonical_markers = array(
  * This list is a ratchet: a NEW unnormalized write path fails the test, and fixing
  * one of these fails it too, as a prompt to shrink the list.
  */
-$known_unnormalized = array(
-	'trait-page.php::module_move',
-	'trait-rollback.php::rollback_snapshot_restore',
-	'trait-rollback.php::rollback_snapshot_run_restore_entry',
-);
+$known_unnormalized = array();
 
 assert_true(
 	is_array( $trait_files ) && count( $trait_files ) > 0,
@@ -501,5 +507,5 @@ assert_true(
 assert_same(
 	$known_unnormalized,
 	$unnormalized,
-	'exactly the known byte-relocating write paths lack canonical serialization — a new one, or a fixed one, must update this list'
+	'no write path lacks canonical serialization — #208 emptied this list, so ANY entry appearing here is a new regression, not known debt'
 );

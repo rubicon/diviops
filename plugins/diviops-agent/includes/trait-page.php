@@ -3423,6 +3423,31 @@ trait DiviOps_Agent_Page {
 			}
 		}
 
+		// #208: canonicalize before the guard. This path never re-encodes attrs — the
+		// raw-splice branch relocates an existing substring verbatim — so it cannot
+		// CREATE non-canonical JSON. It can faithfully rewrite it: content stored by a
+		// pre-#206 module_update is non-canonical on disk, WordPress canonicalizes on
+		// save, and the guard's byte comparison then reverts a write this call never
+		// authored and could not fix. Moving a module on any page predating that fix
+		// failed with byte_mismatch for that reason alone.
+		//
+		// Safe for the raw-splice branch specifically because
+		// normalize_divi_full_content_for_write() rewrites block comments in place
+		// rather than round-tripping through parse_blocks() — so it does not
+		// reintroduce the divi/global-layout wrapper expansion (#11) that the
+		// splice branch exists to avoid.
+		$normalized = self::normalize_divi_full_content_for_write( $content );
+		if ( empty( $normalized['ok'] ) ) {
+			return self::envelope_error(
+				'module.normalize_failed',
+				'Could not canonicalize this page\'s block markup before the move.',
+				'The page contains block markup this normalizer could not parse; inspect it before retrying.',
+				422,
+				[ 'page_id' => $post_id, 'reason' => $normalized['error'] ?? null ]
+			);
+		}
+		$content = (string) $normalized['content'];
+
 		// Guarded regardless of which branch built $content above: the raw-splice
 		// branch only relocates an existing substring so it can never legitimately
 		// drop a wrapper, and the parser-fallback branch (move_block_with_parser())
