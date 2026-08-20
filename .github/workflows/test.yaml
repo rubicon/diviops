@@ -210,6 +210,15 @@ jobs:
       - name: Run regen-tool-reference tests
         run: npm run test:tool-reference
 
+      # Asserts every script this workflow invokes for diviops-server is
+      # reachable from `npm test` (#250). Without it, `npm test` ran none of the
+      # three gates above, so a contributor's local green said nothing about CI —
+      # which is how #248 shipped a stale generated tool reference. Added as a
+      # step in this existing job rather than a new job on purpose: branch
+      # protection pins required checks by job name.
+      - name: Run local-gate coverage test
+        run: npm run test:ci-gate-coverage
+
       # The real build (not the scoped tsconfig.test.json above) plus an
       # actual `node dist/index.js` startup, asserting it reaches the
       # graceful missing-credentials refusal rather than crashing. #41
