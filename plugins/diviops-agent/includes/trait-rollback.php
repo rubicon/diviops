@@ -483,6 +483,513 @@ trait DiviOps_Agent_Rollback {
 	}
 
 	/**
+	 * Validate the page_ids parameter on the rollback restore route.
+	 *
+	 * A named method rather than an inline closure, following
+	 * tests/test-media-positive-id-validation.php's precedent: this harness has no
+	 * register_rest_route()/REST-dispatch machinery, so an inline validate_callback
+	 * cannot be covered at all. Naming it puts the logic somewhere a test can reach.
+	 *
+	 * Strict on purpose. absint('72301abc') is 72301 and absint(-1) is 1, so a
+	 * permissive parse lets a caller revert a page it never named — which defeats
+	 * the point of refusing unknown ids.
+	 *
+	 * @param mixed $value Raw parameter value.
+	 * @return true|WP_Error
+	 */
+	public static function rollback_snapshot_validate_page_ids_param( $value ) {
+		if ( ! is_array( $value ) ) {
+			return new WP_Error( 'invalid_input', 'page_ids must be an array of positive integer post ids.', [ 'status' => 400 ] );
+		}
+		foreach ( $value as $candidate ) {
+			if ( ! is_int( $candidate ) && ! ( is_string( $candidate ) && ctype_digit( $candidate ) ) ) {
+				return new WP_Error( 'invalid_input', 'page_ids must contain positive integer post ids.', [ 'status' => 400 ] );
+			}
+			if ( (int) $candidate <= 0 ) {
+				return new WP_Error( 'invalid_input', 'page_ids must contain positive integer post ids.', [ 'status' => 400 ] );
+			}
+		}
+		return true;
+	}
+
+	/**
+	 * Split a run summary's entries into the ones this caller may see.
+	 *
+	 * The singular paths gate on rollback_snapshot_target_access(); a run chunk
+	 * covers many pages, so the equivalent is a per-entry gate. Without one, a
+	 * chunk becomes a way to enumerate pages by side effect — the REST routes here
+	 * only require current_user_can('edit_posts'), which is Contributor tier.
+	 *
+	 * @param array<string, mixed> $summary Run summary.
+	 * @return array{visible: array<int, array<string, mixed>>, all: bool, total: int}
+	 */
+	private static function rollback_snapshot_run_access( array $summary ): array {
+		$visible = [];
+		$missing = 0;
+		foreach ( $summary['targets'] as $entry ) {
+			$post = get_post( (int) $entry['id'] );
+			if ( ! $post ) {
+				// A page that no longer exists cannot be permission-checked. Counting
+				// it as "not permitted" would make a chunk covering any deleted page
+				// permanently undeletable through the REST route, leaving retention as
+				// the only thing that could ever reclaim it.
+				++$missing;
+				continue;
+			}
+			if ( self::can_inspect_post_object( $post ) ) {
+				$visible[] = $entry;
+			}
+		}
+
+		return [
+			'visible' => $visible,
+			'missing' => $missing,
+			'all'     => ( count( $visible ) + $missing ) === count( $summary['targets'] ),
+			'total'   => count( $summary['targets'] ),
+		];
+	}
+
+	/**
+	 * Human label for a snapshot row in the admin dashboard.
+	 *
+	 * A run chunk has no singular target, so the dashboard's "post_type #id"
+	 * formatting renders it as a phantom "#0". Branching here keeps that formatting
+	 * byte-identical for single-target rows while giving run rows something true.
+	 *
+	 * @param array<string, mixed> $snapshot Summary row.
+	 */
+	private static function rollback_snapshot_display_label( array $snapshot ): string {
+		if ( 'run' === ( $snapshot['kind'] ?? '' ) ) {
+			$count = absint( $snapshot['page_count'] ?? 0 );
+			return sprintf( '%d page%s (run)', $count, 1 === $count ? '' : 's' );
+		}
+
+		$target = self::rollback_snapshot_as_array( $snapshot['target'] ?? [] );
+		return sprintf(
+			'%s #%d',
+			sanitize_key( (string) ( $target['post_type'] ?? $target['kind'] ?? 'post' ) ),
+			absint( $target['id'] ?? 0 )
+		);
+	}
+
+	/**
+	 * Metadata view of a run chunk, without payload bytes.
+	 *
+	 * The v1 normalizer cannot be reused: it rejects anything without a singular
+	 * positive target.id, which is deliberately how run records stay out of the
+	 * managed-recovery seam Pro reads. This is the additive v2 replacement, and it
+	 * mirrors v1's rule that a read never returns before.value unless the caller
+	 * asked for it.
+	 *
+	 * @param array<string, mixed> $record      Stored run record.
+	 * @param string               $option_name Option the record came from.
+	 * @return array<string, mixed>|null Null when the record is not a usable run record.
+	 */
+	private static function rollback_snapshot_run_summary( array $record, string $option_name ): ?array {
+		if ( ! self::rollback_snapshot_is_run_record( $record ) ) {
+			return null;
+		}
+
+		$snapshot_id = self::rollback_snapshot_id_from_option_name( $option_name );
+		if ( false === $snapshot_id ) {
+			return null;
+		}
+
+		// The ledger of pages already restored from this chunk. Read here so the
+		// per-entry `restorable` flag tells the truth: restore refuses an
+		// already-restored page, and this flag exists precisely so a caller learns
+		// that up front rather than discovering it when recovery fails.
+		$stored_restore   = self::rollback_snapshot_as_array( $record['restore'] ?? [] );
+		$already_restored = array_map( 'absint', self::rollback_snapshot_as_array( $stored_restore['restored_page_ids'] ?? [] ) );
+
+		$targets = [];
+		foreach ( $record['targets'] as $entry ) {
+			$entry = self::rollback_snapshot_as_array( $entry );
+			$id    = absint( $entry['id'] ?? 0 );
+			if ( $id <= 0 ) {
+				continue;
+			}
+			$before = self::rollback_snapshot_as_array( $entry['before'] ?? [] );
+			$after  = self::rollback_snapshot_as_array( $entry['after'] ?? [] );
+
+			$targets[] = [
+				'id'          => $id,
+				'kind'        => sanitize_key( (string) ( $entry['kind'] ?? 'post' ) ),
+				'post_type'   => sanitize_key( (string) ( $entry['post_type'] ?? '' ) ),
+				'status'      => sanitize_key( (string) ( $entry['status'] ?? 'created' ) ),
+				'before'      => [
+					'checksum'    => $before['checksum'] ?? null,
+					'byte_length' => $before['byte_length'] ?? null,
+				],
+				'after'       => [
+					'checksum'    => $after['checksum'] ?? null,
+					'byte_length' => $after['byte_length'] ?? null,
+				],
+				// False for an entry that was captured and never marked (restore
+				// refuses it), AND for one already restored from this chunk (restore
+				// refuses that too). Either way the point is that a caller learns it
+				// here rather than when recovery fails.
+				'restorable'  => ! empty( $after['checksum'] )
+					&& array_key_exists( 'value', $before )
+					&& ! in_array( $id, $already_restored, true ),
+				'restored'    => in_array( $id, $already_restored, true ),
+			];
+		}
+
+		if ( [] === $targets ) {
+			return null;
+		}
+
+		$expires_at = sanitize_text_field( (string) ( $record['expires_at'] ?? '' ) );
+		$expires_ts = '' !== $expires_at ? strtotime( $expires_at ) : false;
+
+		return [
+			'kind'           => 'run',
+			'schema_version' => 2,
+			'snapshot_id'    => $snapshot_id,
+			'run_id'         => sanitize_text_field( (string) ( $record['run_id'] ?? '' ) ),
+			'chunk'          => absint( $record['chunk'] ?? 0 ),
+			'status'         => sanitize_key( (string) ( $record['status'] ?? 'created' ) ),
+			'created_at'     => sanitize_text_field( (string) ( $record['created_at'] ?? '' ) ),
+			'expires_at'     => $expires_at,
+			'expired'        => false !== $expires_ts && $expires_ts < time(),
+			'tool'           => sanitize_text_field( (string) ( $record['tool'] ?? '' ) ),
+			'page_count'     => count( $targets ),
+			'targets'        => $targets,
+		];
+	}
+
+	/**
+	 * Restore one entry of a run chunk.
+	 *
+	 * Deliberately mirrors rollback_snapshot_restore()'s gates one for one —
+	 * target existence, per-object edit permission, supported type, restorable
+	 * state, and the strict drift binding with no force override — because a
+	 * batched storage shape must not weaken any check a single-snapshot restore
+	 * applies. What differs is the outcome: a refusal is returned for this entry
+	 * only, so its siblings still restore.
+	 *
+	 * @param array<string, mixed> $entry   One record from the chunk's targets.
+	 * @param string               $chunk_id Chunk this entry belongs to.
+	 * @param bool                 $dry_run Whether to report rather than write.
+	 * @return array<string, mixed> Outcome carrying at least id and ok.
+	 */
+	private static function rollback_snapshot_run_restore_entry( array $entry, string $chunk_id, bool $dry_run, array $already_restored = [] ): array {
+		$post_id = absint( $entry['id'] ?? 0 );
+		$refuse  = static function ( string $reason, string $detail, array $extra = [] ) use ( $post_id ) {
+			return array_merge( [ 'id' => $post_id, 'ok' => false, 'reason' => $reason, 'detail' => $detail ], $extra );
+		};
+
+		$before = self::rollback_snapshot_as_array( $entry['before'] ?? [] );
+		$after  = self::rollback_snapshot_as_array( $entry['after'] ?? [] );
+
+		// Checked before the post is loaded: an entry that was captured and never
+		// marked can never be restored, whatever the live page looks like.
+		if ( ! array_key_exists( 'value', $before ) || empty( $after['checksum'] ) ) {
+			return $refuse( 'unrestorable', 'This page was captured but its write was never recorded, so there is no verified state to restore from.' );
+		}
+
+		$post = get_post( $post_id );
+		if ( ! $post ) {
+			return $refuse( 'not_found', 'The page this entry covers no longer exists.' );
+		}
+		if ( ! self::can_inspect_post_object( $post ) ) {
+			return $refuse( 'forbidden', 'You cannot restore this page.' );
+		}
+
+		// Below the object gate deliberately: restore state is information about the
+		// page, so a caller with no rights over it must be stonewalled before
+		// learning anything, including whether it was already reverted.
+		//
+		// A page this tool already restored WILL fail the drift check below, because
+		// the restore is itself the change. Naming it separately matters: a caller
+		// triaging a bad rollback has to tell "already reverted" apart from "someone
+		// edited this after the run", and the drift wording says the second.
+		if ( in_array( $post_id, $already_restored, true ) ) {
+			return $refuse( 'already_restored', 'This page was already restored from this run.' );
+		}
+		if ( ! self::rollback_snapshot_supported_target( $post ) ) {
+			return $refuse( 'unsupported_target', 'This target type is not supported by the restore MVP.', [ 'post_type' => (string) $post->post_type ] );
+		}
+
+		$current_content      = (string) ( $post->post_content ?? '' );
+		$current_checksum     = self::rollback_snapshot_checksum( $current_content );
+		$current_side_effects = self::rollback_snapshot_capture_side_effects( $post_id );
+		$after_side_effects   = self::rollback_snapshot_as_array( $after['side_effects'] ?? [] );
+		$content_drift        = ! hash_equals( (string) $after['checksum'], $current_checksum );
+		$side_effect_drift    = ! empty( $after_side_effects ) && ! self::rollback_snapshot_side_effects_equal( $after_side_effects, $current_side_effects );
+
+		if ( $content_drift || $side_effect_drift ) {
+			// Refused for this page alone. Failing the whole run because one page
+			// changed would make the common recovery case unusable: any page edited
+			// after the run would veto every other page's restore.
+			return $refuse(
+				'conflict',
+				'Refused because this page changed after the run wrote it.',
+				[
+					'drift' => [
+						'content'                 => $content_drift,
+						'side_effects'            => $side_effect_drift,
+						'expected_after_checksum' => (string) $after['checksum'],
+						'current_checksum'        => $current_checksum,
+					],
+				]
+			);
+		}
+
+		$restore_content = (string) $before['value'];
+		if ( $dry_run ) {
+			return [
+				'id'       => $post_id,
+				'ok'       => true,
+				'dry_run'  => true,
+				'target'   => "{$post->post_type}#{$post_id}",
+				'before'   => [ 'checksum' => $current_checksum ],
+				'after'    => [ 'checksum' => self::rollback_snapshot_checksum( $restore_content ) ],
+			];
+		}
+
+		$result = self::update_post_content_with_integrity_guard(
+			$post_id,
+			$restore_content,
+			'rollback_snapshot',
+			"rollback run chunk {$chunk_id}",
+			$current_content
+		);
+		if ( is_wp_error( $result ) ) {
+			// Carry the guard's own diagnostics through, not just its message.
+			// update_post_content_with_integrity_guard() reports byte counts, the
+			// specific issues it found, and whether its auto-revert verified — which
+			// is exactly what tells a caller whether the page is now holding neither
+			// its pre-run nor its post-run content. Collapsing that to a string is
+			// what turns a recoverable incident into a mystery.
+			$guard_data = $result->get_error_data();
+			return $refuse(
+				'write_failed',
+				(string) $result->get_error_message(),
+				[
+					'code'       => (string) $result->get_error_code(),
+					'diagnostics' => is_array( $guard_data ) ? $guard_data : null,
+				]
+			);
+		}
+
+		$side_effect_readback = self::rollback_snapshot_restore_side_effects( $post_id, self::rollback_snapshot_as_array( $before['side_effects'] ?? [] ) );
+		if ( is_wp_error( $side_effect_readback ) ) {
+			self::invalidate_divi_cache( $post_id );
+			return $refuse( 'side_effect_readback_failed', 'Content was written, but captured Divi post-meta did not verify after restore.', [ 'committed' => true ] );
+		}
+
+		$readback          = get_post( $post_id );
+		$readback_content  = $readback && isset( $readback->post_content ) ? (string) $readback->post_content : '';
+		$restored_checksum = self::rollback_snapshot_checksum( $readback_content );
+		$expected_checksum = self::rollback_snapshot_checksum( $restore_content );
+		if ( ! hash_equals( $expected_checksum, $restored_checksum ) ) {
+			self::invalidate_divi_cache( $post_id );
+			return $refuse( 'readback_failed', 'Restore readback checksum did not match after the content write.', [ 'committed' => true, 'expected_checksum' => $expected_checksum, 'restored_checksum' => $restored_checksum ] );
+		}
+
+		self::invalidate_divi_cache( $post_id );
+
+		return [
+			'id'                     => $post_id,
+			'ok'                     => true,
+			'target'                 => [ 'kind' => 'post', 'id' => $post_id, 'post_type' => (string) $post->post_type ],
+			'prior_current_checksum' => $current_checksum,
+			'restored_checksum'      => $restored_checksum,
+		];
+	}
+
+	/**
+	 * Restore a run chunk, whole or in part.
+	 *
+	 * @param object               $request     REST request.
+	 * @param string               $chunk_id    Validated chunk id.
+	 * @param string               $option_name Option holding the chunk.
+	 * @param array<string, mixed> $record      Stored run record.
+	 */
+	private static function rollback_snapshot_run_restore( $request, string $chunk_id, string $option_name, array $record ) {
+		$summary = self::rollback_snapshot_run_summary( $record, $option_name );
+		if ( null === $summary ) {
+			return self::envelope_error( 'invalid_input', 'Rollback run record is malformed.', null, 400, [ 'snapshot_id' => $chunk_id ] );
+		}
+
+		$entries = [];
+		foreach ( $record['targets'] as $entry ) {
+			$entry = self::rollback_snapshot_as_array( $entry );
+			$id    = absint( $entry['id'] ?? 0 );
+			if ( $id > 0 ) {
+				$entries[ $id ] = $entry;
+			}
+		}
+
+		$requested = $request->get_param( 'page_ids' );
+		if ( null !== $requested ) {
+			// An empty string is what a form-encoded or query-string REST client
+			// sends for "page_ids=". Treating it as "not supplied" would silently
+			// take the maximum-blast-radius branch and restore the whole run.
+			if ( ! is_array( $requested ) ) {
+				return self::envelope_error(
+					'invalid_input',
+					'page_ids must be an array of post ids.',
+					'Omit page_ids entirely to restore the whole run.',
+					400,
+					[ 'snapshot_id' => $chunk_id, 'received_type' => gettype( $requested ) ]
+				);
+			}
+			if ( [] === $requested ) {
+				// A caller that built page_ids from a filter which matched nothing
+				// would otherwise be told the rollback succeeded. Same class of lie
+				// as the all-refused case below.
+				return self::envelope_error(
+					'invalid_input',
+					'page_ids was empty, so there is nothing to restore.',
+					'Omit page_ids entirely to restore the whole run.',
+					400,
+					[ 'snapshot_id' => $chunk_id, 'covered_page_ids' => array_keys( $entries ) ]
+				);
+			}
+
+			$selected = [];
+			$unknown  = [];
+			$invalid  = [];
+			foreach ( $requested as $raw ) {
+				// Strict rather than absint(): absint('72301abc') is 72301 and
+				// absint(-1) is 1, so a caller sending a sentinel or a stringified
+				// float would revert a page it never named. That defeats the whole
+				// point of refusing unknown ids a few lines below.
+				if ( ! is_int( $raw ) && ! ( is_string( $raw ) && ctype_digit( $raw ) ) ) {
+					$invalid[] = $raw;
+					continue;
+				}
+				$id = (int) $raw;
+				if ( $id <= 0 ) {
+					$invalid[] = $raw;
+					continue;
+				}
+				if ( isset( $entries[ $id ] ) ) {
+					$selected[ $id ] = $entries[ $id ];
+					continue;
+				}
+				$unknown[] = $id;
+			}
+			if ( [] !== $invalid ) {
+				return self::envelope_error(
+					'invalid_input',
+					'page_ids must contain positive integer post ids.',
+					'Send page ids as integers; omit page_ids entirely to restore the whole run.',
+					400,
+					[ 'snapshot_id' => $chunk_id, 'invalid_page_ids' => array_map( 'strval', $invalid ) ]
+				);
+			}
+			if ( [] !== $unknown ) {
+				// Named but absent is an error, not a no-op: silently ignoring it
+				// would let a caller believe a page was reverted when nothing
+				// touched it.
+				return self::envelope_error(
+					'invalid_input',
+					'page_ids named pages that this run does not cover.',
+					'Call diviops_rollback_snapshot_get on this snapshot_id to see which pages it covers.',
+					400,
+					[ 'snapshot_id' => $chunk_id, 'unknown_page_ids' => $unknown, 'covered_page_ids' => array_keys( $entries ) ]
+				);
+			}
+			$entries = $selected;
+		}
+
+		$dry_run = rest_sanitize_boolean( $request->get_param( 'dry_run' ) ?? false );
+
+		$stored_restore  = self::rollback_snapshot_as_array( $record['restore'] ?? [] );
+		$already_restored = array_map( 'absint', self::rollback_snapshot_as_array( $stored_restore['restored_page_ids'] ?? [] ) );
+
+		$restored = [];
+		$refused  = [];
+		foreach ( $entries as $entry ) {
+			$outcome = self::rollback_snapshot_run_restore_entry( $entry, $chunk_id, $dry_run, $already_restored );
+			if ( ! empty( $outcome['ok'] ) ) {
+				$restored[] = $outcome;
+				continue;
+			}
+			$refused[] = $outcome;
+		}
+
+		$restored_ids = array_values( array_map( static function ( $row ) {
+			return (int) $row['id'];
+		}, $restored ) );
+
+		if ( ! $dry_run && [] !== $restored ) {
+			// Accumulated, not overwritten. Multi-pass partial restore is this
+			// feature's headline use, so a second pass clobbering the first would
+			// leave the record asserting that only the last batch was ever reverted.
+			$ledger = array_values( array_unique( array_merge( $already_restored, $restored_ids ) ) );
+			sort( $ledger );
+
+			$record['restore']                      = $stored_restore;
+			$record['restore']['restored_at']       = self::rollback_snapshot_now();
+			$record['restore']['restored_by']       = [ 'user_id' => self::rollback_snapshot_current_user_id(), 'login' => self::rollback_snapshot_user_login() ];
+			$record['restore']['restored_page_ids'] = $ledger;
+
+			// Status has to move off write_applied, or a caller filtering for
+			// restored runs never finds one and rollback_snapshot_get keeps
+			// reporting already-reverted entries as restorable.
+			// Counted against entries that CAN restore, not every stored target. An
+			// entry captured but never marked can never enter the ledger, so counting
+			// it would pin such a chunk at partially_restored forever — with no way to
+			// tell "work remains" from "done as much as is possible".
+			$restorable_total = 0;
+			foreach ( $record['targets'] as $stored_entry ) {
+				$stored_entry = self::rollback_snapshot_as_array( $stored_entry );
+				$entry_after  = self::rollback_snapshot_as_array( $stored_entry['after'] ?? [] );
+				$entry_before = self::rollback_snapshot_as_array( $stored_entry['before'] ?? [] );
+				if ( absint( $stored_entry['id'] ?? 0 ) > 0 && ! empty( $entry_after['checksum'] ) && array_key_exists( 'value', $entry_before ) ) {
+					++$restorable_total;
+				}
+			}
+			$record['status'] = count( $ledger ) >= $restorable_total ? 'restore_applied' : 'partially_restored';
+
+			foreach ( $record['targets'] as $index => $stored_entry ) {
+				$stored_entry = self::rollback_snapshot_as_array( $stored_entry );
+				if ( in_array( absint( $stored_entry['id'] ?? 0 ), $restored_ids, true ) ) {
+					$stored_entry['status']        = 'restore_applied';
+					$record['targets'][ $index ] = $stored_entry;
+				}
+			}
+
+			update_option( $option_name, $record, false );
+		}
+
+		$payload = [
+			'snapshot_id' => $chunk_id,
+			'kind'        => 'run',
+			'run_id'      => $summary['run_id'],
+			'dry_run'     => $dry_run,
+			'requested'   => count( $entries ),
+			'restored'    => $restored,
+			'refused'     => $refused,
+			'force'       => [ 'supported' => false, 'used' => false ],
+		];
+
+		if ( [] === $refused ) {
+			return self::envelope_success( $payload );
+		}
+
+		// A restore that refused anything is not a plain success. preset_reassign
+		// already sets this convention with preset.reassign_partial_failure: a
+		// caller checking `ok` must not be told a rollback worked when some or all
+		// of its pages still hold post-run content.
+		$none = [] === $restored;
+		return self::envelope_error(
+			$none ? 'rollback_snapshot.run_restore_failed' : 'rollback_snapshot.run_restore_partial',
+			$none
+				? 'No page in this rollback run was restored.'
+				: sprintf( 'Restored %d of %d pages; the rest were refused.', count( $restored ), count( $entries ) ),
+			'Inspect refused[] — each entry names the page and why it was refused.',
+			$none ? 409 : 207,
+			$payload
+		);
+	}
+
+	/**
 	 * Evict the oldest snapshots beyond the retention cap.
 	 *
 	 * Best-effort by design: this runs after the snapshot row is safely stored,
@@ -835,6 +1342,16 @@ trait DiviOps_Agent_Rollback {
 			if ( ! is_array( $value ) ) {
 				continue;
 			}
+			// #199: a run chunk cannot go through the v1 normalizer — it has no
+			// singular target.id, which is exactly what keeps it out of the
+			// managed-recovery seam Pro reads. It still has to be listable, or a
+			// caller has no way to discover the id they need in order to restore.
+			$run_summary = self::rollback_snapshot_run_summary( $value, $option_name );
+			if ( null !== $run_summary ) {
+				$records[] = $run_summary;
+				continue;
+			}
+
 			$summary = self::rollback_snapshot_normalize_record( $value, $option_name, $option_value, null === $autoload ? null : (string) $autoload );
 			if ( null !== $summary ) {
 				$records[] = $summary;
@@ -1084,6 +1601,46 @@ trait DiviOps_Agent_Rollback {
 
 		$rows = [];
 		foreach ( self::rollback_snapshot_scan_records() as $summary ) {
+			// #199: a run chunk covers many pages, so every filter below that reads
+			// a singular $summary['target'] has to be answered differently. Handled
+			// explicitly rather than by letting the singular reads fail soft —
+			// PHP would emit "Undefined array key" notices and then compare null,
+			// which silently passes filters that should have excluded the row.
+			if ( 'run' === ( $summary['kind'] ?? '' ) ) {
+				if ( '' !== $status && $status !== $summary['status'] ) {
+					continue;
+				}
+				// A run's entries are always posts today, so a kind filter for
+				// anything else excludes the whole record.
+				if ( '' !== $target_kind && 'post' !== $target_kind ) {
+					continue;
+				}
+
+				$visible = [];
+				foreach ( $summary['targets'] as $entry ) {
+					if ( $target_id > 0 && $target_id !== (int) $entry['id'] ) {
+						continue;
+					}
+					$post = get_post( (int) $entry['id'] );
+					// Same per-object gate the singular path applies: a caller only
+					// learns a run covers a page they are allowed to see.
+					if ( $post && self::can_inspect_post_object( $post ) ) {
+						$visible[] = $entry;
+					}
+				}
+				if ( [] === $visible ) {
+					continue;
+				}
+
+				$summary['targets']            = $visible;
+				$summary['page_count_visible'] = count( $visible );
+				$rows[]                        = $summary;
+				if ( count( $rows ) >= $limit ) {
+					break;
+				}
+				continue;
+			}
+
 			if ( '' !== $target_kind && $target_kind !== $summary['target']['kind'] ) {
 				continue;
 			}
@@ -1131,6 +1688,22 @@ trait DiviOps_Agent_Rollback {
 		if ( ! is_array( $record ) ) {
 			return self::envelope_error( 'not_found', 'Rollback snapshot not found.', null, 404, [ 'snapshot_id' => $snapshot_id ] );
 		}
+		// #199: run chunks are read through their own summary. Falling through to
+		// the v1 normalizer would answer 400 malformed for a perfectly good record.
+		$run_record = self::rollback_snapshot_run_summary( $record, $option_name );
+		if ( null !== $run_record ) {
+			// Gated per entry, same as the list path. Returning the whole chunk
+			// ungated would let an edit_posts-tier caller enumerate pages they
+			// cannot edit, along with each page's checksum and byte length.
+			$run_access = self::rollback_snapshot_run_access( $run_record );
+			if ( [] === $run_access['visible'] ) {
+				return self::envelope_error( 'forbidden', 'You cannot inspect any page this rollback run covers.', null, 403, [ 'snapshot_id' => $snapshot_id ] );
+			}
+			$run_record['targets']            = $run_access['visible'];
+			$run_record['page_count_visible'] = count( $run_access['visible'] );
+			return self::envelope_success( $run_record );
+		}
+
 		$summary = self::rollback_snapshot_normalize_record( $record, $option_name, $record );
 		if ( null === $summary ) {
 			return self::envelope_error( 'invalid_input', 'Rollback snapshot record is malformed.', null, 400, [ 'snapshot_id' => $snapshot_id ] );
@@ -1177,6 +1750,37 @@ trait DiviOps_Agent_Rollback {
 		if ( ! is_array( $record ) ) {
 			return self::envelope_error( 'not_found', 'Rollback snapshot not found.', null, 404, [ 'snapshot_id' => $snapshot_id ] );
 		}
+		// #199: a run chunk must be deletable, or the only thing that can ever
+		// remove one is retention eviction and a caller cannot clear space.
+		$run_record = self::rollback_snapshot_run_summary( $record, $option_name );
+		if ( null !== $run_record ) {
+			// Every covered page, not merely one: deleting a chunk destroys the
+			// only recovery record for every page in it, so partial rights are not
+			// enough to authorize it.
+			$run_access = self::rollback_snapshot_run_access( $run_record );
+			if ( ! $run_access['all'] ) {
+				return self::envelope_error(
+					'forbidden',
+					'You cannot delete this rollback run because it covers pages you cannot edit.',
+					'Deleting a run chunk removes the rollback for every page it covers.',
+					403,
+					[ 'snapshot_id' => $snapshot_id, 'page_count' => $run_access['total'], 'page_count_visible' => count( $run_access['visible'] ) ]
+				);
+			}
+			$run_deleted = delete_option( $option_name );
+			return self::envelope_success( [
+				'snapshot_id' => $snapshot_id,
+				'kind'        => 'run',
+				'run_id'      => $run_record['run_id'],
+				'deleted'     => (bool) $run_deleted,
+				'page_count'  => $run_record['page_count'],
+				'deleted_by'  => [
+					'user_id' => self::rollback_snapshot_current_user_id(),
+					'login'   => self::rollback_snapshot_user_login(),
+				],
+			] );
+		}
+
 		$summary = self::rollback_snapshot_normalize_record( $record, $option_name, $record );
 		if ( null === $summary ) {
 			return self::envelope_error( 'invalid_input', 'Rollback snapshot record is malformed.', null, 400, [ 'snapshot_id' => $snapshot_id ] );
@@ -1265,6 +1869,11 @@ trait DiviOps_Agent_Rollback {
 		if ( ! is_array( $record ) ) {
 			return self::envelope_error( 'not_found', 'Rollback snapshot not found.', null, 404, [ 'snapshot_id' => $snapshot_id ] );
 		}
+		// #199: run chunks restore through their own path, whole or by page_ids.
+		if ( self::rollback_snapshot_is_run_record( $record ) ) {
+			return self::rollback_snapshot_run_restore( $request, $snapshot_id, $option_name, $record );
+		}
+
 		$summary = self::rollback_snapshot_normalize_record( $record, $option_name, $record );
 		if ( null === $summary ) {
 			return self::envelope_error( 'invalid_input', 'Rollback snapshot record is malformed.', null, 400, [ 'snapshot_id' => $snapshot_id ] );

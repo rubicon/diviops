@@ -389,7 +389,7 @@ $canonical_markers = array(
 );
 
 /*
- * Two paths write content they did not re-encode — they relocate or restore bytes
+ * Three paths write content they did not re-encode — they relocate or restore bytes
  * that were already stored. They cannot introduce non-canonical JSON themselves,
  * but they will faithfully re-write non-canonical bytes that an earlier version
  * stored, and the guard will then trip on content they never authored. That is a
@@ -397,12 +397,21 @@ $canonical_markers = array(
  * rollback_snapshot_restore (byte-exact restore vs canonicalized restore), so it
  * is tracked separately rather than bundled into this fix.
  *
+ * rollback_snapshot_run_restore_entry (#199) is the run-scoped sibling of
+ * rollback_snapshot_restore: it writes a captured before.value back verbatim, by
+ * exactly the same mechanism and with exactly the same exposure. It is listed here
+ * rather than exempted because the ratchet's job is to make every such path
+ * visible, and because canonicalizing it alone would silently diverge the two
+ * restore paths — whatever #208 decides for the singular restore has to apply to
+ * both, and this line is what will force that.
+ *
  * This list is a ratchet: a NEW unnormalized write path fails the test, and fixing
  * one of these fails it too, as a prompt to shrink the list.
  */
 $known_unnormalized = array(
 	'trait-page.php::module_move',
 	'trait-rollback.php::rollback_snapshot_restore',
+	'trait-rollback.php::rollback_snapshot_run_restore_entry',
 );
 
 assert_true(
@@ -492,5 +501,5 @@ assert_true(
 assert_same(
 	$known_unnormalized,
 	$unnormalized,
-	'exactly the two known byte-relocating write paths lack canonical serialization — a new one, or a fixed one, must update this list'
+	'exactly the known byte-relocating write paths lack canonical serialization — a new one, or a fixed one, must update this list'
 );
