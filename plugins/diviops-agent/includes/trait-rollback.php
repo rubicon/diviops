@@ -145,6 +145,26 @@ trait DiviOps_Agent_Rollback {
 
 	private static function rollback_snapshot_before_from_post( $post ): array {
 		$value = (string) ( $post->post_content ?? '' );
+
+		// #208: capture canonical bytes, not whatever is on disk.
+		//
+		// Every write goes through update_post_content_with_integrity_guard(), which
+		// reads back and compares byte-for-byte — and WordPress canonicalizes
+		// block-attribute JSON on save. So restoring non-canonical bytes guarantees a
+		// mismatch and an automatic revert of a write that actually succeeded. Content
+		// stored by a pre-#206 module_update is non-canonical on disk, so a snapshot of
+		// it was unrestorable through no fault of the restore path.
+		//
+		// Canonicalizing HERE rather than at restore keeps the snapshot contract intact:
+		// a restore still puts back exactly what was captured. Cleaning on the way out
+		// instead would make "exactly as it was" permanently untrue.
+		//
+		// The page itself is not rewritten — capture is a read.
+		$normalized = self::normalize_divi_full_content_for_write( $value );
+		if ( ! empty( $normalized['ok'] ) ) {
+			$value = (string) $normalized['content'];
+		}
+
 		return [
 			'checksum'     => self::rollback_snapshot_checksum( $value ),
 			'byte_length'  => strlen( $value ),
@@ -543,6 +563,27 @@ trait DiviOps_Agent_Rollback {
 	}
 
 	/**
+	 * Canonicalize a stored before.value on the way out (#208).
+	 *
+	 * Records captured before canonicalization moved to capture time still hold
+	 * non-canonical bytes, and writing those back trips the integrity guard. This is
+	 * the transitional repair for them: it shrinks to a no-op as old snapshots age
+	 * out, because everything captured from now on is already canonical and
+	 * normalize_divi_full_content_for_write() is idempotent.
+	 *
+	 * Deliberately best-effort. A record this normalizer cannot parse is written back
+	 * unchanged rather than refused — the guard will still reject it, which is the
+	 * pre-existing behavior, and refusing here would turn a recoverable snapshot into
+	 * an unrecoverable one.
+	 *
+	 * @param string $value Stored before.value.
+	 */
+	private static function rollback_snapshot_canonical_restore_value( string $value ): string {
+		$normalized = self::normalize_divi_full_content_for_write( $value );
+		return empty( $normalized['ok'] ) ? $value : (string) $normalized['content'];
+	}
+
+	/**
 	 * Hint for a snapshot id that resolved to nothing.
 	 *
 	 * A bare run id is exactly what `summary.rollback.run_id` reports, and it is NOT
@@ -786,7 +827,7 @@ trait DiviOps_Agent_Rollback {
 			);
 		}
 
-		$restore_content = (string) $before['value'];
+		$restore_content = self::rollback_snapshot_canonical_restore_value( (string) $before['value'] );
 		if ( $dry_run ) {
 			return [
 				'id'       => $post_id,
@@ -1981,7 +2022,7 @@ trait DiviOps_Agent_Rollback {
 			);
 		}
 
-		$restore_content = (string) $before['value'];
+		$restore_content = self::rollback_snapshot_canonical_restore_value( (string) $before['value'] );
 		if ( rest_sanitize_boolean( $request->get_param( 'dry_run' ) ?? false ) ) {
 			return self::dry_run_response(
 				"Would restore rollback snapshot {$snapshot_id} to {$post->post_type}#{$post->ID}.",
