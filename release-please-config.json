@@ -7,7 +7,9 @@
     ".": {
       "release-type": "simple",
       "package-name": "diviops-agent",
-      "exclude-paths": ["diviops-server"],
+      "exclude-paths": [
+        "diviops-server"
+      ],
       "extra-files": [
         {
           "type": "generic",
@@ -16,6 +18,11 @@
         {
           "type": "generic",
           "path": "plugins/diviops-agent/readme.txt"
+        },
+        {
+          "type": "json",
+          "path": ".claude-plugin/plugin.json",
+          "jsonpath": "$.version"
         }
       ]
     },
