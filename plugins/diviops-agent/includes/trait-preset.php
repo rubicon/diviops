@@ -2158,7 +2158,36 @@ trait DiviOps_Agent_Preset {
 		// Unmappable slots skip strip; other slots in the same walk are unaffected.
 		$summary['strip_advisory_per_slot'] = [];
 
+		// #199: one run-scoped snapshot instead of one per page. A snapshot per page
+		// against a 500-row retention cap meant an apply of 501-1000 pages evicted its
+		// own earliest snapshots as it ran, and reported success for pages it could no
+		// longer restore. run_begin() writes nothing, so opening it here is free even
+		// when the loop turns out to have no work to do.
+		$rollback_run     = ( 'apply' === $mode ) ? self::rollback_snapshot_run_begin(
+			'diviops_preset_reassign',
+			[
+				'tool_operation' => 'preset.reassign',
+				'old_uuid'       => $old_uuid,
+				'new_uuid'       => $new_uuid,
+				'scope'          => $effective_scope,
+			]
+		) : null;
+		$rollback_aborted = false;
+
 		foreach ( $posts as $p ) {
+			if ( $rollback_aborted ) {
+				// A whole chunk failed to store. Continuing would write pages whose
+				// recovery data does not exist — the exact failure this change removes —
+				// so the rest are left unattempted and named rather than silently skipped.
+				$summary['errors'][] = [
+					'page_id' => $p->ID,
+					'title'   => $p->post_title,
+					'code'    => 'preset.rollback_storage_failed',
+					'error'   => 'Not attempted: an earlier rollback chunk could not be stored, so this run stopped rather than write pages it could not restore.',
+				];
+				continue;
+			}
+
 			$content = $p->post_content;
 
 			// Fast-path: skip the expensive parse_blocks() when the raw content doesn't even mention old_uuid.
@@ -2385,25 +2414,24 @@ trait DiviOps_Agent_Preset {
 						// pages at once" does not get an off switch for its
 						// recovery data. A snapshot that cannot be stored refuses
 						// this page BEFORE it is written.
-						$snapshot = self::rollback_snapshot_create_for_post_write(
-							$p,
-							'diviops_preset_reassign',
-							[
-								'tool_operation' => 'preset.reassign',
-								'old_uuid'       => $old_uuid,
-								'new_uuid'       => $new_uuid,
-								'scope'          => $effective_scope,
-								'swaps'          => $swap_hits,
-							]
-						);
-						if ( is_wp_error( $snapshot ) ) {
+						// Captured into the run rather than stored as its own row. The
+						// per-page `swaps` the v1 call carried is dropped deliberately:
+						// it is meaningless on a record covering up to 100 pages, and
+						// the per-page counts already live in $page_detail.
+						$captured = self::rollback_snapshot_run_capture( $rollback_run, $p );
+						if ( false === $captured ) {
+							// A full chunk could not be written. Refusing only this page
+							// and carrying on would grow the very insert that just
+							// failed, so the run stops and the remaining pages are
+							// reported unattempted by the guard at the top of the loop.
+							$rollback_aborted    = true;
 							$summary['errors'][] = [
 								'page_id' => $p->ID,
 								'title'   => $p->post_title,
-								'code'    => $snapshot->get_error_code(),
-								'error'   => $snapshot->get_error_message(),
+								'code'    => 'preset.rollback_storage_failed',
+								'error'   => 'Refused before writing: this page\'s rollback chunk could not be stored.',
 							];
-							$page_detail['update_error'] = $snapshot->get_error_code();
+							$page_detail['update_error'] = 'preset.rollback_storage_failed';
 							$summary['details'][]        = $page_detail;
 							continue;
 						}
@@ -2421,30 +2449,81 @@ trait DiviOps_Agent_Preset {
 							$content
 						);
 						if ( is_wp_error( $update_result ) ) {
-							$snapshot            = self::rollback_snapshot_mark_from_write_error( $snapshot, $update_result );
+							self::rollback_snapshot_run_mark_from_write_error( $rollback_run, (int) $p->ID, $update_result );
 							$summary['errors'][] = [
-								'page_id'     => $p->ID,
-								'title'       => $p->post_title,
-								'code'        => $update_result->get_error_code(),
-								'error'       => $update_result->get_error_message(),
-								'snapshot_id' => $snapshot['snapshot_id'],
+								'page_id' => $p->ID,
+								'title'   => $p->post_title,
+								'code'    => $update_result->get_error_code(),
+								'error'   => $update_result->get_error_message(),
+								'run_id'  => $rollback_run['run_id'],
 							];
 							$page_detail['update_error'] = $update_result->get_error_code();
-							$page_detail['snapshot_id']  = $snapshot['snapshot_id'];
+							$page_detail['run_id']       = $rollback_run['run_id'];
 						} else {
 							self::invalidate_divi_cache( $p->ID );
 							// Marking is not bookkeeping: rollback_snapshot_restore()
 							// refuses any snapshot whose after.checksum is empty, so
 							// a created-but-unmarked snapshot is permanently
 							// unrestorable.
-							$snapshot                   = self::rollback_snapshot_mark_post_write( $snapshot, 'write_applied', $new_content );
-							$page_detail['snapshot_id'] = $snapshot['snapshot_id'];
+							// Marking is not bookkeeping: rollback_snapshot_restore()
+							// refuses any entry whose after.checksum is empty, so a
+							// captured-but-unmarked entry is permanently unrestorable —
+							// and it rides inside a chunk that otherwise looks healthy.
+							self::rollback_snapshot_run_mark( $rollback_run, (int) $p->ID, 'write_applied', $new_content );
+							$page_detail['run_id'] = $rollback_run['run_id'];
 						}
 					}
 				}
 
 				$summary['details'][] = $page_detail;
 			}
+		}
+
+		// #199: close the run and report it. Without the flush the trailing partial
+		// chunk is never written, so the last pages of every run would have no
+		// recovery record at all.
+		if ( null !== $rollback_run ) {
+			$rollback_chunks = self::rollback_snapshot_run_flush( $rollback_run );
+
+			// Map each page to the chunk that actually holds it. A caller restoring
+			// one page needs the chunk id, and it is not knowable at capture time —
+			// the chunk number is only fixed when the chunk is written.
+			$rollback_page_chunks = [];
+			foreach ( $rollback_chunks as $chunk_option ) {
+				$chunk_record = get_option( $chunk_option, null );
+				if ( ! is_array( $chunk_record ) || ! is_array( $chunk_record['targets'] ?? null ) ) {
+					continue;
+				}
+				$chunk_id = (string) ( $chunk_record['snapshot_id'] ?? '' );
+				foreach ( $chunk_record['targets'] as $chunk_entry ) {
+					$chunk_page = absint( is_array( $chunk_entry ) ? ( $chunk_entry['id'] ?? 0 ) : 0 );
+					if ( $chunk_page > 0 && '' !== $chunk_id ) {
+						$rollback_page_chunks[ $chunk_page ] = $chunk_id;
+					}
+				}
+			}
+
+			foreach ( $summary['details'] as $detail_index => $detail_row ) {
+				$detail_page = absint( $detail_row['page_id'] ?? 0 );
+				if ( isset( $rollback_page_chunks[ $detail_page ] ) ) {
+					$summary['details'][ $detail_index ]['snapshot_id'] = $rollback_page_chunks[ $detail_page ];
+				}
+			}
+			foreach ( $summary['errors'] as $error_index => $error_row ) {
+				$error_page = absint( $error_row['page_id'] ?? 0 );
+				if ( isset( $rollback_page_chunks[ $error_page ] ) ) {
+					$summary['errors'][ $error_index ]['snapshot_id'] = $rollback_page_chunks[ $error_page ];
+				}
+			}
+
+			$summary['rollback'] = [
+				'run_id'         => $rollback_run['run_id'],
+				'chunks'         => array_values( array_map( static function ( $chunk_option ) {
+					return str_replace( 'diviops_rollback_snapshot_', '', (string) $chunk_option );
+				}, $rollback_chunks ) ),
+				'pages_captured' => count( $rollback_page_chunks ),
+				'storage_failed' => ! empty( $rollback_run['storage_failed'] ),
+			];
 		}
 
 		// Registry chain rewrite — runs whenever effective scope is group, including when
