@@ -219,6 +219,16 @@ jobs:
       - name: Run local-gate coverage test
         run: npm run test:ci-gate-coverage
 
+      # The every-declared-bin-has-a-built-target gate lives in smoke.mjs and ran
+      # ONLY in publish.yaml, so a PR could add a bin entry and go green while the
+      # gate that validates bins did not execute until publish time — the exact
+      # shape of #222/#223, where 1.8.1 shipped advertising bins that could not run.
+      # Surfaced while adopting the cross-env-preflight source (#240), which adds a
+      # bin. smoke needs no credentials: it points the server at a dead address and
+      # tolerates the failed handshake.
+      - name: Run server smoke (tool surface + bin targets)
+        run: npm run smoke
+
       # The real build (not the scoped tsconfig.test.json above) plus an
       # actual `node dist/index.js` startup, asserting it reaches the
       # graceful missing-credentials refusal rather than crashing. #41
