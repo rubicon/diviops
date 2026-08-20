@@ -9,7 +9,8 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "diviops-mcp": "dist/index.js"
+    "diviops-mcp": "dist/index.js",
+    "diviops-cross-env-preflight": "dist/cross-env-preflight/bin.js"
   },
   "files": [
     "dist/**/*",
@@ -21,7 +22,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc && node scripts/copy-vendored-cross-env-preflight.mjs",
+    "build": "tsc",
     "smoke": "npm run build && node scripts/smoke.mjs",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
