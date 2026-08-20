@@ -10,6 +10,14 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.17.0](https://github.com/rubicon/diviops/compare/v1.16.3...v1.17.0) (2026-08-20)
+
+
+### Features
+
+* **rollback:** read, restore, and delete run-scoped snapshots ([#199](https://github.com/rubicon/diviops/issues/199) tasks 4-5) ([#245](https://github.com/rubicon/diviops/issues/245)) ([a68f433](https://github.com/rubicon/diviops/commit/a68f4338e37d1c32c6eb088cf86569be7612b4f4))
+* **rollback:** run-scoped snapshot record and lifecycle ([#199](https://github.com/rubicon/diviops/issues/199) tasks 1-2) ([#243](https://github.com/rubicon/diviops/issues/243)) ([33b4565](https://github.com/rubicon/diviops/commit/33b45651584c10598621db1dfe0d06b675605553))
+
 ## [1.16.3](https://github.com/rubicon/diviops/compare/v1.16.2...v1.16.3) (2026-08-18)
 
 
