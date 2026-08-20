@@ -415,17 +415,36 @@ assert_true(
 	preset_reassign_calls( $reassign_source, 'update_post_content_with_integrity_guard' ),
 	'preset_reassign() writes through update_post_content_with_integrity_guard(), so each page write gets readback verification and auto-revert (defect 2)'
 );
+/*
+ * These three guarded a real property — capture before the write, mark on BOTH
+ * outcomes — under the per-page snapshot API. #199 replaced that API with a
+ * run-scoped one because one row per page overflowed the 500-row retention cap, so
+ * the names changed while the property did not. Re-pointed rather than deleted:
+ * the property is, if anything, more load-bearing now. Under the old API an
+ * unmarked snapshot was a standalone row that restore refused — visible and
+ * contained. Under the run API an unmarked entry rides inside a chunk that
+ * otherwise looks healthy, so a missed mark silently costs one page its
+ * restorability inside an apparently good record.
+ */
 assert_true(
-	preset_reassign_calls( $reassign_source, 'rollback_snapshot_create_for_post_write' ),
-	'preset_reassign() creates a rollback snapshot before each page write (defect 1)'
+	preset_reassign_calls( $reassign_source, 'rollback_snapshot_run_capture' ),
+	'preset_reassign() captures each page into the run snapshot before writing it (defect 1)'
 );
 assert_true(
-	preset_reassign_calls( $reassign_source, 'rollback_snapshot_mark_post_write' ),
-	'preset_reassign() MARKS the snapshot after a successful write — rollback_snapshot_restore() refuses any snapshot whose after.checksum is empty, so an unmarked snapshot is permanently unrestorable (defect 1)'
+	preset_reassign_calls( $reassign_source, 'rollback_snapshot_run_mark' ),
+	'preset_reassign() MARKS the entry after a successful write — rollback_snapshot_restore() refuses any entry whose after.checksum is empty, so an unmarked entry is permanently unrestorable (defect 1)'
 );
 assert_true(
-	preset_reassign_calls( $reassign_source, 'rollback_snapshot_mark_from_write_error' ),
-	'preset_reassign() marks the snapshot on a failed write, so a failed page is not left with a snapshot stuck at status created (defect 1)'
+	preset_reassign_calls( $reassign_source, 'rollback_snapshot_run_mark_from_write_error' ),
+	'preset_reassign() marks the entry on a failed write, so a failed page is not left stuck at status created (defect 1)'
+);
+assert_true(
+	! preset_reassign_calls( $reassign_source, 'rollback_snapshot_create_for_post_write' ),
+	'preset_reassign() no longer takes one snapshot row per page — that is what evicted its own snapshots past 500 pages (#199)'
+);
+assert_true(
+	preset_reassign_calls( $reassign_source, 'rollback_snapshot_run_flush' ),
+	'preset_reassign() flushes the run, without which the trailing partial chunk is never stored (#199)'
 );
 assert_true(
 	preset_reassign_calls( $reassign_source, 'block_round_trip_drift' ),

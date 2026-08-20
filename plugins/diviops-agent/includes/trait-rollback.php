@@ -413,6 +413,36 @@ trait DiviOps_Agent_Rollback {
 	}
 
 	/**
+	 * Mark a run entry from a failed guarded write.
+	 *
+	 * The run-scoped sibling of rollback_snapshot_mark_from_write_error(), and it
+	 * classifies the same way: a content_write_corruption means the write landed
+	 * and the guard reverted it, anything else means it never landed. The status
+	 * is what a later reader uses to tell "this page was touched and put back"
+	 * from "this page was never written", so getting it backwards would mislabel
+	 * every failed page in a run.
+	 *
+	 * The after state is read from the live page rather than from the intended
+	 * content, because after a failed write the live page is the only truth about
+	 * what is actually stored — and restore refuses any entry with no after
+	 * checksum, so an unmarked failure would be unrecoverable.
+	 *
+	 * @param array<string, mixed> $run     Run handle, by reference.
+	 * @param int                  $post_id Post whose write failed.
+	 * @param mixed                $error   WP_Error from the guarded write.
+	 * @return bool Whether the entry was found and marked.
+	 */
+	private static function rollback_snapshot_run_mark_from_write_error( array &$run, int $post_id, $error ): bool {
+		$code   = is_object( $error ) && method_exists( $error, 'get_error_code' ) ? (string) $error->get_error_code() : '';
+		$status = false !== strpos( $code, '.content_write_corruption' ) ? 'write_failed_restored' : 'aborted_before_write';
+
+		$current = get_post( $post_id );
+		$after   = $current && isset( $current->post_content ) ? (string) $current->post_content : null;
+
+		return self::rollback_snapshot_run_mark( $run, $post_id, $status, $after );
+	}
+
+	/**
 	 * Write the open chunk as one record and start a new one.
 	 *
 	 * Retention runs after the write, exactly as it does for a per-page snapshot:
