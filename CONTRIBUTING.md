@@ -80,7 +80,53 @@ test guarding this; if it fails, that is why.
 
 Do **not** hand-edit the version or `CHANGELOG.md`. release-please owns both, computes the
 bump from your commit prefixes, and curates the changelog on a release PR. The plugin
-version lives in two places in `diviops-agent.php` and a test guards that they stay in sync.
+version lives in two places in `diviops-agent.php`, and `.claude-plugin/plugin.json`
+carries the marketplace version that Claude Code uses as its skill-cache key; tests guard
+that all of them stay in sync.
+
+### If a release PR merges but no tag appears
+
+release-please aborts every subsequent run with:
+
+```
+⚠ There are untagged, merged release PRs outstanding - aborting
+```
+
+The abort happens **before** the tag-creating step, so the condition cannot clear itself
+and nothing ships until someone intervenes. Tracked in
+[#249](https://github.com/rubicon/diviops/issues/249).
+
+**Recover by producing a release shaped exactly like the bot's** — this part is not
+cosmetic. A recovery release that differs in shape is unresolvable to release-please and
+causes the *next* cycle to deadlock too, which is how this happened twice:
+
+```bash
+SHA=$(git rev-parse main)          # the merge commit of the release PR
+git tag vX.Y.Z "$SHA"              # LIGHTWEIGHT, not -a/-s
+git push origin vX.Y.Z
+gh release create vX.Y.Z --title "vX.Y.Z" --notes-file notes.md   --target "$SHA" --verify-tag     # target a SHA, never a branch name
+gh pr edit <release-pr> --remove-label "autorelease: pending"                         --add-label "autorelease: tagged"
+```
+
+Two properties matter, and both were learned by getting them wrong:
+
+| Property | Bot produces | A signed `git tag -s` produces |
+| --- | --- | --- |
+| Tag object | lightweight (`commit`) | annotated (`tag`) |
+| Release `targetCommitish` | commit SHA | `main` if you omit `--target` |
+
+Confirmed by execution: re-tagging `v1.17.1` in the bot's shape turned
+`⚠ Missing 1 paths: .` / `aborting` into `❯ Found release for path ., v1.17.1` on the very
+next run.
+
+This is the one place the repo's signed-tag norm is deliberately not applied. The bot's own
+tags are unsigned, so the norm was never upheld by the automation; matching it is what keeps
+releases working. Note the shape is *sufficient* to cause the deadlock but has not been
+proven to be the whole cause — `v1.16.2` had the same bad shape and did not block the next
+release. #249 carries what is still unexplained.
+
+Verify with `gh workflow run release.yaml --ref main`, then check the run log for
+`Found release for path .` rather than `aborting`.
 
 ## Reporting bugs
 
