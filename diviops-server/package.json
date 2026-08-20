@@ -25,13 +25,15 @@
     "smoke": "npm run build && node scripts/smoke.mjs",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
-    "test": "npm run build && node --test dist/__tests__/*.test.js dist/preset-cli/__tests__/*.test.js dist/cross-env-preflight/__tests__/*.test.js",
+    "test": "npm run test:unit && npm run test:server-security && npm run test:regen-skill && npm run test:tool-reference && npm run test:ci-gate-coverage",
+    "test:unit": "npm run build && node --test dist/__tests__/*.test.js dist/preset-cli/__tests__/*.test.js dist/cross-env-preflight/__tests__/*.test.js",
     "test:server-security": "tsc -p tsconfig.test.json && env -u DIVIOPS_WP_CLI_ALLOW node --test dist-test/__tests__/*.test.js",
     "test:regen-skill": "node --test scripts/regen-module-formats.test.mjs",
     "test:tool-reference": "node --test scripts/regen-tool-reference.test.mjs",
     "prepublishOnly": "npm run build",
     "regen:skill": "node scripts/regen-module-formats.mjs",
-    "regen:tool-reference": "node scripts/regen-tool-reference.mjs"
+    "regen:tool-reference": "node scripts/regen-tool-reference.mjs",
+    "test:ci-gate-coverage": "node --test scripts/test-script-covers-ci-gates.test.mjs"
   },
   "keywords": [
     "mcp",
