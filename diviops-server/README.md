@@ -234,7 +234,7 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 | `diviops_rollback_snapshot_delete` | plugin | `snapshot_id` | true | Hard-delete one rollback snapshot option after operator acceptance. … |
 | `diviops_rollback_snapshot_get` | plugin | `snapshot_id`, `include_value?` | true | Inspect one rollback snapshot. … |
 | `diviops_rollback_snapshot_list` | plugin | `target_kind?`, `target_id?`, `status?`, `limit?` | true | List DiviOps rollback snapshots from the option-backed store. … |
-| `diviops_rollback_snapshot_restore` | plugin | `snapshot_id`, `dry_run?` | false | Restore one guarded rollback snapshot to its original post/page or Theme Builder layout target. … |
+| `diviops_rollback_snapshot_restore` | plugin | `snapshot_id`, `page_ids?`, `dry_run?` | false | Restore one guarded rollback snapshot to its original post/page or Theme Builder layout target. … |
 | `diviops_scf_export` | server-local | `dir?`, `stdout?`, `field_groups?`, `post_types?`, `taxonomies?`, `options_pages?` | true | Export SCF field groups, post types, taxonomies, and options pages as JSON — to a directory under the safe-root (`<WP_PATH>/.diviops-tmp/` by default, override via DIVIOPS_WP_CLI_SAFE_FS_ROOT) or to stdout. … |
 | `diviops_scf_field_group_get` | server-local | `key` | true | Fetch a single SCF/ACF field group from the `acf-field-group` post type — by ACF key (`group_abc123`, looked up via `post_name`) or by numeric WP post ID. … |
 | `diviops_scf_field_group_list` | server-local | _(none)_ | true | List all SCF/ACF field groups in the database (post_name = ACF key, post_title, post_status, post_modified). … |

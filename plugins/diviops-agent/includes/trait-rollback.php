@@ -543,6 +543,25 @@ trait DiviOps_Agent_Rollback {
 	}
 
 	/**
+	 * Hint for a snapshot id that resolved to nothing.
+	 *
+	 * A bare run id is exactly what `summary.rollback.run_id` reports, and it is NOT
+	 * addressable — a run is stored as one or more chunks, each addressed by the run
+	 * id plus a `_c<n>` suffix. Without this, the most natural thing a caller can do
+	 * with the value the tool just handed them is a dead-end 404 with no hint. Shared
+	 * by get, delete, and restore, which all fail the same way.
+	 *
+	 * @param string $snapshot_id Validated id that did not resolve.
+	 */
+	private static function rollback_snapshot_not_found_hint( string $snapshot_id ): ?string {
+		if ( ! preg_match( '/^run_[0-9]{14}_[a-f0-9]{16}$/', $snapshot_id ) ) {
+			return null;
+		}
+
+		return 'That is a run id, not a snapshot id. A run is stored as one or more chunks, each addressed by the run id plus a _c<n> suffix — pass one of summary.rollback.chunks[], or any summary.details[].snapshot_id.';
+	}
+
+	/**
 	 * Split a run summary's entries into the ones this caller may see.
 	 *
 	 * The singular paths gate on rollback_snapshot_target_access(); a run chunk
@@ -916,12 +935,21 @@ trait DiviOps_Agent_Rollback {
 				// Named but absent is an error, not a no-op: silently ignoring it
 				// would let a caller believe a page was reverted when nothing
 				// touched it.
+				// "this chunk", not "this run". A restore call addresses ONE chunk, and a
+				// run past the chunk bound is several — so a page that genuinely belongs
+				// to the run can still be absent here. Saying "run" sent the caller
+				// hunting for a bug in their own page list.
 				return self::envelope_error(
 					'invalid_input',
-					'page_ids named pages that this run does not cover.',
-					'Call diviops_rollback_snapshot_get on this snapshot_id to see which pages it covers.',
+					'page_ids named pages that this rollback chunk does not cover.',
+					'A run larger than the chunk size is stored as several chunks, and one restore call addresses one chunk. Check summary.rollback.chunks[] for the run\'s other chunk ids, or call diviops_rollback_snapshot_get on this snapshot_id to see exactly which pages this one covers.',
 					400,
-					[ 'snapshot_id' => $chunk_id, 'unknown_page_ids' => $unknown, 'covered_page_ids' => array_keys( $entries ) ]
+					[
+						'snapshot_id'      => $chunk_id,
+						'run_id'           => $summary['run_id'],
+						'unknown_page_ids' => $unknown,
+						'covered_page_ids' => array_keys( $entries ),
+					]
 				);
 			}
 			$entries = $selected;
@@ -1716,7 +1744,7 @@ trait DiviOps_Agent_Rollback {
 		$option_name = self::rollback_snapshot_option_name( $snapshot_id );
 		$record      = get_option( $option_name, null );
 		if ( ! is_array( $record ) ) {
-			return self::envelope_error( 'not_found', 'Rollback snapshot not found.', null, 404, [ 'snapshot_id' => $snapshot_id ] );
+			return self::envelope_error( 'not_found', 'Rollback snapshot not found.', self::rollback_snapshot_not_found_hint( $snapshot_id ), 404, [ 'snapshot_id' => $snapshot_id ] );
 		}
 		// #199: run chunks are read through their own summary. Falling through to
 		// the v1 normalizer would answer 400 malformed for a perfectly good record.
@@ -1778,7 +1806,7 @@ trait DiviOps_Agent_Rollback {
 		$option_name = self::rollback_snapshot_option_name( $snapshot_id );
 		$record      = get_option( $option_name, null );
 		if ( ! is_array( $record ) ) {
-			return self::envelope_error( 'not_found', 'Rollback snapshot not found.', null, 404, [ 'snapshot_id' => $snapshot_id ] );
+			return self::envelope_error( 'not_found', 'Rollback snapshot not found.', self::rollback_snapshot_not_found_hint( $snapshot_id ), 404, [ 'snapshot_id' => $snapshot_id ] );
 		}
 		// #199: a run chunk must be deletable, or the only thing that can ever
 		// remove one is retention eviction and a caller cannot clear space.
@@ -1897,7 +1925,7 @@ trait DiviOps_Agent_Rollback {
 		$option_name = self::rollback_snapshot_option_name( $snapshot_id );
 		$record      = get_option( $option_name, null );
 		if ( ! is_array( $record ) ) {
-			return self::envelope_error( 'not_found', 'Rollback snapshot not found.', null, 404, [ 'snapshot_id' => $snapshot_id ] );
+			return self::envelope_error( 'not_found', 'Rollback snapshot not found.', self::rollback_snapshot_not_found_hint( $snapshot_id ), 404, [ 'snapshot_id' => $snapshot_id ] );
 		}
 		// #199: run chunks restore through their own path, whole or by page_ids.
 		if ( self::rollback_snapshot_is_run_record( $record ) ) {
