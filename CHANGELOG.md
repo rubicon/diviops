@@ -10,6 +10,13 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.17.1](https://github.com/rubicon/diviops/compare/v1.17.0...v1.17.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* **preset_reassign:** store one run snapshot instead of one per page ([#199](https://github.com/rubicon/diviops/issues/199) task 3) ([#246](https://github.com/rubicon/diviops/issues/246)) ([9665d7b](https://github.com/rubicon/diviops/commit/9665d7b04b9747f9b83b15de7222440957b2ab20))
+
 ## [1.17.0](https://github.com/rubicon/diviops/compare/v1.16.3...v1.17.0) (2026-08-20)
 
 
