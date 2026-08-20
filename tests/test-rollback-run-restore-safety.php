@@ -345,3 +345,66 @@ assert_true(
 	false !== strpos( $restore_block, 'rollback_snapshot_validate_page_ids_param' ),
 	'the restore route wires page_ids to the validator asserted above, so the two cannot drift apart'
 );
+
+/*
+ * ---------------------------------------------------------------------------
+ * A restore is CHUNK-scoped, and the errors must say so.
+ *
+ * A run larger than the chunk bound is several records, and one restore call
+ * reverts one of them. Two things misled a caller about that, both found by
+ * verifying the documentation against the code:
+ *
+ *   - naming a page that lives in a SIBLING chunk of the same run was refused
+ *     with "this run does not cover", which is false and sends the caller
+ *     looking for a bug in their page list;
+ *   - summary.rollback.run_id is the bare run id, which is not addressable —
+ *     passing it answered 404 with no hint at all, so the value the tool hands
+ *     you was a dead end.
+ * ---------------------------------------------------------------------------
+ */
+
+$multi     = diviops_call( 'rollback_snapshot_run_begin', array( 'diviops_preset_reassign', array() ) );
+$chunk_max = (int) diviops_call( 'rollback_snapshot_run_chunk_size' );
+for ( $i = 0; $i < $chunk_max + 5; $i++ ) {
+	$id   = 89000 + $i;
+	$post = diviops_test_register_post( $id, 'BEFORE-' . $id );
+
+	$mc = array( &$multi, $post );
+	diviops_call_ref( 'rollback_snapshot_run_capture', $mc );
+
+	$post->post_content = 'AFTER-' . $id;
+	$mm                 = array( &$multi, $id, 'write_applied', 'AFTER-' . $id );
+	diviops_call_ref( 'rollback_snapshot_run_mark', $mm );
+}
+$mf            = array( &$multi );
+$multi_stored  = diviops_call_ref( 'rollback_snapshot_run_flush', $mf );
+$multi_run_id  = $multi['run_id'];
+$first_chunk   = str_replace( 'diviops_rollback_snapshot_', '', $multi_stored[0] );
+$sibling_page  = 89000 + $chunk_max + 1;
+
+assert_same( 2, count( $multi_stored ), 'a run past the chunk bound really does produce more than one record, so the assertions below measure something' );
+
+$sibling = run_safety_call(
+	'rollback_snapshot_restore',
+	array( 'snapshot_id' => $first_chunk, 'page_ids' => array( $sibling_page ) )
+);
+assert_same( 'invalid_input', $sibling['error']['code'] ?? null, 'a page in a sibling chunk is still refused — a restore call addresses one chunk' );
+assert_true(
+	false === strpos( (string) ( $sibling['error']['message'] ?? '' ), 'this run does not cover' ),
+	'the refusal no longer claims the run does not cover a page the run does cover'
+);
+assert_true(
+	false !== strpos( (string) ( $sibling['error']['hint'] ?? '' ), 'chunk' ),
+	'the refusal points the caller at the run\'s other chunks rather than leaving them to guess'
+);
+
+$bare = run_safety_call( 'rollback_snapshot_restore', array( 'snapshot_id' => $multi_run_id ) );
+assert_same( 'not_found', $bare['error']['code'] ?? null, 'a bare run id is still not addressable' );
+assert_true(
+	false !== strpos( (string) ( $bare['error']['hint'] ?? '' ), 'chunk' ),
+	'passing the bare run_id that summary.rollback reports gets a hint naming what to pass instead, rather than a dead-end 404'
+);
+
+foreach ( $multi_stored as $option_name ) {
+	delete_option( $option_name );
+}
