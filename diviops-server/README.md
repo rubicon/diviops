@@ -314,14 +314,6 @@ These appear on the MCP surface only when their gates are satisfied (see [Tools 
 
 ## Bundled CLI — `diviops-preset`
 
-> **Not in the published package.** `diviops-preset` is documented here but is not currently
-> shipped: the declaration was removed in
-> [#223](https://github.com/rubicon/diviops/pull/223) because it pointed at a binary
-> the tarball did not contain, and restoring it is tracked in
-> [#230](https://github.com/rubicon/diviops/issues/230). The section below describes the
-> intended command and is kept as the specification for that work. `diviops-mcp` is the
-> only executable this package installs today.
-
 The package also ships a standalone command-line preset emitter, `diviops-preset`,
 that produces byte-canonical Divi 5.5.x preset JSON gated by the verified-attrs
 registry (`data/verified-attrs.json`). It is independent of the MCP stdio server —
@@ -333,6 +325,7 @@ run it directly. Current commands:
 | `diviops-preset heading-font [options]` | `divi/font` group preset for `divi/heading` (Pattern A — Google Fonts — or Pattern B — local-hosted) |
 | `diviops-preset text-body-font [options]` | `divi/font-body` group preset for `divi/text` — **Pattern A (Google Fonts) only**; Pattern B for body-text has no registered canonical shape and is refused |
 | `diviops-preset spacing [options]` | `divi/spacing` group preset (currently `divi/section` only; padding + margin, desktop state). Other module cells are `SCHEMA_OBSERVED` and refused at the gate |
+| `diviops-preset nav [options]` | Divi nav block markup from a compact spec. Dry-run only — `--apply` is refused, because this emits block markup rather than a preset and has no `/preset/create` route to post to |
 
 ```bash
 diviops-preset button --name "Primary" --bg-color gcid-primary-color \
@@ -358,18 +351,9 @@ REST route, reusing the same `WP_URL` / `WP_USER` / `WP_APP_PASSWORD` env vars.
 The CLI's coverage is intentionally narrow: only the (module, group, variant)
 combinations whose canonical shape is VB-verified in the registry are
 emittable. It is **not** an all-module or all-font-family emitter — each
-additional vertical slice lands with its own verified evidence. A full command reference will land with the source, tracked in
-[#230](https://github.com/rubicon/diviops/issues/230).
+additional vertical slice lands with its own verified evidence.
 
 ## Bundled CLI — `diviops-cross-env-preflight`
-
-> **Not in the published package.** `diviops-cross-env-preflight` is documented here but is not currently
-> shipped: the declaration was removed in
-> [#223](https://github.com/rubicon/diviops/pull/223) because it pointed at a binary
-> the tarball did not contain, and restoring it is tracked in
-> [#230](https://github.com/rubicon/diviops/issues/230). The section below describes the
-> intended command and is kept as the specification for that work. `diviops-mcp` is the
-> only executable this package installs today.
 
 The package also ships a dry-run-only cross-environment Theme Builder header
 sync preflight:
