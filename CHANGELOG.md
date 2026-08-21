@@ -10,6 +10,19 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.18.0](https://github.com/rubicon/diviops/compare/v1.17.1...v1.18.0) (2026-08-21)
+
+
+### Features
+
+* **server:** adopt the real cross-env-preflight source and retire the vendoring ([#240](https://github.com/rubicon/diviops/issues/240) slice 1) ([#256](https://github.com/rubicon/diviops/issues/256)) ([a9d1abe](https://github.com/rubicon/diviops/commit/a9d1abebaa48ebf22e71f10b6a5091dee50b0aa6))
+
+
+### Bug Fixes
+
+* **marketplace:** make the plugin version track the release so installed skills refresh ([#227](https://github.com/rubicon/diviops/issues/227)) ([#253](https://github.com/rubicon/diviops/issues/253)) ([80f2bf1](https://github.com/rubicon/diviops/commit/80f2bf1f4d65ed7721f2ae6b7e2e4ad668c46a94))
+* **write-paths:** canonicalize before the integrity guard, emptying the ratchet ([#208](https://github.com/rubicon/diviops/issues/208)) ([#252](https://github.com/rubicon/diviops/issues/252)) ([397a407](https://github.com/rubicon/diviops/commit/397a4073456fb1d9e36b95de6ef158bd13f7b696))
+
 ## [1.17.1](https://github.com/rubicon/diviops/compare/v1.17.0...v1.17.1) (2026-08-20)
 
 

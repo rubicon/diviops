@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.8.3...mcp-server-v1.9.0) (2026-08-21)
+
+
+### Features
+
+* **server:** adopt the real cross-env-preflight source and retire the vendoring ([#240](https://github.com/rubicon/diviops/issues/240) slice 1) ([#256](https://github.com/rubicon/diviops/issues/256)) ([a9d1abe](https://github.com/rubicon/diviops/commit/a9d1abebaa48ebf22e71f10b6a5091dee50b0aa6))
+
 ## [1.8.3](https://github.com/rubicon/diviops/compare/mcp-server-v1.8.2...mcp-server-v1.8.3) (2026-08-18)
 
 
