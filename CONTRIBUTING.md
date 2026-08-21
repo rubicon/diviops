@@ -125,8 +125,84 @@ releases working. Note the shape is *sufficient* to cause the deadlock but has n
 proven to be the whole cause — `v1.16.2` had the same bad shape and did not block the next
 release. #249 carries what is still unexplained.
 
+A second, separate failure mode looks nothing like this one: instead of aborting, the run
+succeeds and proposes a release that re-lists the entire history. That one is fully
+explained, and it is covered under "If you re-author a release commit that already merged"
+below.
+
 Verify with `gh workflow run release.yaml --ref main`, then check the run log for
 `Found release for path .` rather than `aborting`.
+
+### Making the release commit yours instead of the bot's
+
+A squash merge attributes the commit to the **PR author**, and a release PR's author is
+`rubicon-release-please[bot]`. Squash-merging a release PR therefore lands the release
+commit under the bot's name and puts the bot in the repository's contributor list.
+
+Rebase merge is enabled on this repo for exactly this case. Re-author the commit **on the
+release branch**, before the merge:
+
+```bash
+git fetch origin release-please--branches--main
+git checkout -B release-fix origin/release-please--branches--main
+git commit --amend --reset-author --no-edit -S
+git push --force-with-lease origin release-fix:release-please--branches--main
+gh pr merge <release-pr> --rebase
+```
+
+Doing this before the merge is the entire point. release-please creates its tags *after*
+the merge, against whatever SHA `main` ends up carrying, so the tags land on the right
+commit and there is nothing to repair afterwards.
+
+One thing to confirm the first time: `main` requires signed commits, and GitHub rewrites
+commits when it rebase-merges. Whether the rewritten commit still satisfies that check has
+not been verified on this repo.
+
+```bash
+gh api repos/rubicon/diviops/commits/$(git rev-parse origin/main) --jq .commit.verification
+```
+
+If that returns unverified, the merge is blocked. `enforce_admins` is off so an admin can
+still push it through, but do not let that become the routine.
+
+### If you re-author a release commit that already merged
+
+Re-authoring rewrites the commit, which gives it a new SHA and **orphans every tag that
+pointed at the old one**. release-please locates the previous release by walking `main` for
+its own tags. A tag sitting on a commit that is not reachable from `main` is invisible to
+that walk, so it falls back to the start of history and re-accumulates every change ever
+made into one enormous proposed release.
+
+This is not hypothetical. On 2026-08-21 the `v1.18.0` tag was moved onto the re-authored
+commit and `mcp-server-v1.9.0` was left behind on the bot's original SHA. The next run
+proposed `diviops-server` 1.9.0 to 1.10.0 with a changelog re-listing roughly thirty
+entries that had already shipped, in
+[#257](https://github.com/rubicon/diviops/pull/257).
+
+**A release-please release creates one tag per package in
+`.release-please-manifest.json`.** This repo has two: `.` produces `vX.Y.Z` and
+`diviops-server` produces `mcp-server-vX.Y.Z`. Move all of them, then prove each one landed:
+
+```bash
+NEW_SHA=$(git rev-parse main)
+for TAG in vX.Y.Z mcp-server-vA.B.C; do
+  git push origin ":refs/tags/$TAG"
+  git tag -f "$TAG" "$NEW_SHA"
+  git push origin "refs/tags/$TAG"
+  gh release edit "$TAG" --draft=false
+  git merge-base --is-ancestor "$TAG" origin/main \
+    && echo "$TAG reachable" || echo "$TAG ORPHANED"
+done
+```
+
+Two details that cost time when they were learned:
+
+- Deleting a tag demotes its release object to a draft. That is what the
+  `gh release edit --draft=false` is for.
+- `gh release view --json targetCommitish` keeps reporting the *old* SHA after a
+  successful repair. The repair on 2026-08-21 left that field stale and release-please still
+  read the corrected history, so it is not the field the walk uses. Judge the repair by
+  `git merge-base --is-ancestor`, not by `targetCommitish`.
 
 ## Reporting bugs
 
