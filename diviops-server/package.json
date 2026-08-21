@@ -10,6 +10,7 @@
   "main": "dist/index.js",
   "bin": {
     "diviops-mcp": "dist/index.js",
+    "diviops-preset": "dist/preset-cli/bin.js",
     "diviops-cross-env-preflight": "dist/cross-env-preflight/bin.js"
   },
   "files": [
@@ -17,7 +18,6 @@
     "!dist/**/__tests__/**",
     "templates",
     "data/verified-attrs.json",
-    "data/verified-attrs-backlog.json",
     "LICENSE",
     "README.md"
   ],
