@@ -86,16 +86,13 @@ function spdx_test_run(): void {
 	 *
 	 * @var array<int, string>
 	 */
-	$excluded = array(
-		$root . '/diviops-server/src/cross-env-preflight/header-preflight.js',
-		$root . '/diviops-server/src/cross-env-preflight/header-preflight.d.ts',
-		$root . '/diviops-server/src/cross-env-preflight/layout-capability.js',
-		$root . '/diviops-server/src/cross-env-preflight/layout-capability.d.ts',
-		$root . '/diviops-server/src/cross-env-preflight/layout-preflight.js',
-		$root . '/diviops-server/src/cross-env-preflight/layout-preflight.d.ts',
-		$root . '/diviops-server/src/cross-env-preflight/source-payload-ref.js',
-		$root . '/diviops-server/src/cross-env-preflight/source-payload-ref.d.ts',
-	);
+	// EMPTY since #240. cross-env-preflight/ now carries real TypeScript source
+	// adopted from upstream, not vendored compiled output, so every file there is
+	// stamped like any other first-party file. The list and its cross-check below
+	// are deliberately kept rather than deleted: if compiled output is ever vendored
+	// into that directory again, the assertions catch it and force the exclusion to
+	// be an explicit, reviewed decision instead of a silent one.
+	$excluded = array();
 
 	/**
 	 * The four dual-licensed areas: directory, file suffix, and the identifier every
@@ -179,23 +176,22 @@ function spdx_test_run(): void {
 	$excluded_sorted = $excluded;
 	sort( $excluded_sorted );
 
-	assert_true( array() !== $on_disk, 'cross-env-preflight/ has at least one vendored *.js or *.d.ts file to check the exclusion list against' );
 	assert_same(
 		$excluded_sorted,
 		$on_disk,
-		'every vendored *.js/*.d.ts under cross-env-preflight/ is named in the exclusion list, and the list names nothing else'
+		'every vendored *.js/*.d.ts under cross-env-preflight/ is named in the exclusion list, and the list names nothing else — both are empty since #240 adopted the real source'
 	);
 
-	// None of the vendored files may be required to carry an identifier: confirm they
-	// were never added to $total_inspected by checking they are absent from the
-	// diviops-server/src area's own file list, independent of the exclusion filtering
-	// applied above.
-	$ts_area_all_files = spdx_test_list_files( $root . '/diviops-server/src', '.ts' );
-	$vendored_dts       = spdx_test_list_files( $vendored_dir, '.d.ts' );
-	assert_same(
-		$vendored_dts,
-		array_values( array_intersect( $ts_area_all_files, $vendored_dts ) ),
-		'the vendored *.d.ts files are, as expected, present on disk with a .ts-suffixed path (confirming the area glob would have caught them without the exclusion list)'
+	/*
+	 * The directory is not empty, it just holds source now. Asserted so the check
+	 * above cannot pass by the directory having vanished entirely: an empty
+	 * exclusion list matching an empty disk would otherwise be indistinguishable
+	 * from cross-env-preflight/ being deleted outright.
+	 */
+	$preflight_source = spdx_test_list_files( $vendored_dir, '.ts' );
+	assert_true(
+		count( $preflight_source ) >= 4,
+		'cross-env-preflight/ still holds its TypeScript source, so the empty exclusion list means "nothing vendored" rather than "nothing there"'
 	);
 }
 
