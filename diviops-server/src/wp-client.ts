@@ -321,7 +321,38 @@ export class WPClient {
     }
 
     if (parseError === null && isEnveloped(parsed)) {
-      return parsed as DiviopsResponse<T>;
+      const envelope = parsed as DiviopsResponse<T>;
+
+      // A non-2xx response that admits failure is returned untouched: that is
+      // what keeps granular codes (`rest_forbidden`, `invalid_type`,
+      // `not_found`) alive against a mixed-version deployment instead of
+      // collapsing every legacy 4xx into a generic `wp_error`.
+      //
+      // A non-2xx response claiming `ok: true` is a contradiction, and the
+      // transport wins (#260). Trusting the body there turns a write that did
+      // not happen into a reported success — the failure mode this project
+      // treats as more serious than an outright error. It needs no hostile
+      // server: a PHP fatal after the envelope is echoed, or a cache or WAF
+      // replaying a cached 200 body under a 5xx, both produce it.
+      if (response.ok || envelope.ok === false) {
+        return envelope;
+      }
+
+      return {
+        ok: false,
+        error: {
+          code: ErrorCodes.WP_ERROR,
+          message:
+            `WordPress API error (${response.status}): the response body claimed ` +
+            `success (ok: true) on a non-2xx status. Treating the write as failed ` +
+            `— the transport status is authoritative.`,
+          hint:
+            'A success body under an error status usually means the handler ' +
+            'died after emitting its envelope, or a cache or proxy replayed a ' +
+            'stale 200 body. Verify the intended change actually landed before ' +
+            'retrying, since a partial write may have occurred.',
+        },
+      };
     }
 
     if (!response.ok) {
