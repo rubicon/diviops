@@ -118,6 +118,67 @@ describe('the non-2xx failure envelope still passes through untouched', () => {
   });
 });
 
+describe('a 2xx failure envelope is a failure, not a rewrite target', () => {
+  it('returns a 200 ok:false envelope unchanged', async () => {
+    // A domain-level failure delivered under HTTP 200. The guard keys on the
+    // status, so this takes the pass-through branch — which is right, because
+    // the envelope already says what went wrong and rewriting it would replace
+    // a specific code with a generic one. This is pinned because the guard's
+    // condition mentions `envelope.ok === false`, and it must stay clear that
+    // the clause exists to rescue non-2xx failures, not to reclassify 2xx ones.
+    const body = {
+      ok: false,
+      error: { code: 'invalid_input', message: 'name is required' },
+    };
+    const result = await clientReturning(200, body).requestEnveloped(
+      '/preset/create',
+      { method: 'POST' },
+    );
+
+    assert.deepEqual(result, body);
+    assert.equal(result.ok, false);
+  });
+});
+
+describe('the 2xx boundary is where the guard actually falls', () => {
+  it('leaves the 207 partial-failure envelope alone', async () => {
+    // #199 ships run-scoped preset_reassign partial failures as HTTP 207 with
+    // `ok: false`. 207 is inside Response.ok's 200-299 range, so the guard must
+    // not touch it. An over-correction that keyed on `ok === false` instead of
+    // on the status would silently rewrite this envelope and destroy the
+    // partial-failure code the caller needs to decide what to retry.
+    const body = {
+      ok: false,
+      error: {
+        code: 'preset.reassign_partial_failure',
+        message: '2 of 5 pages failed',
+      },
+    };
+    const result = await clientReturning(207, body).requestEnveloped(
+      '/preset/reassign',
+      { method: 'POST' },
+    );
+
+    assert.deepEqual(result, body);
+  });
+
+  it('treats 299 as success and 300 as not', async () => {
+    // Pins the boundary itself, so a future edit to the condition cannot move
+    // it without failing here.
+    const passing = await clientReturning(299, {
+      ok: true,
+      data: {},
+    }).requestEnveloped('/x', { method: 'POST' });
+    assert.equal(passing.ok, true);
+
+    const refused = await clientReturning(300, {
+      ok: true,
+      data: {},
+    }).requestEnveloped('/x', { method: 'POST' });
+    assert.equal(refused.ok, false);
+  });
+});
+
 describe('a 2xx success envelope is unaffected', () => {
   it('returns a 200 ok:true envelope exactly as received', async () => {
     const body = { ok: true, data: { id: 7, name: 'Primary' } };
