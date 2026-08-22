@@ -10,6 +10,18 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.19.0](https://github.com/rubicon/diviops/compare/v1.18.0...v1.19.0) (2026-08-21)
+
+
+### Features
+
+* **server:** restore the diviops-preset bin by adopting upstream's preset-cli ([#261](https://github.com/rubicon/diviops/issues/261)) ([f7a6974](https://github.com/rubicon/diviops/commit/f7a69743ce0d59ae4bf283fb6b8609c3ad7110b3)), closes [#230](https://github.com/rubicon/diviops/issues/230) [#240](https://github.com/rubicon/diviops/issues/240)
+
+
+### Bug Fixes
+
+* **server:** stop reporting a successful write on a non-2xx response ([#263](https://github.com/rubicon/diviops/issues/263)) ([fd9c178](https://github.com/rubicon/diviops/commit/fd9c17877f10765ccd87d182f213d38859e2a779))
+
 ## [1.18.0](https://github.com/rubicon/diviops/compare/v1.17.1...v1.18.0) (2026-08-21)
 
 
