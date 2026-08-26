@@ -84,6 +84,37 @@ assert_same(
 		. 'a commercial plugin from a public repository'
 );
 
+// The directory check above is necessary but not sufficient. The boundary is the
+// ARTIFACT NAME, not the folder: a Pro-suite bundle extracted into the repo root,
+// a Pro plugin zip copied next to the plugin it patches, or a stray unzip into a
+// scratch path are all the same licensing incident and all sit outside
+// upstream-releases/. Asserting on the name catches them wherever they land.
+$pro_named = array_values(
+	array_filter(
+		diviops_tracked_paths_under( $root, '.' ),
+		static function ( string $path ): bool {
+			// Every SEGMENT, not just the basename. An extracted Pro bundle is a
+			// DIRECTORY whose own name is the only Pro-named part of the path --
+			// `scripts/diviops-pro-suite-v1.5.51-beta/note.txt` has basename
+			// `note.txt` and would otherwise sail straight through this gate.
+			foreach ( explode( '/', $path ) as $segment ) {
+				if ( 0 === stripos( $segment, 'diviops-agent-pro' )
+					|| 0 === stripos( $segment, 'diviops-pro-suite' ) ) {
+					return true;
+				}
+			}
+			return false;
+		}
+	)
+);
+
+assert_same(
+	array(),
+	$pro_named,
+	'no Pro-named artifact is tracked anywhere in the repository -- the boundary is the artifact name, '
+		. 'not the directory it happens to sit in'
+);
+
 // The two halves carry different licenses and different rules, so the README has
 // to actually say so. A guard that protects the directory while the directory's
 // own documentation omits why is one refactor away from someone "tidying up" the
@@ -95,9 +126,9 @@ assert_true(
 	'the archive README has content'
 );
 
-foreach ( array( 'suite/', 'pro/', 'Install only', 'public' ) as $needle ) {
+foreach ( array( 'diviops-pro-suite-*', 'diviops-agent-pro*', 'Forbidden', 'Install it. Do not read it.', 'public' ) as $needle ) {
 	assert_true(
 		false !== strpos( $readme, $needle ),
-		sprintf( 'the archive README still states the boundary (missing: %s)', $needle )
+		sprintf( 'the archive README still names the forbidden artifacts and the install-only rule (missing: %s)', $needle )
 	);
 }

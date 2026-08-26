@@ -69,26 +69,40 @@ fail only from problems-found will pass while inspecting nothing. That exact fai
 happened three times on the predecessor repository. Any gate added here must assert
 that it actually inspected something.
 
-## `upstream-releases/pro/` is read-forbidden
+## Forbidden artifacts in `upstream-releases/`
 
 `upstream-releases/` is a local archive of published DiviOps releases, ignored by
-git except its `README.md`. The two halves carry different licenses:
+git except its `README.md`. **The boundary is the artifact name, not the folder** —
+do not reason about it from directory layout:
 
-- `upstream-releases/suite/` is the MIT fork base. Reading it is fine.
-- `upstream-releases/pro/` is **DiviOps Agent Pro, a commercial plugin this project
-  neither forks nor licenses.** Never open, unzip, `grep`, `cat`, `Read`, or feed
-  its contents to any tool, and never let them inform anything authored here. This
-  is the same clean-room boundary as #50: our advanced skill knowledge must trace
-  to a primary source we are licensed to use. Pro's only legitimate use is being
-  installed on the dev site to confirm it still attaches through
-  `class_exists( 'DiviOps_Agent' )` and `diviops_agent_handshake_extensions`.
-  Observing its running behavior through the REST surface is fair game; reading its
-  source is not.
+| Artifact | Rule |
+| --- | --- |
+| `diviops-<version>.zip` | Free distribution, MIT. Readable. |
+| `diviops-pro-suite-*` (zip or extracted) | **Forbidden.** |
+| `diviops-agent-pro*.zip` | **Forbidden.** |
+
+A Pro-suite bundle is not the free bundle plus one extra file. It carries the Pro
+plugin *and* the deeper skill-knowledge layer (`divi-5-builder` Tier 2 + Tier 3) —
+exactly what #50 says our own skill knowledge must never derive from. Its MIT
+pieces are all obtainable from `upstream/main` or a free zip in the same
+directory, so **do not carve out the MIT parts**: there is no reason to open one.
+
+Never open, unzip, `grep`, `cat`, `Read`, index, or feed a forbidden artifact to
+any tool, and never let its contents inform anything authored here. The single
+legitimate use is **installing the Pro plugin on the dev site** to confirm it
+still attaches through `class_exists( 'DiviOps_Agent' )` and
+`diviops_agent_handshake_extensions`. Install it; do not read it. Observing Pro's
+behavior through its REST surface is fair game; reading its source is not.
+
+Do not point codebase-memory, a search index, or any bulk reader at these paths.
+Indexing Pro would make its contents retrievable by every future query, which is
+derivation at scale rather than a one-off slip.
 
 `rubicon/diviops` is a **public** repository, so committing a Pro artifact would
 publish a third party's source under our name.
-`tests/test-upstream-releases-untracked.php` fails the suite if anything under that
-directory other than `README.md` is ever tracked.
+`tests/test-upstream-releases-untracked.php` fails the suite if anything under
+that directory other than `README.md` is tracked, and fails separately if any
+path segment anywhere in the repository is Pro-named.
 
 ## Development environment
 

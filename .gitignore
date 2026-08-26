@@ -42,3 +42,8 @@ vendor/
 # tests/test-upstream-releases-untracked.php fails the suite if that ever happens.
 /upstream-releases/**
 !/upstream-releases/README.md
+
+# Belt for the same boundary outside that directory (#268). A Pro artifact
+# extracted or copied anywhere in the tree is the same licensing incident.
+diviops-agent-pro*
+diviops-pro-suite-*
