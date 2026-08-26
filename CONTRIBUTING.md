@@ -172,34 +172,61 @@ below.
 Verify with `gh workflow run release.yaml --ref main`, then check the run log for
 `Found release for path .` rather than `aborting`.
 
-### Release-commit authorship and signing
+### Cutting a release so it is both yours and signed
 
-These two properties are currently exclusive, and the reason is measured rather than
-assumed. Both merge methods were probed in a throwaway repo with the branch commit and
-the PR deliberately authored by different people:
+Merge the release PR with **neither** GitHub merge button. Both discard one of
+the two properties, and which one they discard was measured, not assumed:
 
 | Merge method | Author taken from | Signed |
 | --- | --- | --- |
-| squash | the **PR author** — the branch commit's author is discarded | yes, committer `GitHub`, `verified: true` |
-| rebase | the branch commit | **no**, `reason: unsigned` |
+| squash | the **PR author**, which is the release-please App — the branch commit's author is discarded | yes, committer `GitHub` |
+| rebase | the branch commit | **no** |
 
-Confirmed against real history: `fd9c178`, `f7a6974` and `115409c` were squash-merged and
-are all verified; `a364a62` was rebase-merged and is unsigned.
+Commit and sign locally, then fast-forward instead:
 
-A release PR is authored by the `rubicon-release-please` App, and that cannot be changed
-to a person. So squash-merging a release PR gives a signed commit authored by the bot,
-and rebase-merging gives a commit authored by whoever wrote the branch commit but with no
-signature at all. `main` requires signed commits and `enforce_admins` is off, so an
-unsigned release commit lands as an admin bypass rather than being rejected.
+```bash
+git fetch origin release-please--branches--main
+git checkout -B release-fix origin/release-please--branches--main
+git commit --amend --reset-author --no-edit -S
+git push --force-with-lease origin release-fix:release-please--branches--main
+git push origin "$(git rev-parse HEAD):main"
+```
 
-**Re-authoring the release branch before a squash merge does nothing.** Squash discards
-that author. It only has an effect under rebase, which is the unsigned path.
+The final push is a genuine fast-forward, so the exact signed object lands
+unmodified. The merge buttons rewrite the commit; a fast-forward does not.
+Result: `author=Dax Davis  committer=Dax Davis  verified=true`.
 
-Which trade-off this repo takes is tracked in
-[#264](https://github.com/rubicon/diviops/issues/264). Until that is decided, do not
-re-author a release branch: the previous version of this section prescribed it, and doing
-it after the merge is what orphaned `mcp-server-v1.9.0` and produced the bogus release PR
-described below.
+Three things about this are worth knowing before you run it.
+
+**It is not an admin bypass.** Probed in a throwaway repository with
+`enforce_admins: true`, so no bypass was available, alongside
+`required_signatures` and `required_linear_history`. The push succeeded. The
+negative control — the same fast-forward carrying an unsigned commit — was
+rejected:
+
+```
+remote: error: GH006: Protected branch update failed for refs/heads/main.
+remote: - Commits must have verified signatures.
+```
+
+`main` here requires no PR reviews, so nothing objects to the direct push. If
+that ever changes, this recipe stops working and the trade-off comes back.
+
+**The release PR closes itself.** GitHub marks it `MERGED` once it notices the
+head commit is reachable from `main`. That is what lets release-please tag; an
+open release PR reproduces the deadlock described below. It is asynchronous, so
+a check run immediately after the push can still report `OPEN`. Give it a moment
+before concluding anything went wrong.
+
+**Force-push the branch first, then fast-forward.** Amending changes the SHA, so
+the branch has to carry the amended commit before `main` can fast-forward onto
+it. Skipping that step leaves the PR pointing at a commit that never landed, and
+GitHub will not close it.
+
+Tags need no special handling here. release-please creates them after the merge
+against whatever SHA `main` carries, so they land on the signed commit and there
+is nothing to repair afterwards — unlike re-authoring a commit that has already
+merged, which is the failure documented below.
 
 ### If you re-author a release commit that already merged
 
