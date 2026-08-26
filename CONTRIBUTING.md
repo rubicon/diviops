@@ -84,6 +84,45 @@ version lives in two places in `diviops-agent.php`, and `.claude-plugin/plugin.j
 carries the marketplace version that Claude Code uses as its skill-cache key; tests guard
 that all of them stay in sync.
 
+### Curating the release object
+
+Merging the release PR is step one of two. release-please generates the release body
+mechanically from commit subjects, which reads like commit spam and is not what we
+publish. Before announcing or linking a release, edit the release object:
+
+1. **Title.** Plugin releases are version-only, no `v`: `1.19.0`. Server releases carry
+   the artifact name: `mcp-server 1.10.0`. The tag keeps its `v` either way
+   (`v1.19.0`, `mcp-server-v1.10.0`) — only the title drops it.
+2. **Header line**, first line of the body: `DiviOps Agent v1.19.0 (2026-08-21)` or
+   `DiviOps MCP Server v1.10.0 (2026-08-21)`. The date is the date it shipped, not the
+   date release-please cut the PR — a release PR that sat for a week carries a stale one.
+3. **Opening paragraph**, immediately after the header, before any sections. Three to
+   five sentences, dry and specific, about what actually shipped. No exclamation points,
+   no "our biggest release yet", no puns. The humour comes from the truth of the work —
+   the bug that took three tries to die, the feature that should have existed from the
+   start. It is skippable, but it should earn the read.
+4. **Cut what the standard excludes.** Routine refactors, dependency bumps, test-only
+   changes, and CI churn come out unless they affect users, operators, contributors, or
+   release integrity.
+5. **Disclaimer**, last line, after every section: this plugin rewrites pages, presets,
+   and theme-builder layouts, so every release note ends with a one-line warning to back
+   up before upgrading, in the same voice as the rest of the note.
+
+Two checks that have each shipped wrong at least once:
+
+- **Compare links resolve.** `gh api repos/rubicon/diviops/compare/vPREV...vTHIS` must
+  return 200. Automation writes the link from the version it believes preceded this one,
+  and an orphaned or missing tag produces a dead link (see the two failure modes above).
+- **`CHANGELOG.md` is not part of this step.** release-please owns it and it must not be
+  hand-edited — an edit is clobbered on the next run. The release object is the curated
+  artifact; the changelog stays machine-generated. This is a deliberate deviation from
+  the maintainer's general policy, which asks for both, and it is resolved this way here
+  because the automation owns the file.
+
+Releases published before 2026-08-26 are raw automation output and are deliberately left
+that way. Release notes are read at release time, and rewriting six of them would mean
+reconstructing retrospective prose from changelogs. The standard applies forward.
+
 ### If a release PR merges but no tag appears
 
 release-please aborts every subsequent run with:
@@ -133,37 +172,34 @@ below.
 Verify with `gh workflow run release.yaml --ref main`, then check the run log for
 `Found release for path .` rather than `aborting`.
 
-### Making the release commit yours instead of the bot's
+### Release-commit authorship and signing
 
-A squash merge attributes the commit to the **PR author**, and a release PR's author is
-`rubicon-release-please[bot]`. Squash-merging a release PR therefore lands the release
-commit under the bot's name and puts the bot in the repository's contributor list.
+These two properties are currently exclusive, and the reason is measured rather than
+assumed. Both merge methods were probed in a throwaway repo with the branch commit and
+the PR deliberately authored by different people:
 
-Rebase merge is enabled on this repo for exactly this case. Re-author the commit **on the
-release branch**, before the merge:
+| Merge method | Author taken from | Signed |
+| --- | --- | --- |
+| squash | the **PR author** — the branch commit's author is discarded | yes, committer `GitHub`, `verified: true` |
+| rebase | the branch commit | **no**, `reason: unsigned` |
 
-```bash
-git fetch origin release-please--branches--main
-git checkout -B release-fix origin/release-please--branches--main
-git commit --amend --reset-author --no-edit -S
-git push --force-with-lease origin release-fix:release-please--branches--main
-gh pr merge <release-pr> --rebase
-```
+Confirmed against real history: `fd9c178`, `f7a6974` and `115409c` were squash-merged and
+are all verified; `a364a62` was rebase-merged and is unsigned.
 
-Doing this before the merge is the entire point. release-please creates its tags *after*
-the merge, against whatever SHA `main` ends up carrying, so the tags land on the right
-commit and there is nothing to repair afterwards.
+A release PR is authored by the `rubicon-release-please` App, and that cannot be changed
+to a person. So squash-merging a release PR gives a signed commit authored by the bot,
+and rebase-merging gives a commit authored by whoever wrote the branch commit but with no
+signature at all. `main` requires signed commits and `enforce_admins` is off, so an
+unsigned release commit lands as an admin bypass rather than being rejected.
 
-One thing to confirm the first time: `main` requires signed commits, and GitHub rewrites
-commits when it rebase-merges. Whether the rewritten commit still satisfies that check has
-not been verified on this repo.
+**Re-authoring the release branch before a squash merge does nothing.** Squash discards
+that author. It only has an effect under rebase, which is the unsigned path.
 
-```bash
-gh api repos/rubicon/diviops/commits/$(git rev-parse origin/main) --jq .commit.verification
-```
-
-If that returns unverified, the merge is blocked. `enforce_admins` is off so an admin can
-still push it through, but do not let that become the routine.
+Which trade-off this repo takes is tracked in
+[#264](https://github.com/rubicon/diviops/issues/264). Until that is decided, do not
+re-author a release branch: the previous version of this section prescribed it, and doing
+it after the merge is what orphaned `mcp-server-v1.9.0` and produced the bogus release PR
+described below.
 
 ### If you re-author a release commit that already merged
 
