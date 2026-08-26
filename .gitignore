@@ -34,3 +34,11 @@ vendor/
 # Not tracked: a committed binary cannot stay in sync with a version release-please bumps.
 /diviops-agent.zip
 /diviops-design-library.zip
+
+# Local archive of published upstream releases (#268). The README is the guard
+# and is tracked; the artifacts never are. `rubicon/diviops` is public, and
+# `upstream-releases/pro/` holds a commercial plugin we neither fork nor license --
+# committing one would publish a third party's source under our name.
+# tests/test-upstream-releases-untracked.php fails the suite if that ever happens.
+/upstream-releases/**
+!/upstream-releases/README.md

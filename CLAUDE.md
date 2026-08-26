@@ -69,6 +69,27 @@ fail only from problems-found will pass while inspecting nothing. That exact fai
 happened three times on the predecessor repository. Any gate added here must assert
 that it actually inspected something.
 
+## `upstream-releases/pro/` is read-forbidden
+
+`upstream-releases/` is a local archive of published DiviOps releases, ignored by
+git except its `README.md`. The two halves carry different licenses:
+
+- `upstream-releases/suite/` is the MIT fork base. Reading it is fine.
+- `upstream-releases/pro/` is **DiviOps Agent Pro, a commercial plugin this project
+  neither forks nor licenses.** Never open, unzip, `grep`, `cat`, `Read`, or feed
+  its contents to any tool, and never let them inform anything authored here. This
+  is the same clean-room boundary as #50: our advanced skill knowledge must trace
+  to a primary source we are licensed to use. Pro's only legitimate use is being
+  installed on the dev site to confirm it still attaches through
+  `class_exists( 'DiviOps_Agent' )` and `diviops_agent_handshake_extensions`.
+  Observing its running behavior through the REST surface is fair game; reading its
+  source is not.
+
+`rubicon/diviops` is a **public** repository, so committing a Pro artifact would
+publish a third party's source under our name.
+`tests/test-upstream-releases-untracked.php` fails the suite if anything under that
+directory other than `README.md` is ever tracked.
+
 ## Development environment
 
 Local site: `/Users/daxdavis/Local Sites/colleyvillelions/app/public`
