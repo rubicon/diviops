@@ -39,6 +39,7 @@ require_once __DIR__ . '/includes/trait-preset.php';
 require_once __DIR__ . '/includes/trait-render.php';
 require_once __DIR__ . '/includes/trait-revision.php';
 require_once __DIR__ . '/includes/trait-rollback.php';
+require_once __DIR__ . '/includes/trait-compatibility.php';
 require_once __DIR__ . '/includes/trait-seo.php';
 require_once __DIR__ . '/includes/trait-theme-builder.php';
 require_once __DIR__ . '/includes/trait-validate.php';
@@ -66,6 +67,7 @@ class DiviOps_Agent {
 	use DiviOps_Agent_Render;
 	use DiviOps_Agent_Revision;
 	use DiviOps_Agent_Rollback;
+	use DiviOps_Agent_Compatibility;
 	use DiviOps_Agent_SEO;
 	use DiviOps_Agent_ThemeBuilder;
 	use DiviOps_Agent_Validate;
@@ -230,6 +232,7 @@ class DiviOps_Agent {
 
 	public static function init() {
 		add_action( 'rest_api_init', [ __CLASS__, 'register_routes' ] );
+		add_filter( 'rest_endpoints', [ __CLASS__, 'repair_divi_post_filter_price_permission' ] );
 		add_filter( 'rest_pre_dispatch', [ __CLASS__, 'check_rate_limit' ], 10, 3 );
 		add_filter( 'rest_post_dispatch', [ __CLASS__, 'wrap_rest_framework_validation_errors' ], 10, 3 );
 		add_action( 'admin_menu', [ __CLASS__, 'register_admin_page' ] );
