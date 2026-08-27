@@ -14,7 +14,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { WPClient } from "./wp-client.js";
+import { WPClient, describeError } from "./wp-client.js";
 import {
   capabilityUpgradeHint,
   type HandshakePluginInfo,
@@ -8129,7 +8129,7 @@ async function main() {
       );
     }
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
+    const msg = describeError(error);
     // Plugin rejected this server as too old (HTTP 426) — fatal.
     if (msg.includes("WordPress API error (426)")) {
       console.error(`Server too old for plugin: ${msg}`);
