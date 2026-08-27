@@ -10,24 +10,32 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+/**
+ * Constants for the Divi compatibility repair.
+ *
+ * Upstream declares these as `private const` inside the trait itself. Trait
+ * constants require PHP 8.2, and this plugin's floor is PHP 7.4 (see the
+ * `Requires PHP` header), so on 7.4 the file does not even parse:
+ * `PHP Fatal error: Traits cannot have constants`. Lifting them onto a helper
+ * `final class` is the same shape `trait-seo.php` uses for
+ * `DiviOps_SEO_TSF_Adapter`, and it changes no behavior -- these are the same
+ * six values, resolved by the same names.
+ */
+final class DiviOps_Compatibility_Divi {
+	const DIVI_POST_FILTER_PRICE_ROUTE = '/divi/v1/loop/product-price-range';
+	const DIVI_POST_FILTER_PRICE_NONCE_ROUTE = '/loop/product-price-range';
+	const DIVI_REST_NAMESPACE = 'divi/v1';
+	const DIVI_POST_FILTER_PRICE_METHOD = 'GET';
+	const DIVI_POST_FILTER_PRICE_CONTROLLER = 'ET\Builder\Packages\ModuleLibrary\PostFilterItem\PostFilterProductPriceRangeController';
+	const DIVI_USER_ROLE_CLASS = 'ET\Builder\Framework\UserRole\UserRole';
+}
+
 trait DiviOps_Agent_Compatibility {
-	/** Exact Divi Post Filter route affected in Divi 5.10.x. */
-	private const DIVI_POST_FILTER_PRICE_ROUTE = '/divi/v1/loop/product-price-range';
 
-	/** Namespace-relative route used by Divi's nonce-name API. */
-	private const DIVI_POST_FILTER_PRICE_NONCE_ROUTE = '/loop/product-price-range';
 
-	/** Divi REST namespace used to derive the route-specific nonce name. */
-	private const DIVI_REST_NAMESPACE = 'divi/v1';
 
-	/** Exact HTTP method registered for the compatibility route. */
-	private const DIVI_POST_FILTER_PRICE_METHOD = 'GET';
 
-	/** Broken upstream controller introduced with Post Filter. */
-	private const DIVI_POST_FILTER_PRICE_CONTROLLER = 'ET\Builder\Packages\ModuleLibrary\PostFilterItem\PostFilterProductPriceRangeController';
 
-	/** Divi role helper used by the other Post Filter discovery routes. */
-	private const DIVI_USER_ROLE_CLASS = 'ET\Builder\Framework\UserRole\UserRole';
 
 	/**
 	 * Replace only Divi's verified broken product-price permission callback.
@@ -44,13 +52,13 @@ trait DiviOps_Agent_Compatibility {
 			return $endpoints;
 		}
 
-		$route = self::DIVI_POST_FILTER_PRICE_ROUTE;
+		$route = DiviOps_Compatibility_Divi::DIVI_POST_FILTER_PRICE_ROUTE;
 		if ( ! isset( $endpoints[ $route ] ) || ! is_array( $endpoints[ $route ] ) ) {
 			return $endpoints;
 		}
 
-		$controller_callback = [ self::DIVI_POST_FILTER_PRICE_CONTROLLER, 'index' ];
-		$broken_callback     = [ self::DIVI_POST_FILTER_PRICE_CONTROLLER, 'index_permission' ];
+		$controller_callback = [ DiviOps_Compatibility_Divi::DIVI_POST_FILTER_PRICE_CONTROLLER, 'index' ];
+		$broken_callback     = [ DiviOps_Compatibility_Divi::DIVI_POST_FILTER_PRICE_CONTROLLER, 'index_permission' ];
 		$matching_handlers   = [];
 		foreach ( $endpoints[ $route ] as $index => $handler ) {
 			if (
@@ -87,7 +95,7 @@ trait DiviOps_Agent_Compatibility {
 			return false;
 		}
 
-		$role_class = self::DIVI_USER_ROLE_CLASS;
+		$role_class = DiviOps_Compatibility_Divi::DIVI_USER_ROLE_CLASS;
 		if ( ! class_exists( $role_class ) || ! is_callable( [ $role_class, 'can_current_user_use_visual_builder' ] ) ) {
 			return false;
 		}
@@ -108,8 +116,8 @@ trait DiviOps_Agent_Compatibility {
 			|| ! is_callable( [ $request, 'get_route' ] )
 			|| ! is_callable( [ $request, 'get_method' ] )
 			|| ! is_callable( [ $request, 'get_header' ] )
-			|| self::DIVI_POST_FILTER_PRICE_ROUTE !== $request->get_route()
-			|| self::DIVI_POST_FILTER_PRICE_METHOD !== strtoupper( (string) $request->get_method() )
+			|| DiviOps_Compatibility_Divi::DIVI_POST_FILTER_PRICE_ROUTE !== $request->get_route()
+			|| DiviOps_Compatibility_Divi::DIVI_POST_FILTER_PRICE_METHOD !== strtoupper( (string) $request->get_method() )
 			|| ! function_exists( 'wp_verify_nonce' )
 		) {
 			return false;
@@ -126,9 +134,9 @@ trait DiviOps_Agent_Compatibility {
 		}
 
 		$nonce_name = $rest_controller::get_nonce_name(
-			self::DIVI_REST_NAMESPACE,
-			self::DIVI_POST_FILTER_PRICE_NONCE_ROUTE,
-			self::DIVI_POST_FILTER_PRICE_METHOD
+			DiviOps_Compatibility_Divi::DIVI_REST_NAMESPACE,
+			DiviOps_Compatibility_Divi::DIVI_POST_FILTER_PRICE_NONCE_ROUTE,
+			DiviOps_Compatibility_Divi::DIVI_POST_FILTER_PRICE_METHOD
 		);
 
 		return is_string( $nonce_name ) && '' !== $nonce_name && false !== wp_verify_nonce( $nonce, $nonce_name );
@@ -145,8 +153,8 @@ trait DiviOps_Agent_Compatibility {
 			return false;
 		}
 
-		$controller = self::DIVI_POST_FILTER_PRICE_CONTROLLER;
-		$role_class = self::DIVI_USER_ROLE_CLASS;
+		$controller = DiviOps_Compatibility_Divi::DIVI_POST_FILTER_PRICE_CONTROLLER;
+		$role_class = DiviOps_Compatibility_Divi::DIVI_USER_ROLE_CLASS;
 
 		return class_exists( $controller )
 			&& is_callable( [ $controller, 'index_permission' ] )
