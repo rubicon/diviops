@@ -174,59 +174,77 @@ Verify with `gh workflow run release.yaml --ref main`, then check the run log fo
 
 ### Cutting a release so it is both yours and signed
 
-Merge the release PR with **neither** GitHub merge button. Both discard one of
-the two properties, and which one they discard was measured, not assumed:
+These two properties are exclusive under either GitHub merge button, and the
+reason is measured rather than assumed. Both were probed in a throwaway repo with
+the branch commit and the PR deliberately authored by different people:
 
 | Merge method | Author taken from | Signed |
 | --- | --- | --- |
-| squash | the **PR author**, which is the release-please App — the branch commit's author is discarded | yes, committer `GitHub` |
-| rebase | the branch commit | **no** |
+| squash | the **PR author** — the branch commit's author is discarded | yes, committer `GitHub`, `verified: true` |
+| rebase | the branch commit | **no**, `reason: unsigned` |
 
-Commit and sign locally, then fast-forward instead:
+A release PR is authored by the `rubicon-release-please` App, and that cannot be
+changed to a person. Squash-merging one therefore yields a signed commit authored
+by the bot; rebase-merging yields a commit authored by whoever wrote the branch
+commit, with no signature at all. Re-authoring the branch before a **squash**
+merge does nothing, because squash discards that author.
+
+Signing locally and fast-forwarding gets both. It also costs three extra steps,
+all of which were found by running it for v1.19.1 rather than by reading:
 
 ```bash
+# 1. Take the bot's commit, make it yours, sign it.
 git fetch origin release-please--branches--main
 git checkout -B release-fix origin/release-please--branches--main
 git commit --amend --reset-author --no-edit -S
+
+# 2. If main has moved since the release branch was cut, rebase or the
+#    fast-forward in step 4 is rejected as non-fast-forward.
+git rebase --gpg-sign origin/main
+
+# 3. Push the branch and WAIT for CI. main requires status checks, the final
+#    push is a direct push, and amending invalidated the bot commit's checks.
 git push --force-with-lease origin release-fix:release-please--branches--main
+gh pr checks <release-pr> --watch
+
+# 4. Fast-forward. The exact signed object lands; merge buttons rewrite it.
 git push origin "$(git rev-parse HEAD):main"
 ```
 
-The final push is a genuine fast-forward, so the exact signed object lands
-unmodified. The merge buttons rewrite the commit; a fast-forward does not.
-Result: `author=Dax Davis  committer=Dax Davis  verified=true`.
+Result: `author=Dax Davis  committer=Dax Davis  verified=true`. The release PR
+closes itself as merged once GitHub notices the head commit is reachable from
+`main`, which is asynchronous — an immediate check can still report `OPEN`.
 
-Three things about this are worth knowing before you run it.
-
-**It is not an admin bypass.** Probed in a throwaway repository with
-`enforce_admins: true`, so no bypass was available, alongside
-`required_signatures` and `required_linear_history`. The push succeeded. The
-negative control — the same fast-forward carrying an unsigned commit — was
-rejected:
+**Then tag it by hand.** release-please will not do it. On the v1.19.1 push the
+workflow ran and aborted:
 
 ```
-remote: error: GH006: Protected branch update failed for refs/heads/main.
-remote: - Commits must have verified signatures.
+❯ Found pull request #274: 'chore: release main'
+⚠ There are untagged, merged release PRs outstanding - aborting
 ```
 
-`main` here requires no PR reviews, so nothing objects to the direct push. If
-that ever changes, this recipe stops working and the trade-off comes back.
+That is the same abort documented below, and it happens before the tag-creating
+step, so it cannot clear itself. Use the recovery procedure in "If a release PR
+merges but no tag appears": lightweight tag, release created against the SHA with
+`--verify-tag`, then relabel the PR `autorelease: tagged`. A manual workflow run
+afterwards should report `Found release for path ., vX.Y.Z` rather than aborting.
 
-**The release PR closes itself.** GitHub marks it `MERGED` once it notices the
-head commit is reachable from `main`. That is what lets release-please tag; an
-open release PR reproduces the deadlock described below. It is asynchronous, so
-a check run immediately after the push can still report `OPEN`. Give it a moment
-before concluding anything went wrong.
+The likely reason, **hypothesis on one data point, not established**:
+release-please identifies its own release by the merge commit it expects the PR
+to have produced. A squash merge creates one and tagging works, which is what
+every earlier release did. A fast-forward makes the PR's merge commit the branch
+head itself, which release-please does not recognise as its own, so it sees a
+merged-but-untagged release PR and refuses to continue. If that holds, the manual
+tag is not bad luck on one release — it is permanent, and every release cut this
+way needs it.
 
-**Force-push the branch first, then fast-forward.** Amending changes the SHA, so
-the branch has to carry the amended commit before `main` can fast-forward onto
-it. Skipping that step leaves the PR pointing at a commit that never landed, and
-GitHub will not close it.
+So the real price of a signed, personally-authored release commit is a possible
+rebase, a wait for CI, and a hand-made tag every time. A squash merge costs none
+of those and tags itself, at the price of `rubicon-release-please[bot]` as the
+author. Both are defensible; pick with the real cost in view.
 
-Tags need no special handling here. release-please creates them after the merge
-against whatever SHA `main` carries, so they land on the signed commit and there
-is nothing to repair afterwards — unlike re-authoring a commit that has already
-merged, which is the failure documented below.
+`main` here requires no PR reviews, which is what lets the direct push through at
+all. If that changes, this recipe stops working.
 
 ### If you re-author a release commit that already merged
 
