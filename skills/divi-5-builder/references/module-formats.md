@@ -373,7 +373,7 @@ anything between the `GENERATED:header` sentinels is overwritten on every regen.
 
 > Generated mechanically by `diviops-server/scripts/regen-module-formats.mjs` from `diviops_schema_get_module` dump-all output. Each module block lives between `BEGIN GENERATED:module:divi/<slug>` / `END GENERATED:module:divi/<slug>` HTML-comment sentinels (see `diviops-server/CONTRIBUTING.md` for the full convention). Do **not** edit between sentinels — edits are clobbered on regen.
 
-> Generated against Divi `5.9.0`, schema `3b1ecaf27925…`.
+> Generated against Divi `5.11.1`, schema `61fe05a885e6…`.
 
 Per CLAUDE.md "Suite architecture coherence": schema dump is the canonical index; VB-verified prose above is the canonical interpretation. The two sections are complementary, not competing — prose explains surprises, this index enumerates paths exhaustively. On conflicts, the prose above wins (per `feedback_vb_first_verification`).
 
@@ -415,6 +415,16 @@ Per CLAUDE.md "Suite architecture coherence": schema dump is the canonical index
 - **module** — `module.decoration.animation`, `module.decoration.attributes`, `module.decoration.boxShadow`, `module.decoration.conditions`, `module.decoration.disabledOn`, `module.decoration.filters`, `module.decoration.interactions`, `module.decoration.layout`, `module.decoration.order`, `module.decoration.overflow`, `module.decoration.position`, `module.decoration.scroll`, `module.decoration.spacing`, `module.decoration.sticky`, `module.decoration.transform`, `module.decoration.transition`, `module.decoration.zIndex` _(+advanced)_
 
 <!-- END GENERATED:module:divi/button -->
+
+<!-- BEGIN GENERATED:module:divi/charts -->
+
+<!-- TIER: free -->
+#### `divi/charts`
+
+- **chart** — _(no decoration groups)_ _(+innerContent, +advanced)_
+- **module** — `module.decoration.animation`, `module.decoration.attributes`, `module.decoration.background`, `module.decoration.border`, `module.decoration.boxShadow`, `module.decoration.conditions`, `module.decoration.disabledOn`, `module.decoration.filters`, `module.decoration.interactions`, `module.decoration.layout`, `module.decoration.order`, `module.decoration.overflow`, `module.decoration.position`, `module.decoration.scroll`, `module.decoration.sizing`, `module.decoration.spacing`, `module.decoration.sticky`, `module.decoration.transform`, `module.decoration.transition`, `module.decoration.zIndex` _(+advanced)_
+
+<!-- END GENERATED:module:divi/charts -->
 
 <!-- BEGIN GENERATED:module:divi/code -->
 

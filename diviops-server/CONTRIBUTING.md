@@ -45,7 +45,7 @@ This is deliberate, not an oversight. Verified directly against a live
 reference install: Divi ships 84 native module-library components, and the
 same site has 109 registered third-party modules (`difl/*`, `d5bgo/*`) —
 all structurally identical (`attributes.<key>.settings.decoration.*`). The
-committed index covers a curated 28 core modules. Issue #63 frames that set
+committed index covers a curated 30 core modules. Issue #63 frames that set
 as an intentionally curated "starter batch... expand iteratively," not a
 full mechanical dump. So which modules belong in the index is an editorial
 call, made by hand-adding a new sentinel pair for that module (see "Adding a
