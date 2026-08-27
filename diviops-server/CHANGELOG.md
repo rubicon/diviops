@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.1](https://github.com/rubicon/diviops/compare/mcp-server-v1.10.0...mcp-server-v1.10.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* **server:** surface the transport cause chain on connection failures ([#282](https://github.com/rubicon/diviops/issues/282)) ([5a2b6d4](https://github.com/rubicon/diviops/commit/5a2b6d4f4abdf3faadcc9302cfb1a5a5fefdd925))
+
 ## [1.10.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.9.0...mcp-server-v1.10.0) (2026-08-21)
 
 
