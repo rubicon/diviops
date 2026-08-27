@@ -189,8 +189,8 @@ by the bot; rebase-merging yields a commit authored by whoever wrote the branch
 commit, with no signature at all. Re-authoring the branch before a **squash**
 merge does nothing, because squash discards that author.
 
-Signing locally and fast-forwarding gets both. It also costs three extra steps,
-all of which were found by running it for v1.19.1 rather than by reading:
+Signing locally and fast-forwarding gets both. It costs two extra steps, both
+found by running it for v1.19.1 rather than by reading:
 
 ```bash
 # 1. Take the bot's commit, make it yours, sign it.
@@ -215,33 +215,38 @@ Result: `author=Dax Davis  committer=Dax Davis  verified=true`. The release PR
 closes itself as merged once GitHub notices the head commit is reachable from
 `main`, which is asynchronous — an immediate check can still report `OPEN`.
 
-**Then tag it by hand.** release-please will not do it. On the v1.19.1 push the
-workflow ran and aborted:
+**release-please then tags it for you — provided no untagged release PR is
+outstanding.** On `mcp-server-v1.10.1` (2026-08-27) this recipe was run verbatim
+and the automation did the rest unaided: it created the tag, published the
+release object, moved the PR to `autorelease: tagged`, and triggered the npm
+publish workflow. Nothing was tagged by hand.
+
+**Check that precondition before you cut.** If `.release-please-manifest.json`
+records a version with no matching tag, the run aborts *before* the tag-creating
+step and cannot clear itself:
 
 ```
 ❯ Found pull request #274: 'chore: release main'
 ⚠ There are untagged, merged release PRs outstanding - aborting
 ```
 
-That is the same abort documented below, and it happens before the tag-creating
-step, so it cannot clear itself. Use the recovery procedure in "If a release PR
-merges but no tag appears": lightweight tag, release created against the SHA with
-`--verify-tag`, then relabel the PR `autorelease: tagged`. A manual workflow run
-afterwards should report `Found release for path ., vX.Y.Z` rather than aborting.
+That is the deadlock documented in "If a release PR merges but no tag appears",
+and its recovery procedure applies. It is a statement about **backlog**, not
+about how the current PR merged.
 
-The likely reason, **hypothesis on one data point, not established**:
-release-please identifies its own release by the merge commit it expects the PR
-to have produced. A squash merge creates one and tagging works, which is what
-every earlier release did. A fast-forward makes the PR's merge commit the branch
-head itself, which release-please does not recognise as its own, so it sees a
-merged-but-untagged release PR and refuses to continue. If that holds, the manual
-tag is not bad luck on one release — it is permanent, and every release cut this
-way needs it.
+> **Corrected 2026-08-27 (#285).** This section previously claimed the recipe
+> needs a hand-made tag on every release, and attributed the v1.19.1 abort to the
+> fast-forward itself — the theory being that release-please looks for a merge
+> commit a squash would have produced. `mcp-server-v1.10.1` refutes it. v1.19.1
+> was cut while the untagged-PR deadlock was already outstanding, so it aborted
+> for that reason; the fast-forward was coincident, not causal. Recorded because
+> the wrong version of this paragraph priced the decision in
+> [#264](https://github.com/rubicon/diviops/issues/264).
 
 So the real price of a signed, personally-authored release commit is a possible
-rebase, a wait for CI, and a hand-made tag every time. A squash merge costs none
-of those and tags itself, at the price of `rubicon-release-please[bot]` as the
-author. Both are defensible; pick with the real cost in view.
+rebase and a wait for CI. A squash merge costs neither, at the price of
+`rubicon-release-please[bot]` as the author. Both are defensible; pick with the
+real cost in view.
 
 `main` here requires no PR reviews, which is what lets the direct push through at
 all. If that changes, this recipe stops working.
