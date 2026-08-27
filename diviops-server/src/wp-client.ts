@@ -9,8 +9,10 @@
 import { type ClientRuntime, type HandshakeResult } from './compatibility.js';
 import {
   type DiviopsResponse,
+  describeError,
   ErrorCodes,
   isEnveloped,
+  transportHint,
 } from './envelope.js';
 import { getRequestContext } from './request-context.js';
 
@@ -131,53 +133,6 @@ function normalizeBody(value: unknown, withinBlockTree = false): unknown {
     return out;
   }
   return value;
-}
-
-/** How far to walk a `cause` chain before giving up (#281). */
-const MAX_CAUSE_DEPTH = 4;
-
-/**
- * Render a caught error, following its `cause` chain (#281).
- *
- * Node's `fetch()` rejects with a `TypeError` whose message is always exactly
- * `fetch failed`. Whatever actually went wrong — `ECONNREFUSED`, `EAI_AGAIN`,
- * `UND_ERR_SOCKET`, `CERT_HAS_EXPIRED` — is only on `cause`, so reporting the
- * message alone makes every transport failure look identical and leaves the
- * caller to diagnose by elimination.
- *
- * Only `code`/`name`, or a truncated message, is taken from each link. A cause
- * can carry a whole request object including the `Authorization` header, and
- * this string is returned to the MCP client and written to logs.
- *
- * `cause` is arbitrary caller-supplied data and may be self-referential, so
- * the walk is bounded by both depth and an identity set — an error path that
- * can itself hang is worse than the missing detail it set out to fix.
- */
-export function describeError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-
-  const causes: string[] = [];
-  const seen = new Set<unknown>();
-  let cause: unknown = (error as { cause?: unknown } | null)?.cause;
-
-  while (cause != null && causes.length < MAX_CAUSE_DEPTH && !seen.has(cause)) {
-    seen.add(cause);
-    const link = cause as { code?: unknown; name?: unknown; message?: unknown };
-    if (typeof link.code === 'string' && link.code) {
-      causes.push(link.code);
-    } else if (typeof link.message === 'string' && link.message) {
-      // A message beats a class name: `Error` restates the type system, while
-      // "socket hang up" is the thing the reader came for.
-      causes.push(link.message.slice(0, 80));
-    } else if (typeof link.name === 'string' && link.name) {
-      causes.push(link.name);
-    } else {
-      causes.push(String(cause).slice(0, 80));
-    }
-    cause = typeof cause === 'object' ? (cause as { cause?: unknown }).cause : undefined;
-  }
-
-  return causes.length > 0 ? `${message} (cause: ${causes.join(' <- ')})` : message;
 }
 
 /**
@@ -492,7 +447,9 @@ export class WPClient {
    * silently regresses meta_ping to "Connected to Divi unknown" on
    * healthy sites.
    */
-  async testConnection(signal?: AbortSignal): Promise<{ ok: boolean; message: string }> {
+  async testConnection(
+    signal?: AbortSignal,
+  ): Promise<{ ok: boolean; message: string; hint?: string }> {
     try {
       const response = await this.requestEnveloped<{
         builder?: { version?: string };
@@ -513,9 +470,11 @@ export class WPClient {
       // The ambient MCP request signal counts too, not just an explicit one.
       const governing = signal ?? getRequestContext()?.signal;
       if (governing?.aborted) throw governing.reason ?? error;
+      const hint = transportHint(error);
       return {
         ok: false,
         message: `Connection failed: ${describeError(error)}`,
+        ...(hint ? { hint } : {}),
       };
     }
   }

@@ -54,4 +54,32 @@ describe('the boot handshake warning reports why the transport failed', () => {
       'restringing the error here drops the cause chain that #281 exists to preserve',
     );
   });
+
+  it('attaches the remediation hint to the warning too (#284)', () => {
+    // This log line is where the failure actually hid: the desktop host emitted
+    // it 43 times across ten days while the server kept running with the gate
+    // disabled, and no envelope was ever consulted. A hint that reaches only
+    // meta_ping would leave the exact scenario that motivated #284 silent.
+    const source = readFileSync(INDEX_SOURCE, 'utf8');
+
+    const warningLine = source
+      .split('\n')
+      .findIndex((line) => line.includes('Handshake warning (gate disabled)'));
+    assert.notEqual(
+      warningLine,
+      -1,
+      'did not find the handshake warning in index.ts — this gate inspected nothing',
+    );
+
+    const block = source
+      .split('\n')
+      .slice(Math.max(0, warningLine - 20), warningLine + 1)
+      .join('\n');
+
+    assert.match(
+      block,
+      /transportHint\(/,
+      'the handshake catch must consult transportHint so a self-signed cert explains itself here',
+    );
+  });
 });

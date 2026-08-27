@@ -14,7 +14,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { WPClient, describeError } from "./wp-client.js";
+import { WPClient } from "./wp-client.js";
 import {
   capabilityUpgradeHint,
   type HandshakePluginInfo,
@@ -27,11 +27,13 @@ import {
   type MissingCapabilityMcpResult,
 } from "./capability-envelope.js";
 import {
-  type DiviopsResponse,
   ErrorCodes,
+  describeError,
   envelopeMap,
   recordIdempotent,
   serializeEnvelope,
+  transportHint,
+  type DiviopsResponse,
   withCode,
   wrapResponse,
 } from "./envelope.js";
@@ -5070,7 +5072,7 @@ registerLocalTool(
     const response = await wrapResponse(async () => {
       const ping = await wp.testConnection(signal);
       if (!ping.ok) {
-        withCode(ErrorCodes.WP_ERROR, ping.message);
+        withCode(ErrorCodes.WP_ERROR, ping.message, ping.hint);
       }
       return { connected: true, message: ping.message };
     });
@@ -8142,7 +8144,11 @@ async function main() {
     // Prior review feedback: the pre-handshake-gate behavior surfaced the
     // actual cause; the gate must preserve that.
     handshakeState = { kind: "failed" };
-    console.error(`Handshake warning (gate disabled): ${msg}`);
+    const handshakeHint = transportHint(error);
+    console.error(
+      `Handshake warning (gate disabled): ${msg}` +
+        (handshakeHint ? `\n  ${handshakeHint}` : ""),
+    );
   }
 
   // Cross-env evidence and Pro coverage-slice registration must run AFTER
