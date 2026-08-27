@@ -77,9 +77,9 @@ do not reason about it from directory layout:
 
 | Artifact | Rule |
 | --- | --- |
-| `diviops-<version>.zip` | Free distribution, MIT. Readable. |
-| `diviops-pro-suite-*` (zip or extracted) | **Forbidden.** |
-| `diviops-agent-pro*.zip` | **Forbidden.** |
+| `diviops-<version>.zip`, `diviops-agent-*.zip`, `diviops-design-library-*.zip` (in `free/`) | Free distribution and individual free plugins, MIT. Readable. |
+| `diviops-pro-suite-*` (everything in `suite/`, despite the folder name) | **Forbidden.** |
+| `diviops-agent-pro*.zip` (in `pro/`) | **Forbidden.** |
 
 A Pro-suite bundle is not the free bundle plus one extra file. It carries the Pro
 plugin *and* the deeper skill-knowledge layer (`divi-5-builder` Tier 2 + Tier 3) —
