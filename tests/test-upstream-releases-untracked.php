@@ -98,8 +98,15 @@ $pro_named = array_values(
 			// `scripts/diviops-pro-suite-v1.5.51-beta/note.txt` has basename
 			// `note.txt` and would otherwise sail straight through this gate.
 			foreach ( explode( '/', $path ) as $segment ) {
-				if ( 0 === stripos( $segment, 'diviops-agent-pro' )
-					|| 0 === stripos( $segment, 'diviops-pro-suite' ) ) {
+				// A hyphen-delimited `pro` word, not a prefix. The prefixes alone
+				// only described the artifact FILENAMES, so renaming the containing
+				// directories to agent-pro/ and suite-pro/ made this blind to
+				// anything extracted inside them: only the directory carried the
+				// marker and the files under it did not (#271). This form does not
+				// depend on a naming scheme staying put. Checked against every
+				// tracked path in the repository: zero false positives, because
+				// nothing legitimate here uses `pro` as a standalone word.
+				if ( 1 === preg_match( '/(^|-)pro($|-)/i', $segment ) ) {
 					return true;
 				}
 			}
