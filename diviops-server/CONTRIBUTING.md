@@ -45,7 +45,9 @@ This is deliberate, not an oversight. Verified directly against a live
 reference install: Divi ships 84 native module-library components, and the
 same site has 109 registered third-party modules (`difl/*`, `d5bgo/*`) —
 all structurally identical (`attributes.<key>.settings.decoration.*`). The
-committed index covers a curated 30 core modules. Issue #63 frames that set
+committed index covers a curated 30 core modules. Hand-edits between the
+sentinels are caught in CI by `npm run test:regen-skill`, which regenerates
+the committed file from a recorded schema dump and compares byte for byte. Issue #63 frames that set
 as an intentionally curated "starter batch... expand iteratively," not a
 full mechanical dump. So which modules belong in the index is an editorial
 call, made by hand-adding a new sentinel pair for that module (see "Adding a
@@ -93,6 +95,21 @@ then run the regen script — it fills that pair in like any other, and fails
 loudly (naming the module) if the slug doesn't resolve against the live
 schema, so a typo can't silently produce an empty block.
 
+Then re-record the test fixture from the same install, in the same sitting:
+
+```bash
+WP_URL=... WP_USER=... WP_APP_PASSWORD=... \
+  node diviops-server/scripts/__fixtures__/capture.mjs
+```
+
+The fixture is what lets CI verify the committed index without a live
+WordPress (see `scripts/__fixtures__/README.md`). It records exactly the
+modules the file curates, so adding a sentinel pair without re-recording
+leaves the fixture one module short and `npm run test:regen-skill` fails on
+the count check. Refreshing the doc and the fixture from different installs
+fails the same way, by design — that mismatch is the drift the guard exists
+to catch.
+
 ### The per-module algorithm
 
 For each module, for every top-level `attributes` key except the four
@@ -116,14 +133,26 @@ documents this fork's free-tier reference.
 ### Tests
 
 `scripts/regen-module-formats.test.mjs` (`npm run test:regen-skill`) covers
-the transform logic (schema JSON to markdown) against synthetic fixtures —
-modeled on real Divi module shapes but not copied from Divi's own
-`module.json` (which carries Divi's own labels and descriptions), matching
-the `tests/fixtures/divi-module-library/` convention on the PHP side. The
-network/file-I/O orchestration (`fetchDumpAll`, `main`) has no
-unit-testable logic of its own; it's verified by actually running the
-script against a live reference site and diffing the result, the same way
-PR #115 verified its hand-written blocks.
+two distinct things.
+
+**Transform logic**, against synthetic fixtures — modeled on real Divi
+module shapes but not copied from Divi's own `module.json` (which carries
+Divi's own labels and descriptions), matching the
+`tests/fixtures/divi-module-library/` convention on the PHP side.
+
+**The committed output**, against `scripts/__fixtures__/dump-all.json`, a
+recorded dump-all trimmed to the curated modules. This regenerates
+`module-formats.md` from that recording and compares byte for byte, so a
+hand-edit between sentinels fails CI rather than surviving until someone
+notices unexplained drift on the next regen (#276). It also asserts the
+sample size — a deleted sentinel pair is invisible to a byte comparison,
+because the generator only regenerates the pairs it finds, so the count
+check is what catches a module silently dropped from the index.
+
+The network orchestration (`fetchDumpAll`, `main`) has no unit-testable
+logic of its own; it's verified by running the script against a live
+reference site and diffing the result, the same way PR #115 verified its
+hand-written blocks.
 
 ## Per-tool reference regeneration: `regen-tool-reference.mjs`
 

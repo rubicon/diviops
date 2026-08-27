@@ -1,5 +1,8 @@
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import {
   renderElementLine,
   renderModuleBlock,
@@ -7,6 +10,7 @@ import {
   parseModuleNames,
   regenerateContent,
   fetchDumpAll,
+  TARGET_FILE,
 } from './regen-module-formats.mjs';
 
 describe('renderElementLine', () => {
@@ -320,5 +324,59 @@ describe('fetchDumpAll', () => {
       () => fetchDumpAll({ wpUrl: 'http://x', wpUser: 'u', wpAppPassword: 'p' }),
       /missing capability/
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The committed-output guard (#276).
+//
+// Everything above exercises the transform functions against synthetic input,
+// which says nothing about whether the file actually committed to the repo is
+// what this generator produces. Without the block below, a hand-edit between
+// sentinels — to a module block, the Divi version pin, or the schema
+// fingerprint — passes CI silently, while the generated header claims such
+// edits are clobbered on regen.
+//
+// regen-tool-reference.test.mjs can rebuild its input from src/index.ts. This
+// generator's input is a live WordPress install CI cannot reach, so the input
+// is recorded instead. See __fixtures__/README.md.
+const FIXTURE_FILE = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '__fixtures__/dump-all.json'
+);
+
+describe('the committed module-formats.md matches the recorded schema dump', () => {
+  const committed = readFileSync(TARGET_FILE, 'utf8');
+  const fixture = JSON.parse(readFileSync(FIXTURE_FILE, 'utf8'));
+  const curated = parseModuleNames(committed);
+
+  // A gate that derives pass/fail only from problems-found will pass while
+  // inspecting nothing. Assert the sample size before trusting the comparison.
+  it('inspects a non-zero number of curated module blocks', () => {
+    assert.ok(curated.length > 0, 'module-formats.md curates at least one sentinel-bounded module');
+    assert.equal(
+      Object.keys(fixture.modules).length,
+      curated.length,
+      'the fixture records exactly the modules the committed file curates'
+    );
+  });
+
+  it('records which install it came from', () => {
+    assert.match(fixture.divi_version, /^\d+\.\d+/, 'fixture carries a Divi version');
+    assert.match(fixture.schema_version, /^[0-9a-f]{12,}$/, 'fixture carries a schema_version hash');
+  });
+
+  // The fixture is the generator's INPUT; the markdown is its OUTPUT. If the two
+  // were recorded from different installs, the committed header pin disagrees.
+  it('was recorded from the same Divi version the committed header pins', () => {
+    assert.ok(
+      committed.includes('Generated against Divi `' + fixture.divi_version + '`'),
+      'committed header should pin Divi ' + fixture.divi_version +
+        '; refresh both together (see __fixtures__/README.md)'
+    );
+  });
+
+  it('regenerates module-formats.md byte-identically (run `npm run regen:skill` if this fails)', () => {
+    assert.equal(regenerateContent(committed, fixture), committed);
   });
 });
