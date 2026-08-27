@@ -10,6 +10,14 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.19.1](https://github.com/rubicon/diviops/compare/v1.19.0...v1.19.1) (2026-08-27)
+
+
+### Bug Fixes
+
+* **compat:** repair Divi's product-price-range permission callback ([#273](https://github.com/rubicon/diviops/issues/273)) ([fc13390](https://github.com/rubicon/diviops/commit/fc13390221e78bb5a713b4fc616bc7d7ab271075)), closes [#266](https://github.com/rubicon/diviops/issues/266)
+* **repo:** match a hyphen-delimited pro word, not an artifact-name prefix ([#272](https://github.com/rubicon/diviops/issues/272)) ([aa3b8cd](https://github.com/rubicon/diviops/commit/aa3b8cd39967411d5255056c4ba5e1d9b045871f)), closes [#271](https://github.com/rubicon/diviops/issues/271)
+
 ## [1.19.0](https://github.com/rubicon/diviops/compare/v1.18.0...v1.19.0) (2026-08-21)
 
 
