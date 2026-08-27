@@ -69,6 +69,33 @@ trait DiviOps_Agent_Validate {
 	}
 
 	/**
+	 * Divi block types handled inside Divi's own parser, never registered with
+	 * WordPress (#288).
+	 *
+	 * `WP_Block_Type_Registry` is not an oracle for Divi. Divi 5 emits and
+	 * consumes these through
+	 * `includes/builder-5/server/FrontEnd/BlockParser/BlockParser.php`, so
+	 * `is_registered()` returns false for them by design — and registry
+	 * membership for `divi/*` is context-dependent besides: on the reference
+	 * install (Divi 5.11.1) a WP-CLI process sees exactly two registered
+	 * `divi/*` types while a REST request sees essentially all of them. Judging
+	 * these against it produced `unknown_block_type` on healthy pages.
+	 *
+	 * Both are structural wrappers that own no module attrs — a `global-layout`
+	 * defers to the referenced layout post, `root` is the tree container — so
+	 * they are exempt from the `builderVersion` requirement for the same
+	 * reason. `divi/placeholder` is excluded earlier, by `$is_divi_block`.
+	 *
+	 * Kept as a method rather than a constant: this is a trait, and trait
+	 * constants require PHP 8.2 while CI still gates on 7.4.
+	 *
+	 * @return string[]
+	 */
+	private static function parser_level_block_types(): array {
+		return [ 'divi/global-layout', 'divi/root' ];
+	}
+
+	/**
 	 * Recursively validate a block tree.
 	 */
 	private static function validate_block_tree( $blocks, $registry, $container_types, &$errors, &$warnings, &$index, &$nav_refs = null, $responsive_parent = null ) {
@@ -106,7 +133,9 @@ trait DiviOps_Agent_Validate {
 
 			// ── Structural checks (errors) ─────────────────────────
 
-			if ( $is_divi_block ) {
+			$is_parser_level = in_array( $name, self::parser_level_block_types(), true );
+
+			if ( $is_divi_block && ! $is_parser_level ) {
 				// Unknown block type.
 				if ( ! $registry->get_registered( $name ) ) {
 					$errors[] = [
@@ -126,6 +155,9 @@ trait DiviOps_Agent_Validate {
 						'message' => 'Missing builderVersion attribute',
 					];
 				}
+			}
+
+			if ( $is_divi_block ) {
 
 				// Missing layout display on containers — skip if flex properties imply it.
 				if ( in_array( $name, $container_types, true ) ) {
