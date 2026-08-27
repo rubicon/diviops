@@ -69,6 +69,41 @@ fail only from problems-found will pass while inspecting nothing. That exact fai
 happened three times on the predecessor repository. Any gate added here must assert
 that it actually inspected something.
 
+## Forbidden artifacts in `upstream-releases/`
+
+`upstream-releases/` is a local archive of published DiviOps releases, ignored by
+git except its `README.md`. **The boundary is the artifact name, not the folder** —
+do not reason about it from directory layout:
+
+| Artifact | Rule |
+| --- | --- |
+| `diviops-<version>.zip`, `diviops-agent-*.zip`, `diviops-design-library-*.zip` (in `free/`) | Free distribution and individual free plugins, MIT. Readable. |
+| `diviops-pro-suite-*` (everything in `suite/`, despite the folder name) | **Forbidden.** |
+| `diviops-agent-pro*.zip` (in `pro/`) | **Forbidden.** |
+
+A Pro-suite bundle is not the free bundle plus one extra file. It carries the Pro
+plugin *and* the deeper skill-knowledge layer (`divi-5-builder` Tier 2 + Tier 3) —
+exactly what #50 says our own skill knowledge must never derive from. Its MIT
+pieces are all obtainable from `upstream/main` or a free zip in the same
+directory, so **do not carve out the MIT parts**: there is no reason to open one.
+
+Never open, unzip, `grep`, `cat`, `Read`, index, or feed a forbidden artifact to
+any tool, and never let its contents inform anything authored here. The single
+legitimate use is **installing the Pro plugin on the dev site** to confirm it
+still attaches through `class_exists( 'DiviOps_Agent' )` and
+`diviops_agent_handshake_extensions`. Install it; do not read it. Observing Pro's
+behavior through its REST surface is fair game; reading its source is not.
+
+Do not point codebase-memory, a search index, or any bulk reader at these paths.
+Indexing Pro would make its contents retrievable by every future query, which is
+derivation at scale rather than a one-off slip.
+
+`rubicon/diviops` is a **public** repository, so committing a Pro artifact would
+publish a third party's source under our name.
+`tests/test-upstream-releases-untracked.php` fails the suite if anything under
+that directory other than `README.md` is tracked, and fails separately if any
+path segment anywhere in the repository is Pro-named.
+
 ## Development environment
 
 Local site: `/Users/daxdavis/Local Sites/colleyvillelions/app/public`
