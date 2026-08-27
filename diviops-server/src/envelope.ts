@@ -106,6 +106,106 @@ export function withCode(
   throw new DiviopsError(code, message, hint, data);
 }
 
+/** How far to walk a `cause` chain before giving up (#281). */
+const MAX_CAUSE_DEPTH = 4;
+
+/**
+ * Render a caught error, following its `cause` chain (#281).
+ *
+ * Node's `fetch()` rejects with a `TypeError` whose message is always exactly
+ * `fetch failed`. Whatever actually went wrong — `ECONNREFUSED`, `EAI_AGAIN`,
+ * `UND_ERR_SOCKET`, `DEPTH_ZERO_SELF_SIGNED_CERT` — is only on `cause`, so
+ * reporting the message alone makes every transport failure look identical and
+ * leaves the caller to diagnose by elimination.
+ *
+ * Only `code`, or a truncated message, is taken from each link. A cause can
+ * carry a whole request object including the `Authorization` header, and this
+ * string is returned to the MCP client and written to logs.
+ *
+ * `cause` is arbitrary caller-supplied data and may be self-referential, so
+ * the walk is bounded by both depth and an identity set — an error path that
+ * can itself hang is worse than the missing detail it set out to fix.
+ */
+export function describeError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+
+  const causes: string[] = [];
+  const seen = new Set<unknown>();
+  let cause: unknown = (error as { cause?: unknown } | null)?.cause;
+
+  while (cause != null && causes.length < MAX_CAUSE_DEPTH && !seen.has(cause)) {
+    seen.add(cause);
+    const link = cause as { code?: unknown; name?: unknown; message?: unknown };
+    if (typeof link.code === "string" && link.code) {
+      causes.push(link.code);
+    } else if (typeof link.message === "string" && link.message) {
+      // A message beats a class name: `Error` restates the type system, while
+      // "socket hang up" is the thing the reader came for.
+      causes.push(link.message.slice(0, 80));
+    } else if (typeof link.name === "string" && link.name) {
+      causes.push(link.name);
+    } else {
+      causes.push(String(cause).slice(0, 80));
+    }
+    cause = typeof cause === "object" ? (cause as { cause?: unknown }).cause : undefined;
+  }
+
+  return causes.length > 0 ? `${message} (cause: ${causes.join(" <- ")})` : message;
+}
+
+/**
+ * OpenSSL verification failures that mean "this certificate is not signed by
+ * anything I trust" — the shape a local development certificate always has.
+ */
+const UNTRUSTED_CERT_CODES = new Set([
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+]);
+
+/**
+ * Remediation for a transport failure, when the cause chain identifies one (#284).
+ *
+ * A self-signed certificate is the normal case for local WordPress development
+ * (Local by Flywheel, MAMP, Valet, DDEV all issue one). `curl` accepts it from
+ * the system keychain while Node does not, so every hand-run reproduction
+ * succeeds and the errno alone reads as a problem with the site rather than
+ * with this process's trust store. On 2026-08-27 that ambiguity cost hours
+ * across three sessions, with TLS explicitly ruled out on `curl`'s evidence.
+ *
+ * The hint deliberately names `NODE_EXTRA_CA_CERTS` only. Suggesting
+ * `NODE_TLS_REJECT_UNAUTHORIZED` would disable verification for every host the
+ * process later contacts — a hint that teaches the insecure fix is worse than
+ * no hint at all.
+ *
+ * Returns `undefined` for anything not positively identified. Guessing at a
+ * cause we did not observe is how the original investigation went wrong.
+ */
+export function transportHint(error: unknown): string | undefined {
+  const seen = new Set<unknown>();
+  let cause: unknown = error;
+
+  for (let depth = 0; cause != null && depth <= MAX_CAUSE_DEPTH; depth += 1) {
+    if (seen.has(cause)) break;
+    seen.add(cause);
+    const code = (cause as { code?: unknown }).code;
+    if (typeof code === "string" && UNTRUSTED_CERT_CODES.has(code)) {
+      return (
+        "The site's TLS certificate is not signed by anything this process trusts — " +
+        "normal for a local development site. Point NODE_EXTRA_CA_CERTS at the " +
+        "site's certificate in this MCP server's env and restart it (Local by " +
+        "Flywheel keeps them under " +
+        "~/Library/Application Support/Local/run/router/nginx/certs/<site>.crt). " +
+        "curl trusts it via the system keychain, which is why curl succeeds where " +
+        "this fails."
+      );
+    }
+    cause = typeof cause === "object" ? (cause as { cause?: unknown }).cause : undefined;
+  }
+
+  return undefined;
+}
+
 /**
  * Type guard: is `value` already shaped as a `DiviopsResponse`?
  *
@@ -200,7 +300,17 @@ function parseThrownError(e: unknown): DiviopsErrorBody {
       // Body wasn't JSON, fall through to generic wp_error.
     }
   }
-  return { code: ErrorCodes.WP_ERROR, message };
+  // Not a plugin envelope — a transport-level failure. Render its cause chain
+  // and attach remediation when the chain identifies one (#281, #284). Every
+  // tool funnels through here, so doing it at this single point covers them
+  // all rather than only the connection check.
+  const out: DiviopsErrorBody = {
+    code: ErrorCodes.WP_ERROR,
+    message: describeError(e),
+  };
+  const hint = transportHint(e);
+  if (hint) out.hint = hint;
+  return out;
 }
 
 /**
