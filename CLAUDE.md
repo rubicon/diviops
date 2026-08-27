@@ -77,9 +77,14 @@ do not reason about it from directory layout:
 
 | Artifact | Rule |
 | --- | --- |
-| `diviops-<version>.zip`, `diviops-agent-*.zip`, `diviops-design-library-*.zip` (in `free/`) | Free distribution and individual free plugins, MIT. Readable. |
-| `diviops-pro-suite-*` (everything in `suite/`, despite the folder name) | **Forbidden.** |
-| `diviops-agent-pro*.zip` (in `pro/`) | **Forbidden.** |
+| `diviops-suite-<version>.zip` (in `suite/`) | Free distribution, MIT. Readable. |
+| `diviops-agent-<version>.zip`, `diviops-design-library-*.zip` (in `agent/`) | Individual free plugins, MIT. Readable. |
+| `diviops-pro-suite-*` (in `suite-pro/`) | **Forbidden.** |
+| `diviops-agent-pro*.zip` (in `agent-pro/`) | **Forbidden.** |
+
+The `-pro` suffix is the marker. `<thing>/` is readable, `<thing>-pro/` is not,
+and the guard matches a hyphen-delimited `pro` word in any path segment so it
+survives a rename.
 
 A Pro-suite bundle is not the free bundle plus one extra file. It carries the Pro
 plugin *and* the deeper skill-knowledge layer (`divi-5-builder` Tier 2 + Tier 3) —
