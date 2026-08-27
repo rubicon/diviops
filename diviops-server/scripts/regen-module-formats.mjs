@@ -138,7 +138,7 @@ export function regenerateContent(content, dumpAllData) {
   return result;
 }
 
-const TARGET_FILE = path.resolve(
+export const TARGET_FILE = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   '../../skills/divi-5-builder/references/module-formats.md'
 );
