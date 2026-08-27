@@ -133,6 +133,53 @@ function normalizeBody(value: unknown, withinBlockTree = false): unknown {
   return value;
 }
 
+/** How far to walk a `cause` chain before giving up (#281). */
+const MAX_CAUSE_DEPTH = 4;
+
+/**
+ * Render a caught error, following its `cause` chain (#281).
+ *
+ * Node's `fetch()` rejects with a `TypeError` whose message is always exactly
+ * `fetch failed`. Whatever actually went wrong — `ECONNREFUSED`, `EAI_AGAIN`,
+ * `UND_ERR_SOCKET`, `CERT_HAS_EXPIRED` — is only on `cause`, so reporting the
+ * message alone makes every transport failure look identical and leaves the
+ * caller to diagnose by elimination.
+ *
+ * Only `code`/`name`, or a truncated message, is taken from each link. A cause
+ * can carry a whole request object including the `Authorization` header, and
+ * this string is returned to the MCP client and written to logs.
+ *
+ * `cause` is arbitrary caller-supplied data and may be self-referential, so
+ * the walk is bounded by both depth and an identity set — an error path that
+ * can itself hang is worse than the missing detail it set out to fix.
+ */
+export function describeError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+
+  const causes: string[] = [];
+  const seen = new Set<unknown>();
+  let cause: unknown = (error as { cause?: unknown } | null)?.cause;
+
+  while (cause != null && causes.length < MAX_CAUSE_DEPTH && !seen.has(cause)) {
+    seen.add(cause);
+    const link = cause as { code?: unknown; name?: unknown; message?: unknown };
+    if (typeof link.code === 'string' && link.code) {
+      causes.push(link.code);
+    } else if (typeof link.message === 'string' && link.message) {
+      // A message beats a class name: `Error` restates the type system, while
+      // "socket hang up" is the thing the reader came for.
+      causes.push(link.message.slice(0, 80));
+    } else if (typeof link.name === 'string' && link.name) {
+      causes.push(link.name);
+    } else {
+      causes.push(String(cause).slice(0, 80));
+    }
+    cause = typeof cause === 'object' ? (cause as { cause?: unknown }).cause : undefined;
+  }
+
+  return causes.length > 0 ? `${message} (cause: ${causes.join(' <- ')})` : message;
+}
+
 /**
  * Resolve the AbortSignal this dispatch should hand to `fetch`, and refuse to
  * dispatch at all when the request has already been cancelled (#134).
@@ -468,7 +515,7 @@ export class WPClient {
       if (governing?.aborted) throw governing.reason ?? error;
       return {
         ok: false,
-        message: `Connection failed: ${error instanceof Error ? error.message : String(error)}`,
+        message: `Connection failed: ${describeError(error)}`,
       };
     }
   }
