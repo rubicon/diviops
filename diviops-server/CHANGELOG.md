@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.10.1...mcp-server-v1.11.0) (2026-08-27)
+
+
+### Features
+
+* **server:** tell the caller how to fix a rejected self-signed certificate ([#287](https://github.com/rubicon/diviops/issues/287)) ([4686d60](https://github.com/rubicon/diviops/commit/4686d608367b93d808ff48477aeea71029abb98f))
+
 ## [1.10.1](https://github.com/rubicon/diviops/compare/mcp-server-v1.10.0...mcp-server-v1.10.1) (2026-08-27)
 
 

@@ -10,6 +10,13 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.19.2](https://github.com/rubicon/diviops/compare/v1.19.1...v1.19.2) (2026-08-27)
+
+
+### Bug Fixes
+
+* **validate:** stop reporting parser-level Divi blocks as unknown ([#290](https://github.com/rubicon/diviops/issues/290)) ([ef03adf](https://github.com/rubicon/diviops/commit/ef03adffb84928aa101440e28fa673e6bb190c97))
+
 ## [1.19.1](https://github.com/rubicon/diviops/compare/v1.19.0...v1.19.1) (2026-08-27)
 
 
