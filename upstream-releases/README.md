@@ -9,12 +9,13 @@ when their branch merges, and ignored files inside them go with the worktree.
 
 ## The boundary is the artifact name, not the folder
 
-Do not reason about this from directory layout. Three kinds of artifact live
-here and two of them are forbidden:
+Do not reason about this from directory layout. The directories are named to
+agree with the rule, but the rule is what decides:
 
 | Artifact | Contents | Rule |
 | --- | --- | --- |
-| `diviops-<version>.zip`, `diviops-agent-<version>.zip`, `diviops-design-library-*.zip` | Free distribution and the individual free plugins. MIT. | **Readable.** |
+| `diviops-suite-<version>.zip` | Free distribution. MIT. | **Readable.** |
+| `diviops-agent-<version>.zip`, `diviops-design-library-*.zip` | Individual free plugins. MIT. | **Readable.** |
 | `diviops-pro-suite-*` | Pro distribution: everything in Free **plus** the Pro plugin and the deeper skill-knowledge layer. | **Forbidden.** |
 | `diviops-agent-pro*.zip` | The Pro plugin alone. | **Forbidden.** |
 
@@ -22,21 +23,24 @@ Current layout, which follows from that table rather than defining it:
 
 ```
 upstream-releases/
-  README.md   tracked
-  free/       readable    — free distribution + individual free plugin zips
-  suite/      FORBIDDEN   — holds only diviops-pro-suite-* bundles
-  pro/        FORBIDDEN   — diviops-agent-pro-*.zip
+  README.md     tracked
+  agent/        readable    — diviops-agent-*.zip, diviops-design-library-*.zip
+  agent-pro/    FORBIDDEN   — diviops-agent-pro-*.zip
+  suite/        readable    — diviops-suite-<version>.zip
+  suite-pro/    FORBIDDEN   — diviops-pro-suite-*.zip
 ```
 
-`suite/` is a misleading name for a directory that holds nothing but Pro
-distributions. If it is ever renamed, `pro-suite/` says what it is. The rule does
-not depend on the rename: the artifact name decides, and every file in there is
-Pro-named.
+The `-pro` suffix is the marker, and the guard enforces it as a hyphen-delimited
+word rather than as a filename prefix, so it survives a rename. If you add a
+directory here, `<thing>` is readable and `<thing>-pro` is not.
 
 **Keep zips, never extracted directories.** A zip is opaque — you have to
 deliberately unzip it. An extracted tree is one `grep -r` away from
 contamination, and it is exactly what a code indexer walks; a zip is a binary it
 skips. Storing zips only makes the boundary structural instead of rule-based.
+An extracted Pro bundle is also the one shape that defeated an earlier version of
+the guard: only the directory carried the Pro marker and none of the files under
+it did.
 
 A Pro-suite bundle is not a free bundle with an extra file bolted on. Its own
 README states that the Pro distribution adds "the deeper skill knowledge layer —
@@ -46,10 +50,10 @@ the things this project may not derive from.
 
 **Do not carve out the MIT parts of a Pro bundle.** It does contain MIT pieces —
 `diviops-agent.zip`, `diviops-design-library.zip`, `diviops-server/` — but every
-one of them is already available from `upstream/main` or from a free zip in
-`free/`. Verified: all eleven zips in `free/` contain zero Pro members. Reaching
-into a Pro bundle buys nothing and puts you one `cd` away from Tier 2 skill
-files. There is no reason to open one at all.
+one of them is already available from `upstream/main` or from a zip in `agent/`
+or `suite/`. Verified after the rename: all eleven readable zips contain zero
+`agent-pro` or `pro-suite` members. Reaching into a Pro bundle buys nothing and
+puts you one `cd` away from Tier 2 skill files. There is no reason to open one.
 
 ## What "forbidden" means
 
