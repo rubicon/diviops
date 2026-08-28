@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.12.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.11.0...mcp-server-v1.12.0) (2026-08-28)
+
+
+### Features
+
+* **meta_info:** report live plugin state and a code fingerprint ([#294](https://github.com/rubicon/diviops/issues/294)) ([7f5065f](https://github.com/rubicon/diviops/commit/7f5065ffda6bf31c6c137b01fd2e306086cf9c30)), closes [#215](https://github.com/rubicon/diviops/issues/215)
+* **module_update:** surface removals in the dry_run plan ([#295](https://github.com/rubicon/diviops/issues/295)) ([e73d351](https://github.com/rubicon/diviops/commit/e73d3513fb6d7d18187c01dfeb39ae6d7d683dc5))
+
 ## [1.11.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.10.1...mcp-server-v1.11.0) (2026-08-27)
 
 
