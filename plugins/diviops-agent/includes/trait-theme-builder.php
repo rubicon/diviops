@@ -217,6 +217,32 @@ trait DiviOps_Agent_ThemeBuilder {
 		return $referrers;
 	}
 
+	/**
+	 * Read Divi's own unused-post marker for a Theme Builder post.
+	 *
+	 * et_theme_builder_trash_draft_and_unused_posts() (theme-builder.php) stamps
+	 * every template and layout the active master does not reference with
+	 * `_et_theme_builder_marked_as_unused`, then trashes anything marked more
+	 * than 7 days earlier, 50 posts at a time. It deletes the stamp again for
+	 * every post in the used set on each run, so the value is self-correcting
+	 * and a stale one on a live post should not occur.
+	 *
+	 * Reported exactly as stored. Divi writes it with date(), not gmdate(), so
+	 * it is site-local time — reinterpreting it as UTC here would shift it.
+	 *
+	 * Read-only by design: DiviOps never writes or clears this key. It is Divi's,
+	 * and it schedules a deletion; writing it would hand DiviOps a share in that
+	 * schedule.
+	 *
+	 * @param int $post_id Template or layout post id.
+	 * @return string|null Divi's timestamp, or null when the post is unmarked.
+	 */
+	private static function marked_unused_at( $post_id ) {
+		$marked = get_post_meta( (int) $post_id, '_et_theme_builder_marked_as_unused', true );
+
+		return ( is_string( $marked ) && '' !== $marked ) ? $marked : null;
+	}
+
 	// ── Theme Builder Operations ────────────────────────────────────
 
 	/**
@@ -242,6 +268,10 @@ trait DiviOps_Agent_ThemeBuilder {
 	 * order — so a second default is dead weight. A conditional template under
 	 * the active master is effective; whether it matches a given request is a
 	 * per-request question this list cannot answer.
+	 *
+	 * `marked_unused_at` carries Divi's own orphan marker, which is a deletion
+	 * warning as much as a label: a marked post is queued to be trashed and then
+	 * purged per the site's EMPTY_TRASH_DAYS (#303).
 	 *
 	 * `is_default` reports the `_et_default` meta only for reachable rows.
 	 * The flag is a claim about resolution, and that claim is false for any
@@ -301,6 +331,7 @@ trait DiviOps_Agent_ThemeBuilder {
 				'master_id'             => $master_id,
 				'is_active_master'      => $is_active_master,
 				'effective'             => $effective,
+				'marked_unused_at'      => self::marked_unused_at( $post->ID ),
 				'is_default'            => $is_default,
 				'enabled'               => $is_enabled,
 				'conditions'            => $use_on,
@@ -337,6 +368,9 @@ trait DiviOps_Agent_ThemeBuilder {
 	 * layout is live, via `post_status`, `master_id`, `is_active_master`,
 	 * `referenced_by`, and `effective` — the same reporting shape
 	 * tb_template_list carries for the sibling read surface (#291).
+	 *
+	 * `marked_unused_at` carries Divi's own orphan marker for the same reason it
+	 * appears on tb_template_list rows (#303).
 	 *
 	 * `effective` asks only whether Divi can reach this layout at all. Whether
 	 * the referring template wins its own default pick is that template's
@@ -389,6 +423,7 @@ trait DiviOps_Agent_ThemeBuilder {
 			'is_active_master' => $is_active_master,
 			'referenced_by'    => array_keys( $referrers ),
 			'effective'        => $effective,
+			'marked_unused_at' => self::marked_unused_at( $post->ID ),
 			'content_raw'      => $post->post_content,
 		] );
 	}
