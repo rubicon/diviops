@@ -1075,6 +1075,19 @@ if ( ! function_exists( 'delete_transient' ) ) {
 if ( ! function_exists( 'delete_post_meta' ) ) {
 	function delete_post_meta( $post_id, $key, $value = '' ) {
 		unset( $GLOBALS['diviops_test_post_meta'][ $post_id ][ $key ] );
+		if ( '' === $value ) {
+			unset( $GLOBALS['diviops_test_post_meta_rows'][ $post_id ][ $key ] );
+			return true;
+		}
+		$rows = $GLOBALS['diviops_test_post_meta_rows'][ $post_id ][ $key ] ?? array();
+		$GLOBALS['diviops_test_post_meta_rows'][ $post_id ][ $key ] = array_values(
+			array_filter(
+				$rows,
+				static function ( $row ) use ( $value ) {
+					return (string) $row !== (string) $value;
+				}
+			)
+		);
 		return true;
 	}
 }
@@ -1145,7 +1158,129 @@ if ( ! function_exists( 'wp_insert_post' ) ) {
 if ( ! function_exists( 'update_post_meta' ) ) {
 	function update_post_meta( $post_id, $key, $value ) {
 		$GLOBALS['diviops_test_post_meta'][ $post_id ][ $key ] = $value;
+		// Core's update_post_meta() with no $prev_value collapses every row for
+		// the key onto one value, so a prior add_post_meta() row set cannot
+		// survive it. Drop the multi-row store to model that.
+		unset( $GLOBALS['diviops_test_post_meta_rows'][ $post_id ][ $key ] );
 		return true;
+	}
+}
+
+/*
+ * Multi-row post meta.
+ *
+ * $GLOBALS['diviops_test_post_meta'] models the single-row case update_post_meta()
+ * creates, which is all most handlers need. WordPress meta is genuinely one row per
+ * add_post_meta() call, though, and Divi relies on that: a Theme Builder master
+ * records each of its templates as its own `_et_template` row
+ * (theme-builder/api.php:244), and reads them back with a non-single
+ * get_post_meta(). Rows added here therefore live in their own registry, which
+ * get_post_meta() below prefers for non-single reads.
+ */
+if ( ! isset( $GLOBALS['diviops_test_post_meta_rows'] ) ) {
+	$GLOBALS['diviops_test_post_meta_rows'] = array();
+}
+
+if ( ! function_exists( 'add_post_meta' ) ) {
+	/**
+	 * Model WP core's add_post_meta(): append a row for the key rather than
+	 * replacing what is there. Honors $unique by refusing when the key already
+	 * has any row, exactly as core does.
+	 */
+	function add_post_meta( $post_id, $key, $value, $unique = false ) {
+		$rows = $GLOBALS['diviops_test_post_meta_rows'][ $post_id ][ $key ] ?? array();
+		if ( $unique && ( $rows || isset( $GLOBALS['diviops_test_post_meta'][ $post_id ][ $key ] ) ) ) {
+			return false;
+		}
+		$rows[] = $value;
+		$GLOBALS['diviops_test_post_meta_rows'][ $post_id ][ $key ] = $rows;
+		// Keep the single-row view answering with the first row, so a $single
+		// read of a multi-row key behaves as core's "first row wins".
+		if ( ! isset( $GLOBALS['diviops_test_post_meta'][ $post_id ][ $key ] ) ) {
+			$GLOBALS['diviops_test_post_meta'][ $post_id ][ $key ] = $rows[0];
+		}
+		return true;
+	}
+}
+
+if ( ! function_exists( 'update_post_caches' ) ) {
+	/**
+	 * No-op. Core primes the post/meta/term caches here; this harness reads
+	 * meta straight out of the registries above, so there is nothing to prime
+	 * and nothing a test could assert about it.
+	 */
+	function update_post_caches( &$posts, $post_type = 'post', $update_term_cache = true, $update_meta_cache = true ) {
+	}
+}
+
+if ( ! function_exists( 'get_posts' ) ) {
+	/**
+	 * Model the slice of WP core's get_posts() this codebase actually calls:
+	 * post_type, post_status (string or array), posts_per_page (-1 for all),
+	 * orderby ID or date with order asc/desc, `fields => 'ids'`, and a
+	 * meta_query limited to EXISTS / NOT EXISTS clauses on a key. Runs against
+	 * the same $GLOBALS['diviops_test_posts'] registry get_post() uses.
+	 *
+	 * Date ordering falls back to ID ordering when fixtures carry no post_date,
+	 * which matches how Divi's masters actually sort — they are created in
+	 * ascending id order, so newest-by-date is newest-by-id.
+	 */
+	function get_posts( $args = array() ) {
+		$post_type = $args['post_type'] ?? 'post';
+		$statuses  = (array) ( $args['post_status'] ?? 'publish' );
+		$per_page  = isset( $args['posts_per_page'] ) ? (int) $args['posts_per_page'] : 5;
+		$order     = strtolower( (string) ( $args['order'] ?? 'desc' ) );
+		$fields    = $args['fields'] ?? '';
+
+		$matches = array();
+		foreach ( (array) ( $GLOBALS['diviops_test_posts'] ?? array() ) as $post ) {
+			if ( $post_type !== $post->post_type ) {
+				continue;
+			}
+			$status = isset( $post->post_status ) ? $post->post_status : 'publish';
+			if ( ! in_array( 'any', $statuses, true ) && ! in_array( $status, $statuses, true ) ) {
+				continue;
+			}
+			$keep = true;
+			foreach ( (array) ( $args['meta_query'] ?? array() ) as $clause ) {
+				if ( ! is_array( $clause ) || ! isset( $clause['key'], $clause['compare'] ) ) {
+					continue;
+				}
+				$exists = isset( $GLOBALS['diviops_test_post_meta'][ $post->ID ][ $clause['key'] ] )
+					|| ! empty( $GLOBALS['diviops_test_post_meta_rows'][ $post->ID ][ $clause['key'] ] );
+				if ( 'NOT EXISTS' === $clause['compare'] && $exists ) {
+					$keep = false;
+				}
+				if ( 'EXISTS' === $clause['compare'] && ! $exists ) {
+					$keep = false;
+				}
+			}
+			if ( $keep ) {
+				$matches[] = $post;
+			}
+		}
+
+		usort(
+			$matches,
+			static function ( $a, $b ) {
+				return (int) $a->ID <=> (int) $b->ID;
+			}
+		);
+		if ( 'desc' === $order ) {
+			$matches = array_reverse( $matches );
+		}
+		if ( $per_page > 0 ) {
+			$matches = array_slice( $matches, 0, $per_page );
+		}
+
+		return ( 'ids' === $fields )
+			? array_map(
+				static function ( $p ) {
+					return (int) $p->ID;
+				},
+				$matches
+			)
+			: $matches;
 	}
 }
 
@@ -1247,6 +1382,12 @@ if ( ! function_exists( 'get_post_meta' ) ) {
 		$meta = $GLOBALS['diviops_test_post_meta'][ $post_id ] ?? array();
 		if ( '' === $key ) {
 			return $meta;
+		}
+		// A key written through add_post_meta() has real rows; a non-single read
+		// must return all of them, which is how Divi reads `_et_template`.
+		$rows = $GLOBALS['diviops_test_post_meta_rows'][ $post_id ][ $key ] ?? array();
+		if ( $rows ) {
+			return $single ? $rows[0] : array_values( $rows );
 		}
 		if ( ! array_key_exists( $key, $meta ) ) {
 			return $single ? '' : array();

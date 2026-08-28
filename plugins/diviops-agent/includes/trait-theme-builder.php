@@ -127,10 +127,76 @@ trait DiviOps_Agent_ThemeBuilder {
 		return $ids;
 	}
 
+	/**
+	 * Map every `et_template` post id to the Theme Builder master whose
+	 * `_et_template` linked list names it.
+	 *
+	 * Divi records ownership only on the master side — one `_et_template`
+	 * meta row per template (theme-builder/api.php:244) — so there is no
+	 * back-pointer on the template to read, and answering "who owns this
+	 * template" means walking every master. Masters of ANY status are walked,
+	 * trash included: a template owned by a superseded master still has an
+	 * owner, and reporting that owner is the whole point. Library-cloned
+	 * masters (`_et_library_theme_builder`) are walked too — they are
+	 * excluded from ACTIVE-master discovery, not from existing.
+	 *
+	 * First master wins on the rare id claimed by two linked lists; callers
+	 * that care about the active master should overwrite from
+	 * get_master_template_ids() rather than trust this ordering.
+	 *
+	 * @return array<int, int> template post id => owning master post id.
+	 */
+	private static function map_templates_to_masters() {
+		$masters = get_posts( [
+			'post_type'        => 'et_theme_builder',
+			'post_status'      => [ 'publish', 'future', 'draft', 'pending', 'private', 'trash', 'auto-draft', 'inherit' ],
+			'posts_per_page'   => -1,
+			'orderby'          => 'date',
+			'order'            => 'desc',
+			'fields'           => 'ids',
+			'suppress_filters' => false,
+		] );
+
+		$owners = [];
+		foreach ( (array) $masters as $master_id ) {
+			foreach ( self::get_master_template_ids( (int) $master_id ) as $template_id ) {
+				if ( ! isset( $owners[ $template_id ] ) ) {
+					$owners[ $template_id ] = (int) $master_id;
+				}
+			}
+		}
+		return $owners;
+	}
+
 	// ── Theme Builder Operations ────────────────────────────────────
 
 	/**
 	 * List all Theme Builder templates with their conditions and layout IDs.
+	 *
+	 * Every published `et_template` is returned, but only those linked to the
+	 * ACTIVE master are reachable — Divi resolves template ids exclusively
+	 * from that master's `_et_template` list, so a template owned by a
+	 * trashed or superseded master can never route. Saving the Theme Builder
+	 * creates and trashes a master each time, so those accumulate on any site
+	 * that has been re-saved. Each row therefore carries:
+	 *
+	 *   - `master_id`        — the master whose linked list names it, 0 if none
+	 *   - `is_active_master` — whether that is the master Divi resolves from
+	 *   - `effective`        — whether the row takes part in routing at all
+	 *
+	 * plus `active_master_id` alongside `total` at the top level, matching the
+	 * convention tb_layout_block_insert already uses.
+	 *
+	 * `effective` means reachable AND, for a default, the one that wins the
+	 * default pick: ThemeBuilderRequest::get_template() takes
+	 * `$default_templates[0]` — the FIRST default in the master's linked-list
+	 * order — so a second default is dead weight. A conditional template under
+	 * the active master is effective; whether it matches a given request is a
+	 * per-request question this list cannot answer.
+	 *
+	 * `is_default` reports the `_et_default` meta only for reachable rows.
+	 * The flag is a claim about resolution, and that claim is false for any
+	 * template outside the active master, whatever the meta says (#291).
 	 */
 	public static function tb_template_list( $request ) {
 		$per_page = max( 1, min( absint( $request->get_param( 'per_page' ) ?? 50 ), 100 ) );
@@ -150,16 +216,42 @@ trait DiviOps_Agent_ThemeBuilder {
 			update_post_caches( $query->posts, 'et_template', false, true );
 		}
 
+		$active_master_id = self::find_active_master();
+		$active_template_ids = self::get_master_template_ids( $active_master_id );
+		$owners              = self::map_templates_to_masters();
+
+		// The default pick is the first default in the active master's linked
+		// list, before the enable-gate — a disabled first default shadows a
+		// later one rather than yielding to it.
+		$winning_default_id = 0;
+		foreach ( $active_template_ids as $template_id ) {
+			if ( '1' === get_post_meta( $template_id, '_et_default', true ) ) {
+				$winning_default_id = $template_id;
+				break;
+			}
+		}
+
 		$results = [];
 		foreach ( $query->posts as $post ) {
 			$use_on      = get_post_meta( $post->ID, '_et_use_on' );
 			$exclude     = get_post_meta( $post->ID, '_et_exclude_from' );
-			$is_default  = '1' === get_post_meta( $post->ID, '_et_default', true );
+			$has_default = '1' === get_post_meta( $post->ID, '_et_default', true );
 			$is_enabled  = '1' === get_post_meta( $post->ID, '_et_enabled', true );
+
+			$is_active_master = in_array( (int) $post->ID, $active_template_ids, true );
+			$master_id        = $is_active_master
+				? $active_master_id
+				: (int) ( $owners[ (int) $post->ID ] ?? 0 );
+			$is_default       = $has_default && $is_active_master;
+			$effective        = $is_active_master
+				&& ( ! $has_default || (int) $post->ID === $winning_default_id );
 
 			$results[] = [
 				'id'                    => $post->ID,
 				'title'                 => $post->post_title,
+				'master_id'             => $master_id,
+				'is_active_master'      => $is_active_master,
+				'effective'             => $effective,
 				'is_default'            => $is_default,
 				'enabled'               => $is_enabled,
 				'conditions'            => $use_on,
@@ -174,9 +266,10 @@ trait DiviOps_Agent_ThemeBuilder {
 		}
 
 		return self::envelope_success( [
-			'results'     => $results,
-			'total'       => (int) $query->found_posts,
-			'total_pages' => (int) $query->max_num_pages,
+			'results'          => $results,
+			'active_master_id' => $active_master_id,
+			'total'            => (int) $query->found_posts,
+			'total_pages'      => (int) $query->max_num_pages,
 		] );
 	}
 
