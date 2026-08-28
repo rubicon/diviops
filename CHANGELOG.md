@@ -10,6 +10,21 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.20.0](https://github.com/rubicon/diviops/compare/v1.19.2...v1.20.0) (2026-08-28)
+
+
+### Features
+
+* **meta_info:** report live plugin state and a code fingerprint ([#294](https://github.com/rubicon/diviops/issues/294)) ([7f5065f](https://github.com/rubicon/diviops/commit/7f5065ffda6bf31c6c137b01fd2e306086cf9c30)), closes [#215](https://github.com/rubicon/diviops/issues/215)
+* **module_update:** surface removals in the dry_run plan ([#295](https://github.com/rubicon/diviops/issues/295)) ([e73d351](https://github.com/rubicon/diviops/commit/e73d3513fb6d7d18187c01dfeb39ae6d7d683dc5))
+* **tb:** report Divi's unused-post marker as marked_unused_at ([#306](https://github.com/rubicon/diviops/issues/306)) ([97c6fb5](https://github.com/rubicon/diviops/commit/97c6fb59d53360236a86691706fba40b4aa8cf22)), closes [#303](https://github.com/rubicon/diviops/issues/303)
+
+
+### Bug Fixes
+
+* **tb_layout_get:** report master ownership, status, and reachability ([#305](https://github.com/rubicon/diviops/issues/305)) ([56a9b57](https://github.com/rubicon/diviops/commit/56a9b57d6db2e261cd674230ccb0cfe6a8374c82)), closes [#302](https://github.com/rubicon/diviops/issues/302)
+* **tb_template_list:** report master ownership and never claim an unreachable default ([#293](https://github.com/rubicon/diviops/issues/293)) ([25d30ee](https://github.com/rubicon/diviops/commit/25d30ee9b29305dd40f082b5c973a59e1be7d3f3))
+
 ## [1.19.2](https://github.com/rubicon/diviops/compare/v1.19.1...v1.19.2) (2026-08-27)
 
 
