@@ -96,6 +96,8 @@ Apply mode (`dry_run` omitted or `false`) keeps each tool's namespace-specific s
 
 `diviops_scf_sync` flows `dry_run` through to wp-cli's `--dry-run` flag — the resulting preview is wp-cli's plain-text summary, NOT the standardized `data.plan = { summary, changes[] }` shape above. This divergence is by design because it reports the upstream SCF sync preview.
 
+`diviops_module_update` adds a per-path `removed` array to each change entry — `[ { "path": "<leaf dot path>", "value": <what is lost> } ]` — because `before`/`after` alone can express what a path will contain but not what it will stop containing. It is always present, so an empty list means "this write removes nothing" rather than "removals were not reported". Two removals are reachable and both are caller-intended: `{"a.b.c": null}` clears a value, and a list value replaces wholesale (lists are diffed by membership, so replacing `["class-a","class-b"]` with `["class-c"]` reports two dropped entries, not one).
+
 Plugin-routed mutating tools should use the standard plan slot. Some tools also preserve route-specific diagnostics as sibling keys beside `dry_run` and `plan`, but callers should branch first on `data.plan.summary`, `data.plan.changes`, and optional `data.plan.warnings`.
 
 ## Idempotency conventions

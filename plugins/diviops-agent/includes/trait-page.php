@@ -1767,6 +1767,136 @@ trait DiviOps_Agent_Page {
 	}
 
 	/**
+	 * Build one dry_run plan entry for a `module_update` attr path (#219).
+	 *
+	 * The plan used to carry only `before`/`after`, which shows what a path will
+	 * CONTAIN and structurally cannot show what it will stop containing — so a
+	 * destructive payload previewed identically to a safe one. `removed` closes
+	 * that: it names the leaves this write loses. It is always present, because an
+	 * absent field and an empty one are indistinguishable to a reader skimming a
+	 * plan, which is the exact ambiguity this reporting exists to remove.
+	 *
+	 * Reporting only. Nothing here runs on the apply path.
+	 *
+	 * @param string $target_id Resource identifier, without the `#path` suffix.
+	 * @param string $path      The attr dot path this entry describes.
+	 * @param mixed  $before    Value read from the tree before the merge.
+	 * @param mixed  $after     Value read back out of the merged tree.
+	 * @return array
+	 */
+	private static function module_update_plan_change( string $target_id, string $path, $before, $after ): array {
+		return array(
+			'kind'    => 'module.update',
+			'target'  => $target_id . '#' . $path,
+			'before'  => $before,
+			'after'   => $after,
+			'removed' => self::collect_removed_attr_paths( $path, $before, $after ),
+		);
+	}
+
+	/**
+	 * Diff a path's before/after values into the leaves the write removes.
+	 *
+	 * Both removals reachable through the merge semantics are caller-intended,
+	 * which is why they survived this long unreported:
+	 *
+	 *   - explicit null — `{"a.b.c": null}` assigns null, the way a targeted reset
+	 *     is spelled, so the old value is simply gone;
+	 *   - list replacement — lists replace wholesale rather than merging index-wise
+	 *     (see merge_module_attr_value()), so a shorter replacement drops entries.
+	 *
+	 * Lists are diffed by MEMBERSHIP, not by index: replacing
+	 * `["class-a","class-b"]` with `["class-c"]` loses two entries, and an
+	 * index-wise diff would name only the trailing one.
+	 *
+	 * A scalar overwritten by another scalar is a change, not a loss — `before`
+	 * and `after` already show it — so only a null `after`, or a shape swap that
+	 * discards a whole subtree, produces entries here.
+	 *
+	 * @param string $path   Dot path of the compared values.
+	 * @param mixed  $before Value before the merge.
+	 * @param mixed  $after  Value after the merge.
+	 * @return array<int, array{path: string, value: mixed}>
+	 */
+	private static function collect_removed_attr_paths( string $path, $before, $after ): array {
+		if ( null === $before ) {
+			return array();
+		}
+
+		if ( is_array( $before ) && is_array( $after ) ) {
+			$is_list = self::is_list_like_array( $before );
+			if ( $is_list === self::is_list_like_array( $after ) ) {
+				$removed = array();
+
+				if ( $is_list ) {
+					foreach ( $before as $entry ) {
+						if ( ! in_array( $entry, $after, true ) ) {
+							$removed[] = array( 'path' => $path, 'value' => $entry );
+						}
+					}
+
+					return $removed;
+				}
+
+				foreach ( $before as $key => $value ) {
+					// Re-escape literal dots so the reported path round-trips
+					// through split_dot_path(), same as the validation expander.
+					$child   = $path . '.' . str_replace( '.', '\\.', (string) $key );
+					$removed = array_merge(
+						$removed,
+						array_key_exists( $key, $after )
+							? self::collect_removed_attr_paths( $child, $value, $after[ $key ] )
+							: self::flatten_removed_attr_leaves( $child, $value )
+					);
+				}
+
+				return $removed;
+			}
+		}
+
+		if ( null !== $after && ! is_array( $before ) ) {
+			return array();
+		}
+
+		return self::flatten_removed_attr_leaves( $path, $before );
+	}
+
+	/**
+	 * Enumerate every leaf under a value that disappears wholesale.
+	 *
+	 * @param string $path  Dot path of the vanishing value.
+	 * @param mixed  $value The value itself.
+	 * @return array<int, array{path: string, value: mixed}>
+	 */
+	private static function flatten_removed_attr_leaves( string $path, $value ): array {
+		if ( ! is_array( $value ) ) {
+			return array( array( 'path' => $path, 'value' => $value ) );
+		}
+
+		$removed = array();
+
+		// A list is a value, not a branch — each entry is reported at the list's
+		// own path. An empty array yields nothing, which is correct either way it
+		// is read: no entries, no keys.
+		if ( self::is_list_like_array( $value ) ) {
+			foreach ( $value as $entry ) {
+				$removed[] = array( 'path' => $path, 'value' => $entry );
+			}
+
+			return $removed;
+		}
+
+		foreach ( $value as $key => $child ) {
+			$removed = array_merge(
+				$removed,
+				self::flatten_removed_attr_leaves( $path . '.' . str_replace( '.', '\\.', (string) $key ), $child )
+			);
+		}
+
+		return $removed;
+	}
+
+	/**
 	 * Merge one attr value into another for apply_module_attr_updates().
 	 *
 	 * NOT `_deep_merge()` (trait-core.php), despite the apparent reuse: that
@@ -2291,19 +2421,23 @@ trait DiviOps_Agent_Page {
 		if ( $dry_run ) {
 			$target_desc = 'auto_index' === $mode ? $auto_index : ( 'label' === $mode ? $label : "text:{$match_text}" );
 			$changes     = [];
-			foreach ( $attrs as $path => $value ) {
+			foreach ( $attrs as $path => $_unused ) {
 				// Read `after` back out of the mutated tree rather than echoing the
 				// submitted value. Since object values now merge (#206), the
 				// submitted subtree is NOT the resulting one, and reporting it
 				// would understate what survives — the same class of misleading
 				// dry_run output that let the old replace-everything behavior go
 				// unnoticed, just inverted.
-				$changes[] = [
-					'kind'   => 'module.update',
-					'target' => "page#{$post_id}/{$type}/{$target_desc}#{$path}",
-					'before' => $before_values[ $path ] ?? null,
-					'after'  => self::read_module_attr_path( $block_attrs, (string) $path ),
-				];
+				// `removed` names the leaves this write loses (#219). Without it a
+				// plan can only show what a path will contain, so a payload that
+				// clears a value or shortens a list previews identically to one
+				// that changes nothing else.
+				$changes[] = self::module_update_plan_change(
+					"page#{$post_id}/{$type}/{$target_desc}",
+					(string) $path,
+					$before_values[ $path ] ?? null,
+					self::read_module_attr_path( $block_attrs, (string) $path )
+				);
 			}
 			$extra = $backup ? [ 'backup' => self::rollback_snapshot_plan_for_post_write( $post, 'diviops_module_update', [ 'tool_operation' => 'module.update', 'target' => $target_desc, 'updated' => array_keys( $attrs ) ] ) ] : [];
 			return self::dry_run_response(
