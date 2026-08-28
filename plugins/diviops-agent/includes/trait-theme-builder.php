@@ -168,6 +168,55 @@ trait DiviOps_Agent_ThemeBuilder {
 		return $owners;
 	}
 
+	/**
+	 * Find every `et_template` naming the given layout in one of its
+	 * `_et_{header,body,footer}_layout_id` meta rows.
+	 *
+	 * Divi records the link on the template side only — a layout carries no
+	 * back-pointer — so answering "what uses this layout" means walking the
+	 * templates. Templates of ANY status are walked, trash included, for the
+	 * same reason map_templates_to_masters() walks every master: a layout named
+	 * only by a superseded template still has a referrer, and naming it is the
+	 * point.
+	 *
+	 * A template names at most one layout per slot, so the first slot matching
+	 * a given template wins and the scan moves on.
+	 *
+	 * @param int $layout_id Layout post id.
+	 * @return array<int, string> template post id => the slot naming it
+	 *                            (`header`, `body`, or `footer`), ascending by id.
+	 */
+	private static function find_templates_referencing_layout( $layout_id ) {
+		$layout_id = (int) $layout_id;
+		if ( $layout_id <= 0 ) {
+			return [];
+		}
+
+		$templates = get_posts( [
+			'post_type'        => 'et_template',
+			'post_status'      => [ 'publish', 'future', 'draft', 'pending', 'private', 'trash', 'auto-draft', 'inherit' ],
+			'posts_per_page'   => -1,
+			'fields'           => 'ids',
+			'suppress_filters' => false,
+		] );
+
+		$referrers = [];
+		foreach ( (array) $templates as $template_id ) {
+			foreach ( [ 'header', 'body', 'footer' ] as $slot ) {
+				if ( $layout_id === (int) get_post_meta( (int) $template_id, "_et_{$slot}_layout_id", true ) ) {
+					$referrers[ (int) $template_id ] = $slot;
+					break;
+				}
+			}
+		}
+
+		// Order by template id rather than trusting the query's, so the reported
+		// referrer list is stable across call sites and shims.
+		ksort( $referrers );
+
+		return $referrers;
+	}
+
 	// ── Theme Builder Operations ────────────────────────────────────
 
 	/**
@@ -275,6 +324,23 @@ trait DiviOps_Agent_ThemeBuilder {
 
 	/**
 	 * Get a Theme Builder layout's content (header, body, or footer).
+	 *
+	 * A layout routes only when a template under the ACTIVE master names it in
+	 * one of its `_et_{header,body,footer}_layout_id` rows AND the matching
+	 * `_et_*_layout_enabled` flag is set. Every other layout on the site is
+	 * markup that renders nowhere, and this handler used to return the two
+	 * indistinguishably — it does not filter `post_status` either, so a drafted
+	 * or trashed layout came back as a success with full content (#302).
+	 *
+	 * Nothing is refused that resolved before: fetching a detached layout to
+	 * inspect or salvage it is legitimate. The payload just stops implying the
+	 * layout is live, via `post_status`, `master_id`, `is_active_master`,
+	 * `referenced_by`, and `effective` — the same reporting shape
+	 * tb_template_list carries for the sibling read surface (#291).
+	 *
+	 * `effective` asks only whether Divi can reach this layout at all. Whether
+	 * the referring template wins its own default pick is that template's
+	 * business, and tb_template_list already answers it.
 	 */
 	public static function tb_layout_get( $request ) {
 		$post_id = absint( $request['id'] );
@@ -293,11 +359,37 @@ trait DiviOps_Agent_ThemeBuilder {
 			return self::envelope_object_read_forbidden( $post_id, 'theme_builder_layout' );
 		}
 
+		$referrers           = self::find_templates_referencing_layout( $post->ID );
+		$active_master_id    = self::find_active_master();
+		$active_template_ids = self::get_master_template_ids( $active_master_id );
+		$owners              = self::map_templates_to_masters();
+
+		// A layout named by several templates reports the active master when any
+		// of them is under it, and otherwise the first owner found.
+		$master_id        = 0;
+		$is_active_master = false;
+		$effective        = false;
+		foreach ( $referrers as $template_id => $slot ) {
+			if ( in_array( (int) $template_id, $active_template_ids, true ) ) {
+				$master_id        = $active_master_id;
+				$is_active_master = true;
+				$effective        = $effective
+					|| '1' === get_post_meta( (int) $template_id, "_et_{$slot}_layout_enabled", true );
+			} elseif ( 0 === $master_id ) {
+				$master_id = (int) ( $owners[ (int) $template_id ] ?? 0 );
+			}
+		}
+
 		return self::envelope_success( [
-			'id'          => $post->ID,
-			'title'       => $post->post_title,
-			'type'        => $post->post_type,
-			'content_raw' => $post->post_content,
+			'id'               => $post->ID,
+			'title'            => $post->post_title,
+			'type'             => $post->post_type,
+			'post_status'      => $post->post_status,
+			'master_id'        => $master_id,
+			'is_active_master' => $is_active_master,
+			'referenced_by'    => array_keys( $referrers ),
+			'effective'        => $effective,
+			'content_raw'      => $post->post_content,
 		] );
 	}
 
