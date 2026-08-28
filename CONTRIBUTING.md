@@ -123,6 +123,35 @@ Releases published before 2026-08-26 are raw automation output and are deliberat
 that way. Release notes are read at release time, and rewriting six of them would mean
 reconstructing retrospective prose from changelogs. The standard applies forward.
 
+### After the tag: deploy to the local dev site
+
+The dev site runs a **copy** of the plugin, not a symlink, so cutting a release does not
+reach it. Once the tag exists, deploy it:
+
+```bash
+git checkout main && git pull
+scripts/deploy-local-site.sh
+```
+
+The script resolves the target from `DIVIOPS_LOCAL_SITE` (the WordPress root), falling
+back to the ``Local site: `…` `` path in `CLAUDE.md`. It refuses anything that is not a
+DiviOps Agent plugin directory, takes a timestamped backup before writing, verifies the
+installed `const VERSION` against the repository's, and lints the deployed PHP. Running it
+twice is safe — the second run reports `no change` and writes nothing.
+
+Two things it deliberately does not do. It is **not** wired into CI: the site is LocalWP
+on one machine, CI cannot reach it, and a step that silently no-ops is worse than no step.
+And it should **not** be run mid-build-session without saying so — plugin behaviour
+changing under a running page-write batch makes a bad payload indistinguishable from a
+semantics change.
+
+Forgetting this step is the bug (#292): v1.19.2 shipped the #288 validator fix while the
+site still ran 1.19.1, and a session building pages kept hitting the exact false positives
+that release had fixed. So the step is not the whole guard —
+`tests/test-local-site-drift.php` fails the suite whenever a local site is present and
+behind, naming both versions. On a machine with no local site it prints a loud `SKIP` with
+the reason, which is what every CI run does.
+
 ### If a release PR merges but no tag appears
 
 release-please aborts every subsequent run with:
