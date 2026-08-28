@@ -205,11 +205,18 @@ register_shutdown_function(
  * braces, and backslashes no shell-escaping scheme survives reliably at
  * this size.
  *
+ * $post_type exists for #314's Theme Builder coverage: the reference scan's
+ * blind spot was a post type, so a fixture that can only ever be a `page`
+ * cannot reproduce it. Everything else is unchanged — the fixture is still a
+ * draft, still registered for forced cleanup, and still checked against the
+ * forbidden-id list.
+ *
  * @param string $content   Raw post_content.
  * @param string $title     Post title (defaults to a scratch-marked, timestamped label).
+ * @param string $post_type Post type to create (defaults to `page`).
  * @return int New post id.
  */
-function live_create_scratch_page( string $content, string $title = '' ): int {
+function live_create_scratch_page( string $content, string $title = '', string $post_type = 'page' ): int {
 	if ( '' === $title ) {
 		$title = 'DiviOps live-suite scratch ' . date( 'Y-m-d H:i:s' );
 	}
@@ -222,7 +229,7 @@ function live_create_scratch_page( string $content, string $title = '' ): int {
 			'post',
 			'create',
 			$tmp,
-			'--post_type=page',
+			'--post_type=' . $post_type,
 			'--post_status=draft',
 			'--post_title=' . $title,
 			'--porcelain',

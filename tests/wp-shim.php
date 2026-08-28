@@ -823,6 +823,10 @@ if ( ! isset( $GLOBALS['diviops_test_posts'] ) ) {
 	$GLOBALS['diviops_test_posts'] = array();
 }
 
+if ( ! isset( $GLOBALS['diviops_test_get_posts_calls'] ) ) {
+	$GLOBALS['diviops_test_get_posts_calls'] = array();
+}
+
 if ( ! function_exists( 'get_post' ) ) {
 	function get_post( $post_id ) {
 		return $GLOBALS['diviops_test_posts'][ $post_id ] ?? null;
@@ -1224,9 +1228,21 @@ if ( ! function_exists( 'get_posts' ) ) {
 	 * Date ordering falls back to ID ordering when fixtures carry no post_date,
 	 * which matches how Divi's masters actually sort — they are created in
 	 * ascending id order, so newest-by-date is newest-by-id.
+	 *
+	 * post_type accepts an array as core does. It used to compare with `!==`
+	 * against whatever was passed, so an array argument — the shape every
+	 * multi-post-type scanner in this codebase uses — matched nothing and read
+	 * as "the site has no such posts". That is the failure mode #314 is about,
+	 * reproduced inside the harness meant to catch it.
+	 *
+	 * Every call is recorded in $GLOBALS['diviops_test_get_posts_calls'] so a
+	 * test can assert what a scanner actually asked the database for. Tests
+	 * that use it reset the log themselves.
 	 */
 	function get_posts( $args = array() ) {
-		$post_type = $args['post_type'] ?? 'post';
+		$GLOBALS['diviops_test_get_posts_calls'][] = $args;
+
+		$post_types = array_values( (array) ( $args['post_type'] ?? 'post' ) );
 		$statuses  = (array) ( $args['post_status'] ?? 'publish' );
 		$per_page  = isset( $args['posts_per_page'] ) ? (int) $args['posts_per_page'] : 5;
 		$order     = strtolower( (string) ( $args['order'] ?? 'desc' ) );
@@ -1234,7 +1250,7 @@ if ( ! function_exists( 'get_posts' ) ) {
 
 		$matches = array();
 		foreach ( (array) ( $GLOBALS['diviops_test_posts'] ?? array() ) as $post ) {
-			if ( $post_type !== $post->post_type ) {
+			if ( ! in_array( 'any', $post_types, true ) && ! in_array( $post->post_type, $post_types, true ) ) {
 				continue;
 			}
 			$status = isset( $post->post_status ) ? $post->post_status : 'publish';

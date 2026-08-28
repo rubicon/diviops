@@ -177,13 +177,23 @@ class DiviOps_Agent {
 
 	/**
 	 * Post types that can contain Divi block markup — scanned for
-	 * preset / variable references. Kept in one place so the ref-scanner
-	 * and the variable_delete SQL fast-path stay in lockstep.
+	 * preset / variable references. Kept in one place so every ref-scanner
+	 * and the variable_delete SQL fast-path stay in lockstep. Anything that
+	 * decides whether a preset, variable, or font is safe to delete reads
+	 * this list; a post type missing from it reports as "referenced
+	 * nowhere", which is the signal a destructive cleanup acts on (#314).
+	 *
+	 * `et_template` is included even though every record observed on the
+	 * reference install carries empty post_content (9 of 9 on 2026-08-28).
+	 * It was excluded on that observation until #314; the list now errs
+	 * toward over-reporting, because over-reporting a reference only
+	 * declines a deletion while under-reporting performs one.
 	 *
 	 * Excludes:
-	 * - et_theme_builder / et_template — these are template ASSIGNMENT records
-	 *   (which layout runs where, conditions, duplication metadata), not the
-	 *   block markup itself. Verified empty post_content on every record.
+	 * - et_theme_builder — the template-set record itself (which layouts run
+	 *   where, conditions, duplication metadata). It holds no layout markup
+	 *   and has no per-record content to scan; the layouts it points at are
+	 *   the et_*_layout types already listed here.
 	 * - wp_block / wp_template / wp_template_part — Gutenberg reusable blocks
 	 *   and FSE templates, not in use on Divi-rendered pages.
 	 */
@@ -193,6 +203,7 @@ class DiviOps_Agent {
 		'et_header_layout',
 		'et_body_layout',
 		'et_footer_layout',
+		'et_template',
 		'et_pb_layout',
 		'et_pb_canvas',
 	];

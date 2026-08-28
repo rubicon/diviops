@@ -323,6 +323,18 @@ trait DiviOps_Agent_Preset {
 			self::preset_primary_d5_source( $occurrences, $audit['entry_sources'][ $preset_id ] ?? [] )
 		);
 		$page_refs    = self::collect_preset_consumer_samples( $preset_id );
+		// Revisions are NOT references. A revision is not live: nothing it holds
+		// renders, so a preset surviving only in revision history is genuinely
+		// orphaned and a cleanup is right to remove it. Counting revisions would
+		// make presets undeletable for as long as WP_POST_REVISIONS keeps a copy,
+		// which is the wrong failure — cleanup exists to remove exactly this.
+		//
+		// But "referenced only in history" and "referenced nowhere at all" are
+		// different facts to the operator about to authorize a delete, so they are
+		// reported separately rather than collapsed into one zero (#314). Same
+		// structural walk as the live pass — a substring hit in a revision would
+		// over-report, and the whole point of this field is that someone trusts it.
+		$revision_refs = self::collect_preset_consumer_samples( $preset_id, [ 'revision' ], [ 'inherit' ] );
 		$d5           = self::preset_inspection_registry();
 		$chain        = self::collect_group_chain_refs( $d5 );
 		$chain_ids    = $chain['referenced_by'][ $preset_id ] ?? [];
@@ -353,10 +365,17 @@ trait DiviOps_Agent_Preset {
 			'renderAttrs' => isset( $preset['renderAttrs'] ) ? (object) $preset['renderAttrs'] : null,
 			'storage' => [ 'path' => $source['path'], 'provenance' => $source['provenance'], 'occurrences' => $occurrences ],
 			'references' => [
-				'total'            => $page_refs['count'] + ( $chain['counts'][ $preset_id ] ?? 0 ),
-				'block_ref_count'  => $page_refs['count'],
-				'preset_ref_count' => $chain['counts'][ $preset_id ] ?? 0,
-				'sample_consumers' => array_slice( array_merge( $page_refs['samples'], self::preset_chain_consumer_samples( $chain_ids, $d5 ) ), 0, 10 ),
+				'total'                 => $page_refs['count'] + ( $chain['counts'][ $preset_id ] ?? 0 ),
+				'block_ref_count'       => $page_refs['count'],
+				'preset_ref_count'      => $chain['counts'][ $preset_id ] ?? 0,
+				'scanned_post_types'    => self::SCANNABLE_POST_TYPES,
+				// Excluded from `total` on purpose — see the comment at the call site.
+				'revision_ref_count'    => $revision_refs['count'],
+				'revision_only'         => 0 === $page_refs['count']
+					&& 0 === ( $chain['counts'][ $preset_id ] ?? 0 )
+					&& $revision_refs['count'] > 0,
+				'revision_sample_consumers' => array_slice( $revision_refs['samples'], 0, 10 ),
+				'sample_consumers'      => array_slice( array_merge( $page_refs['samples'], self::preset_chain_consumer_samples( $chain_ids, $d5 ) ), 0, 10 ),
 			],
 			'warnings' => $warnings,
 		] );
@@ -426,14 +445,41 @@ trait DiviOps_Agent_Preset {
 		return $merged;
 	}
 
-	private static function collect_preset_consumer_samples( string $preset_id ): array {
+	/**
+	 * Structurally count and sample the posts whose block markup references a preset.
+	 *
+	 * Post types come from `SCANNABLE_POST_TYPES`, not a literal `page`/`post`
+	 * pair: a preset used only in a Theme Builder layout reported zero
+	 * references, which is the signal preset_cleanup deletes on (#314).
+	 *
+	 * `$post_types` / `$post_statuses` are parameterized for exactly one
+	 * caller — preset_inspect's revision pass, which asks the same structural
+	 * question of `revision`/`inherit` rows so "referenced only in history"
+	 * can be told apart from "referenced nowhere". Revisions are deliberately
+	 * NOT part of the default scan; see preset_inspect().
+	 *
+	 * @param string             $preset_id     Preset UUID to look for.
+	 * @param array<int, string> $post_types    Post types to scan.
+	 * @param array<int, string> $post_statuses Post statuses to scan.
+	 * @return array{count:int, samples:array<int, array<string, mixed>>}
+	 */
+	private static function collect_preset_consumer_samples(
+		string $preset_id,
+		array $post_types = self::SCANNABLE_POST_TYPES,
+		array $post_statuses = [ 'publish', 'draft', 'private' ]
+	): array {
 		global $wpdb;
 		$post_ids = [];
+		if ( empty( $post_types ) || empty( $post_statuses ) ) {
+			return [ 'count' => 0, 'samples' => [] ];
+		}
 		if ( is_object( $wpdb ?? null ) && method_exists( $wpdb, 'get_col' ) && method_exists( $wpdb, 'prepare' ) && method_exists( $wpdb, 'esc_like' ) && ! empty( $wpdb->posts ) ) {
-			// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is WordPress-owned; the preset UUID LIKE value is prepared immediately below.
+			$type_placeholders   = implode( ',', array_fill( 0, count( $post_types ), '%s' ) );
+			$status_placeholders = implode( ',', array_fill( 0, count( $post_statuses ), '%s' ) );
+			// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Table name is WordPress-owned; the post-type/status placeholders are generated from the caller-supplied lists and prepared with matching values below.
 			$query = $wpdb->prepare(
-				"SELECT ID FROM {$wpdb->posts} WHERE post_content LIKE %s AND post_type IN ('page', 'post') AND post_status IN ('publish', 'draft', 'private')",
-				'%' . $wpdb->esc_like( $preset_id ) . '%'
+				"SELECT ID FROM {$wpdb->posts} WHERE post_content LIKE %s AND post_type IN ($type_placeholders) AND post_status IN ($status_placeholders)",
+				array_merge( [ '%' . $wpdb->esc_like( $preset_id ) . '%' ], array_values( $post_types ), array_values( $post_statuses ) )
 			);
 			// phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Prepared above; this targeted prefilter avoids loading every post before structural block parsing.
@@ -447,8 +493,8 @@ trait DiviOps_Agent_Preset {
 		foreach ( array_chunk( array_values( array_unique( array_map( 'intval', $post_ids ) ) ), 100 ) as $batch ) {
 			$posts = get_posts( [
 				'post__in'               => $batch,
-				'post_type'              => [ 'page', 'post' ],
-				'post_status'            => [ 'publish', 'draft', 'private' ],
+				'post_type'              => $post_types,
+				'post_status'            => $post_statuses,
 				'posts_per_page'         => count( $batch ),
 				'orderby'                => 'post__in',
 				'no_found_rows'          => true,
@@ -595,10 +641,17 @@ trait DiviOps_Agent_Preset {
 	 * `presetId` in `groupPreset` slots is accepted as both an array and a
 	 * bare string — Divi accepts both via the stacking convention, and older
 	 * or hand-edited blocks may serialize as a string.
+	 *
+	 * Scope is `SCANNABLE_POST_TYPES`, shared with the variable and font
+	 * scanners. It was a literal `page`/`post` pair until #314, which made
+	 * every Theme Builder layout invisible: preset_audit, preset_cleanup and
+	 * preset_scan_orphans all derive "referenced" from this function, so a
+	 * preset used only in a global header or footer read as unreferenced and
+	 * a cleanup run could delete it out from under the live site.
 	 */
 	private static function collect_page_preset_refs() {
 		$posts = get_posts( [
-			'post_type'      => [ 'page', 'post' ],
+			'post_type'      => self::SCANNABLE_POST_TYPES,
 			'post_status'    => [ 'publish', 'draft', 'private' ],
 			'posts_per_page' => -1,
 		] );
@@ -2103,6 +2156,20 @@ trait DiviOps_Agent_Preset {
 		$preset_base_attrs  = is_array( $new_entry['attrs'] ?? null ) ? $new_entry['attrs'] : [];
 		$preset_attrs       = self::_deep_merge( $preset_style_attrs, $preset_base_attrs );
 
+		// Scope is SCANNABLE_POST_TYPES, the same list the read path uses (#314).
+		// This is a WRITE, so widening it is not automatically the safe direction the
+		// way it is for a reference scan — it means reassign now rewrites Theme
+		// Builder layouts it previously left alone. It is still the correct default,
+		// and the narrower list was the defect rather than a safeguard: reassign
+		// exists to move every consumer of old_uuid onto new_uuid, and a consumer it
+		// silently skipped stayed pointed at a preset the caller is usually about to
+		// delete. The skip was invisible — a TB layout matched no post_type filter, so
+		// it never reached the loop, was never counted in pages_scanned, and produced
+		// no per-page error. Nothing else about the write relaxes: mode="apply" still
+		// requires explicit page_ids (#188), every applied page still takes a rollback
+		// snapshot and passes the round-trip fidelity gate and the integrity guard,
+		// and a TB layout is ordinary post_content that all three already handle.
+		//
 		// Safety cap for full-site scans to avoid timeout/memory issues on large sites.
 		// Also enforced when page_ids is explicitly supplied — reject oversized batches so callers chunk.
 		$max_pages = self::REASSIGN_MAX_PAGES;
@@ -2121,14 +2188,14 @@ trait DiviOps_Agent_Preset {
 				);
 			}
 			$query_args = [
-				'post_type'      => [ 'page', 'post' ],
+				'post_type'      => self::SCANNABLE_POST_TYPES,
 				'post_status'    => [ 'publish', 'draft', 'private' ],
 				'post__in'       => array_map( 'absint', $page_ids ),
 				'posts_per_page' => -1,
 			];
 		} else {
 			$query_args = [
-				'post_type'      => [ 'page', 'post' ],
+				'post_type'      => self::SCANNABLE_POST_TYPES,
 				'post_status'    => [ 'publish', 'draft', 'private' ],
 				'posts_per_page' => $max_pages + 1,
 			];
