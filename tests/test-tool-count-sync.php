@@ -195,30 +195,12 @@ assert_same(
 );
 
 /*
- * Every relative markdown link in the plugin README must resolve on disk. Anchors are
- * stripped before the existence check; external and absolute URLs are skipped. The
- * matched-nothing guard matters here as much as the assertions: a regex that stops
- * matching links would otherwise report a green "all links resolve" having checked none.
+ * This guard's own README link check moved to tests/test-relative-link-resolution.php
+ * (#195), which checks every tracked Markdown file rather than this one README, and
+ * asserts root-containment as well as existence -- the condition that actually catches
+ * the recurring upstream-sync depth defect. Keeping a second copy here would have
+ * merged two deliberately separate concerns, counts and links, into one gate.
  */
-$link_matched = preg_match_all( '/\]\(([^)]+)\)/', $plugin_readme_content, $link_matches );
-assert_true( is_int( $link_matched ) && $link_matched > 0, 'at least one markdown link was found in plugins/diviops-agent/README.md' );
-
-$relative_links_checked = 0;
-foreach ( $link_matches[1] as $link_target ) {
-	if ( preg_match( '~^([a-z][a-z0-9+.-]*:|//|#)~i', $link_target ) ) {
-		continue;
-	}
-	$path_only = (string) preg_replace( '/#.*$/', '', $link_target );
-	if ( '' === $path_only ) {
-		continue;
-	}
-	++$relative_links_checked;
-	assert_true(
-		file_exists( $plugin_dir . '/' . $path_only ),
-		"plugins/diviops-agent/README.md's link target '$link_target' resolves on disk"
-	);
-}
-assert_true( $relative_links_checked > 0, 'plugins/diviops-agent/README.md contains relative links for this guard to check' );
 
 /*
  * The divi-5-builder skill's tool reference (#191) is the last file stating these

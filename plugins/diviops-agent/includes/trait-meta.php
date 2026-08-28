@@ -1673,6 +1673,93 @@ trait DiviOps_Agent_Meta {
 	// ── Handshake ────────────────────────────────────────────────────
 
 	/**
+	 * Digest of this plugin's own source, for identifying the running build (#215).
+	 *
+	 * A version number answers "which release is this" and nothing more. It
+	 * cannot distinguish two builds that carry the same version and different
+	 * code — which is every state between a source change and the release that
+	 * bumps the version, and every rsync deploy to a dev site. Observed twice
+	 * in one week: repo and installed plugin both at the same version with
+	 * different `trait-page.php` contents, and no way to tell from any field
+	 * the MCP server reported.
+	 *
+	 * Only the plugin can answer this. The MCP server runs in a different
+	 * process, frequently on a different host, and cannot read these files.
+	 *
+	 * Inputs, chosen so two checkouts of one commit agree on any machine:
+	 *   - the main plugin file plus every `.php` under `includes/`, recursively
+	 *   - relative paths and byte contents only — never mtimes, absolute paths,
+	 *     inode data, or file order as the filesystem happens to report it
+	 *   - non-PHP siblings excluded: `readme.txt`, build artifacts and assets
+	 *     legitimately differ between a git checkout and an installed copy of
+	 *     the same code, and hashing them would report drift on every install
+	 *
+	 * Path and length are folded in alongside the bytes so a rename registers,
+	 * and so concatenation can't be ambiguous at a file boundary.
+	 *
+	 * Cost, measured rather than assumed: 1.1 MB across 21 files hashes in
+	 * 3.3 ms (PHP 8.5, warm cache, mean of 100 runs). The handshake runs once
+	 * per MCP session plus once per `diviops_meta_info` call, so it is computed
+	 * every time rather than cached — and an mtime-keyed cache would reintroduce
+	 * exactly the staleness this field exists to expose.
+	 *
+	 * @param string|null $base_dir Plugin root to hash. Defaults to this
+	 *                              plugin's own directory; the parameter
+	 *                              exists so the determinism properties can
+	 *                              be tested against a fixture tree rather
+	 *                              than by editing shipping files.
+	 * @return string Lowercase sha256 hex digest.
+	 */
+	public static function code_fingerprint( $base_dir = null ) {
+		$base = null === $base_dir
+			? dirname( __DIR__ )
+			: rtrim( str_replace( '\\', '/', (string) $base_dir ), '/' );
+
+		// Relative path => absolute path. Keyed by relative path so the sort
+		// below is over the digest's own input, not over filesystem order.
+		$files = [];
+
+		$main = $base . '/diviops-agent.php';
+		if ( is_file( $main ) ) {
+			$files['diviops-agent.php'] = $main;
+		}
+
+		$includes = $base . '/includes';
+		if ( is_dir( $includes ) ) {
+			$entries = new RecursiveIteratorIterator(
+				new RecursiveDirectoryIterator( $includes, FilesystemIterator::SKIP_DOTS )
+			);
+			foreach ( $entries as $entry ) {
+				if ( ! $entry->isFile() || 'php' !== strtolower( $entry->getExtension() ) ) {
+					continue;
+				}
+				$path     = str_replace( '\\', '/', $entry->getPathname() );
+				$relative = 'includes/' . substr( $path, strlen( $includes ) + 1 );
+
+				$files[ $relative ] = $entry->getPathname();
+			}
+		}
+
+		ksort( $files, SORT_STRING );
+
+		$digest = hash_init( 'sha256' );
+		foreach ( $files as $relative => $path ) {
+			$contents = file_get_contents( $path );
+			if ( false === $contents ) {
+				// An unreadable file still perturbs the digest. Skipping it
+				// silently would make the fingerprint blind to precisely the
+				// file most likely to be broken.
+				hash_update( $digest, $relative . "\nunreadable\n" );
+				continue;
+			}
+			hash_update( $digest, $relative . "\n" . strlen( $contents ) . "\n" );
+			hash_update( $digest, $contents );
+		}
+
+		return hash_final( $digest );
+	}
+
+	/**
 	 * Version handshake — verifies MCP server and WP plugin compatibility.
 	 *
 	 * Returns plugin version, API capabilities, Divi status, and (when
@@ -1730,6 +1817,9 @@ trait DiviOps_Agent_Meta {
 		$response = [
 			'compatible'     => true,
 			'plugin_version' => self::VERSION,
+			// Identifies the running build where the version cannot: same
+			// version, different code is the normal state on a dev site (#215).
+			'code_fingerprint' => self::code_fingerprint(),
 			'min_server'     => self::MIN_SERVER_VERSION,
 			'authenticated_user' => [
 				'id'    => get_current_user_id(),

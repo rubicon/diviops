@@ -16,8 +16,11 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { WPClient } from "./wp-client.js";
 import {
+  buildLiveHandshakeReport,
   capabilityUpgradeHint,
   type HandshakePluginInfo,
+  type LiveHandshake,
+  type LiveHandshakeReport,
   MissingCapabilityError,
   observedVersion,
   proToolGatesSatisfied,
@@ -162,6 +165,10 @@ export type HandshakeState =
       // Normalized to null so meta_info always retains version keys when an
       // old or mixed plugin handshake omits the optional diagnostic.
       pluginVersion: string | null;
+      // sha256 over the plugin's PHP source as it was at spawn (#215). null
+      // when the connected plugin predates the field — meta_info then reports
+      // same-version drift as undetectable rather than as absent.
+      codeFingerprint?: string | null;
       proVersion?: string;
       // ADR-003 / ADR-007 Pro-extension fields — present on `ok` only.
       // Free-only sites populate these as `false` / `{}` via wp-client
@@ -288,10 +295,17 @@ function enabledCapabilityKeys(prefix?: string): string[] {
     .sort();
 }
 
-function buildPluginVersionSummary() {
+function buildPluginVersionSummary(live: LiveHandshakeReport) {
+  // This block claims to describe what is installed on the site, which is a
+  // fact about now — so it reports the live re-read and falls back to the
+  // spawn-time value only when the re-read could not be made (#215).
+  const liveVersion = live.state === "ok" ? live.plugin_version : null;
+
   if (handshakeState.kind !== "ok") {
     return {
-      diviops_agent: { active: false, version: null },
+      // A startup handshake that failed says nothing about the plugin; a live
+      // re-check that succeeded does.
+      diviops_agent: { active: live.state === "ok", version: liveVersion },
       diviops_agent_pro: { active: false, version: null },
       fluent_cart: { active: false, version: null },
       fluent_cart_pro: { active: false, version: null },
@@ -304,7 +318,7 @@ function buildPluginVersionSummary() {
   return {
     diviops_agent: {
       active: true,
-      version: handshakeState.pluginVersion,
+      version: liveVersion ?? handshakeState.pluginVersion,
     },
     diviops_agent_pro: plugins.diviops_agent_pro ?? {
       active: handshakeState.proActive,
@@ -321,7 +335,48 @@ function buildPluginVersionSummary() {
   };
 }
 
-function buildMetaInfo() {
+/**
+ * Re-read the plugin's own report of itself, for this call only (#215).
+ *
+ * The capability handshake runs once at spawn and is never re-negotiated, so
+ * every plugin fact `meta_info` reported was a claim about whatever was
+ * installed when the process started. Server processes outlive the clients
+ * that spawn them (2d15h observed), which is how a deploy landed and
+ * `meta_info` kept reporting the previous version for hours — twice, both
+ * times while someone was trying to determine whether a fix had shipped.
+ *
+ * A failure here is reported, never thrown: `meta_info` is the tool people
+ * reach for when the site is misbehaving, so it has to answer when the site
+ * is unreachable.
+ */
+async function refreshPluginState(): Promise<LiveHandshake> {
+  try {
+    const hs = await wp.handshake(SERVER_VERSION, { wp_cli: wpCli !== null });
+    return {
+      ok: true,
+      pluginVersion: observedVersion(hs.plugin_version),
+      codeFingerprint: observedVersion(hs.code_fingerprint),
+    };
+  } catch (error) {
+    return { ok: false, message: describeError(error) };
+  }
+}
+
+async function buildMetaInfo() {
+  // Spawn-time values stay under `handshake` — they are the honest record of
+  // what the gates were negotiated against — and the live re-read lands in
+  // `live` next to them, with the comparison already performed.
+  const live = buildLiveHandshakeReport(
+    {
+      pluginVersion:
+        handshakeState.kind === "ok" ? handshakeState.pluginVersion : null,
+      codeFingerprint:
+        handshakeState.kind === "ok"
+          ? handshakeState.codeFingerprint ?? null
+          : null,
+    },
+    await refreshPluginState(),
+  );
   const fluentCartCapabilityKeys = enabledCapabilityKeys("fluentcart_");
   const crossEnvCapabilityKeys = enabledCapabilityKeys("cross_env_");
   const managedRecoveryCapabilityKeys = enabledCapabilityKeys("managed_recovery_");
@@ -371,15 +426,17 @@ function buildMetaInfo() {
     capabilities,
     tool_count: tools.registered_total,
     tools,
-    plugins: buildPluginVersionSummary(),
+    plugins: buildPluginVersionSummary(live),
     handshake:
       handshakeState.kind === "ok"
         ? {
             state: "ok",
             plugin_version: handshakeState.pluginVersion,
             capability_count: enabledCapabilityKeys().length,
+            code_fingerprint: handshakeState.codeFingerprint ?? null,
           }
         : { state: handshakeState.kind },
+    live,
     pro:
       handshakeState.kind === "ok"
         ? {
@@ -5091,7 +5148,7 @@ registerLocalTool(
     _meta: { idempotent: "true" },
   },
   async () => {
-    const response = await wrapResponse(async () => buildMetaInfo());
+    const response = await wrapResponse(async () => await buildMetaInfo());
     return {
       content: [
         { type: "text" as const, text: serializeEnvelope(response, "diviops_meta_info") },
@@ -8107,6 +8164,7 @@ async function main() {
       kind: "ok",
       capabilities: hs.capabilities,
       pluginVersion: observedVersion(hs.plugin_version),
+      codeFingerprint: observedVersion(hs.code_fingerprint),
       proVersion: hs.pro_version,
       proActive: hs.pro_active === true,
       availableTargets: hs.available_targets ?? {},
