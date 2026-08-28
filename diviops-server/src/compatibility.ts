@@ -132,6 +132,12 @@ export interface ClientRuntime {
 export interface HandshakeResult {
   compatible: boolean;
   plugin_version?: string | null;
+  /**
+   * sha256 over the plugin's own PHP source (#215). Optional: plugins older
+   * than 1.20.0 omit it, and the server reports "unknown" rather than
+   * inventing a comparison it cannot make.
+   */
+  code_fingerprint?: string | null;
   min_server: string;
   divi: {
     active: boolean;
@@ -231,4 +237,118 @@ export function capabilityUpgradeHint(
     "reconnect or restart the MCP session to refresh the capability handshake." +
     fallback
   );
+}
+
+// ── Live plugin state (#215) ─────────────────────────────────────────
+
+/**
+ * Outcome of the live plugin re-check `diviops_meta_info` performs per call.
+ *
+ * Deliberately not a `HandshakeResult`: nothing downstream of this may treat
+ * the re-check as a re-negotiation. The capability gates keep reflecting the
+ * spawn-time handshake, because the tool list was finalized against that map
+ * and a live map would silently disagree with the tools already advertised.
+ */
+export type LiveHandshake =
+  | { ok: true; pluginVersion: string | null; codeFingerprint: string | null }
+  | { ok: false; message: string };
+
+/**
+ * The `live` block of the `diviops_meta_info` payload.
+ *
+ * `stale` is three-valued on purpose. `false` is a claim that the spawn-time
+ * snapshot still describes the site, and that claim cannot be made when the
+ * re-check failed or when the plugin is too old to report a fingerprint —
+ * answering `false` there would be the same confident-but-unfounded answer
+ * this field exists to replace.
+ */
+export interface LiveHandshakeReport {
+  state: "ok" | "failed";
+  plugin_version: string | null;
+  code_fingerprint: string | null;
+  stale: boolean | null;
+  warning?: string;
+}
+
+/** Short form for prose; the full digest stays in `code_fingerprint`. */
+function shortFingerprint(fingerprint: string): string {
+  return fingerprint.slice(0, 8);
+}
+
+/**
+ * Compare a live plugin re-check against the spawn-time handshake snapshot.
+ *
+ * The comparison is done here rather than left to the caller because a signal
+ * the caller has to construct from two fields is one most callers will not
+ * construct — which is how a stale version went unnoticed for hours, twice,
+ * while someone was reading the field that was lying.
+ */
+export function buildLiveHandshakeReport(
+  spawn: { pluginVersion: string | null; codeFingerprint: string | null },
+  live: LiveHandshake,
+): LiveHandshakeReport {
+  if (!live.ok) {
+    return {
+      state: "failed",
+      plugin_version: null,
+      code_fingerprint: null,
+      stale: null,
+      warning:
+        `Could not re-check the plugin: ${live.message}. The values under ` +
+        "`handshake` are this session's spawn-time snapshot and may no longer " +
+        "describe the site.",
+    };
+  }
+
+  const versionDrifted =
+    spawn.pluginVersion !== null &&
+    live.pluginVersion !== null &&
+    spawn.pluginVersion !== live.pluginVersion;
+
+  const fingerprintComparable =
+    spawn.codeFingerprint !== null && live.codeFingerprint !== null;
+  const fingerprintDrifted =
+    fingerprintComparable && spawn.codeFingerprint !== live.codeFingerprint;
+
+  const base = {
+    state: "ok" as const,
+    plugin_version: live.pluginVersion,
+    code_fingerprint: live.codeFingerprint,
+  };
+
+  if (versionDrifted || fingerprintDrifted) {
+    const facts: string[] = [];
+    if (versionDrifted) {
+      facts.push(`version ${spawn.pluginVersion} → ${live.pluginVersion}`);
+    }
+    if (fingerprintDrifted) {
+      facts.push(
+        `code fingerprint ${shortFingerprint(spawn.codeFingerprint as string)}` +
+          ` → ${shortFingerprint(live.codeFingerprint as string)}`,
+      );
+    }
+    return {
+      ...base,
+      stale: true,
+      warning:
+        `The plugin changed since this MCP session started (${facts.join("; ")}). ` +
+        "Capability gates and the tool list still reflect the spawn-time " +
+        "handshake. Restart the MCP client to re-negotiate, and kill any " +
+        "orphaned server process first — those outlive the client that spawned them.",
+    };
+  }
+
+  if (!fingerprintComparable) {
+    return {
+      ...base,
+      stale: null,
+      warning:
+        "No code_fingerprint to compare: it is missing from the spawn-time " +
+        "handshake, from the live re-check, or from both (a plugin predating " +
+        "the field, or a handshake that failed at startup). A code change at " +
+        "an unchanged version cannot be detected here.",
+    };
+  }
+
+  return { ...base, stale: false };
 }

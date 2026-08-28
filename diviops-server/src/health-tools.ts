@@ -20,7 +20,7 @@ export const META_PING_CONFIG = {
 
 export const META_INFO_CONFIG = {
   description:
-    "Returns DiviOps MCP server identity, server_version, license type, numeric tool_count, registered tool catalog summary, active plugin version summary, WP-CLI allowlist, and plugin handshake/slice state including Pro and FluentCart target readiness. Use as the S0 preflight before dogfooding or product work. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.",
+    "Returns DiviOps MCP server identity, server_version, license type, numeric tool_count, registered tool catalog summary, active plugin version summary, WP-CLI allowlist, and plugin handshake/slice state including Pro and FluentCart target readiness. `handshake` is the spawn-time snapshot the capability gates were negotiated against; `live` re-reads the plugin on every call and reports its version, its code_fingerprint (a sha256 over the plugin's PHP source, which identifies the running build where a version number cannot), and `stale` — true when the plugin changed since this session started, null when that could not be determined. Use as the S0 preflight before dogfooding or product work. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.",
   annotations: { readOnlyHint: true, idempotentHint: true },
   _meta: { idempotent: "true" },
 } as const;

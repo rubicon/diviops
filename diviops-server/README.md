@@ -118,6 +118,23 @@ write-up, including deployment hardening notes.
 
 Use `diviops_meta_info` as the S0 preflight before dogfooding or product work. It returns `server_version`, a numeric `tool_count`, a `tools` catalog summary (`registered_total`, always-on count, Pro possible/registered counts by target), `plugins` version records for `diviops-agent`, `diviops-agent-pro`, FluentCart, and FluentCart Pro when available, plus the existing handshake and slice state.
 
+Two of those blocks describe different moments, and the difference is the point.
+`handshake` is the spawn-time snapshot: the capability handshake runs once, when the
+server process starts, and is never re-negotiated, so it is what the tool list and every
+capability gate were decided against. `live` is a fresh re-read performed on every
+`diviops_meta_info` call, carrying the plugin's current `plugin_version` and its
+`code_fingerprint` — a sha256 the plugin computes over its own PHP source. The
+fingerprint answers the question a version number cannot: two builds can share a version
+and differ in code, which is the normal state between a source change and the release
+that bumps the version, and the normal state of any rsync deploy to a dev site.
+
+`live.stale` reports the comparison so callers do not have to construct it: `true` when
+the plugin changed since this session started (restart the MCP client to re-negotiate,
+after killing any orphaned server process — those outlive the client that spawned them),
+`false` when it demonstrably has not, and `null` when it could not be determined, with
+`live.warning` naming the reason. `plugins.diviops_agent.version` reports the live
+reading; it describes the site, not the session.
+
 Additional **conditionally-registered Pro tools** appear only on sites that have the Pro plugin (`diviops-agent-pro`) active alongside the target coverage plugin:
 
 | Category | Conditional gate | Tool names |
