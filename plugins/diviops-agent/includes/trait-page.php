@@ -1805,9 +1805,12 @@ trait DiviOps_Agent_Page {
 	 *   - list replacement — lists replace wholesale rather than merging index-wise
 	 *     (see merge_module_attr_value()), so a shorter replacement drops entries.
 	 *
-	 * Lists are diffed by MEMBERSHIP, not by index: replacing
-	 * `["class-a","class-b"]` with `["class-c"]` loses two entries, and an
-	 * index-wise diff would name only the trailing one.
+	 * Lists are diffed as a MULTISET, not by index and not by bare membership.
+	 * By index, replacing `["class-a","class-b"]` with `["class-c"]` would name
+	 * only the trailing entry when two are lost. By membership, dropping one of
+	 * two identical entries would find the surviving copy and report nothing at
+	 * all — the same under-reporting this helper exists to end, narrowed to
+	 * duplicate values. Entries are therefore matched off one-for-one.
 	 *
 	 * A scalar overwritten by another scalar is a change, not a loss — `before`
 	 * and `after` already show it — so only a null `after`, or a shape swap that
@@ -1829,10 +1832,16 @@ trait DiviOps_Agent_Page {
 				$removed = array();
 
 				if ( $is_list ) {
+					// Consume each survivor as it is matched, so a duplicated entry
+					// cannot be accounted for twice by the same surviving copy.
+					$survivors = $after;
 					foreach ( $before as $entry ) {
-						if ( ! in_array( $entry, $after, true ) ) {
+						$match = array_search( $entry, $survivors, true );
+						if ( false === $match ) {
 							$removed[] = array( 'path' => $path, 'value' => $entry );
+							continue;
 						}
+						unset( $survivors[ $match ] );
 					}
 
 					return $removed;

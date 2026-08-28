@@ -173,6 +173,49 @@ assert_same(
 	'nested null inside an object payload: the cleared leaf is reported through the merge'
 );
 
+/* ── Duplicate list entries are diffed as a multiset, not as membership ── */
+
+/*
+ * Codex review of PR #295 caught this: a plain `in_array()` membership test finds
+ * the SURVIVING copy of a duplicated entry and reports nothing removed, even though
+ * the wholesale list replacement dropped one. That is the same under-reporting this
+ * whole issue exists to close, narrowed to duplicate values — so entries are matched
+ * off one-for-one instead.
+ */
+$dup_tree = array(
+	'module' => array(
+		'decoration' => array(
+			'attributes' => array(
+				'desktop' => array(
+					'value' => array(
+						'attributes' => array( 'class-a', 'class-a', 'class-b' ),
+					),
+				),
+			),
+		),
+	),
+);
+
+$dup_entry = diviops_test_plan_entry( $dup_tree, $classes_path, array( 'class-a', 'class-b' ) )['entry'];
+
+assert_same(
+	array( array( 'path' => $classes_path, 'value' => 'class-a' ) ),
+	$dup_entry['removed'],
+	'duplicate entries: dropping one of two identical entries is reported once, not swallowed by the survivor'
+);
+
+$dup_kept_entry = diviops_test_plan_entry(
+	$dup_tree,
+	$classes_path,
+	array( 'class-a', 'class-a', 'class-b' )
+)['entry'];
+
+assert_same(
+	array(),
+	$dup_kept_entry['removed'],
+	'duplicate entries: a replacement that keeps both copies reports no removal'
+);
+
 /* ── Reporting change only: the applied tree is untouched by any of this ── */
 
 assert_same(
