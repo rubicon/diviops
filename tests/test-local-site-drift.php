@@ -204,6 +204,24 @@ assert_true(
 	'the content-drift reason names a differing path, not just that something differs: ' . $report['reason']
 );
 
+// 5c. Same version, same bytes, different mtimes. `git checkout` stamps every file
+// with checkout time, so a fresh worktree or a CI clone differs from an installed
+// copy in mtime on every single file while the code is byte-identical. A check that
+// counts those as drift fires constantly and gets ignored, which is a worse gate
+// than the version-only one it replaced (#307).
+$root_touched = $tmp . '/touched';
+$dir_touched  = diviops_drift_test_clone( $root_touched, $repo_plugin_dir );
+foreach ( glob( $dir_touched . '/*' ) ?: array() as $touch_path ) {
+	touch( $touch_path, 315532800 );
+}
+touch( $dir_touched, 315532800 );
+$report = diviops_local_site_report( $root_touched, $md_none, $repo_main );
+assert_same(
+	'current',
+	$report['status'],
+	'identical bytes with different mtimes is current, not drift: ' . $report['reason']
+);
+
 // 5b. Same version, an extra file the repository does not ship. The deploy would
 // delete it, so the check has to see it as drift too.
 $root_extra = $tmp . '/extra';

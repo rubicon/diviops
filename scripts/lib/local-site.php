@@ -27,13 +27,13 @@
  *   php scripts/lib/local-site.php source
  *   php scripts/lib/local-site.php diff
  *
- * "In sync" means the installed tree equals the repository tree, not that the two
- * declare the same version. A version string only moves at release time, so between
- * releases every change merged to main is invisible to it: on 2026-08-28 the site
- * ran 1.19.2 against a repository at 1.19.2 while missing the merged #293 fix, and
- * the check reported current (#307). The comparison lives in
- * diviops_local_site_file_diff() and both the deploy and the drift check call it, so
- * they cannot disagree about what in sync means.
+ * "In sync" means the installed files hold the same bytes as the repository's, not
+ * that the two declare the same version and not that their mtimes agree. A version
+ * string only moves at release time, so between releases every change merged to main
+ * is invisible to it: on 2026-08-28 the site ran 1.19.2 against a repository at
+ * 1.19.2 while missing the merged #293 fix, and the check reported current (#307).
+ * The comparison lives in diviops_local_site_file_diff() and both the deploy and the
+ * drift check call it, so they cannot disagree about what in sync means.
  *
  * @package DiviOps
  */
@@ -56,23 +56,38 @@ function diviops_plugin_version( string $file ) {
 }
 
 /**
- * List what rsync would change to make an installed copy match the repository.
+ * List the content differences between the repository plugin and an installed copy.
  *
  * The single definition of "in sync" for this repository. `scripts/deploy-local-site.sh`
- * deploys with these exact flags, so an empty itemization here means that deploy would
- * write nothing.
+ * asks this same function what it would change, so the deploy and the drift check
+ * cannot disagree.
+ *
+ * Two details carry the whole result:
+ *
+ * `-c` compares checksums. Without it rsync compares size and mtime, and `git
+ * checkout` stamps every file with checkout time — so a fresh worktree or a CI clone
+ * differs in mtime on every file while the code is byte-identical. Observed on
+ * 2026-08-28: a worktree checkout reported 31 differing paths against a site where
+ * exactly 2 files differed in content.
+ *
+ * The itemization is then filtered to lines that are not attribute-only. rsync's
+ * first character says what it will do: `>`/`<` transfers content, `c` creates,
+ * `*` deletes, and `.` means the content already matches and only metadata such as
+ * an mtime would be touched. Only the first group means the site is running
+ * different code, which is the question this check exists to answer.
  *
  * @param string $src        Repository plugin directory.
  * @param string $plugin_dir Installed plugin directory to compare against it.
- * @return array<int, string>|null Itemized change lines, empty when identical; null
- *                                 when the comparison could not be run at all.
+ * @return array<int, string>|null Itemized lines for paths whose content differs,
+ *                                 empty when the code matches; null when the
+ *                                 comparison could not be run at all.
  */
 function diviops_local_site_file_diff( string $src, string $plugin_dir ) {
 	$out    = array();
 	$status = 0;
 	exec(
 		sprintf(
-			'rsync -a --delete --itemize-changes --dry-run %s %s 2>/dev/null',
+			'rsync -a -c --delete --itemize-changes --dry-run %s %s 2>/dev/null',
 			escapeshellarg( rtrim( $src, '/' ) . '/' ),
 			escapeshellarg( rtrim( $plugin_dir, '/' ) . '/' )
 		),
@@ -87,7 +102,15 @@ function diviops_local_site_file_diff( string $src, string $plugin_dir ) {
 		return null;
 	}
 
-	return array_values( array_filter( array_map( 'trim', $out ), 'strlen' ) );
+	$changes = array();
+	foreach ( $out as $line ) {
+		$line = trim( $line );
+		if ( '' === $line || '.' === $line[0] ) {
+			continue;
+		}
+		$changes[] = $line;
+	}
+	return $changes;
 }
 
 /**
@@ -254,7 +277,7 @@ function diviops_local_site_report( $env, string $claude_md, string $repo_main )
 
 		$report['status'] = 'drift';
 		$report['reason'] = sprintf(
-			'%s runs %s, matching this repository, but %d path(s) differ from %s: %s%s',
+			'%s runs %s, matching this repository, but the contents of %d path(s) differ from %s: %s%s',
 			$target['plugin_dir'],
 			$installed,
 			count( $paths ),
@@ -267,7 +290,7 @@ function diviops_local_site_report( $env, string $claude_md, string $repo_main )
 
 	$report['status'] = 'current';
 	$report['reason'] = sprintf(
-		'%s runs %s and its files match this repository',
+		'%s runs %s and its files hold the same bytes as this repository',
 		$target['plugin_dir'],
 		$installed
 	);
