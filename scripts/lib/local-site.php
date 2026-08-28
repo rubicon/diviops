@@ -25,6 +25,15 @@
  *   php scripts/lib/local-site.php installed-version
  *   php scripts/lib/local-site.php repo-version
  *   php scripts/lib/local-site.php source
+ *   php scripts/lib/local-site.php diff
+ *
+ * "In sync" means the installed files hold the same bytes as the repository's, not
+ * that the two declare the same version and not that their mtimes agree. A version
+ * string only moves at release time, so between releases every change merged to main
+ * is invisible to it: on 2026-08-28 the site ran 1.19.2 against a repository at
+ * 1.19.2 while missing the merged #293 fix, and the check reported current (#307).
+ * The comparison lives in diviops_local_site_file_diff() and both the deploy and the
+ * drift check call it, so they cannot disagree about what in sync means.
  *
  * @package DiviOps
  */
@@ -44,6 +53,83 @@ function diviops_plugin_version( string $file ) {
 		return $m[1];
 	}
 	return null;
+}
+
+/**
+ * List the content differences between the repository plugin and an installed copy.
+ *
+ * The single definition of "in sync" for this repository. `scripts/deploy-local-site.sh`
+ * asks this same function what it would change, so the deploy and the drift check
+ * cannot disagree.
+ *
+ * Two details carry the whole result:
+ *
+ * `-c` compares checksums. Without it rsync compares size and mtime, and `git
+ * checkout` stamps every file with checkout time — so a fresh worktree or a CI clone
+ * differs in mtime on every file while the code is byte-identical. Observed on
+ * 2026-08-28: a worktree checkout reported 31 differing paths against a site where
+ * exactly 2 files differed in content.
+ *
+ * The itemization is then filtered to lines that are not attribute-only. rsync's
+ * first character says what it will do: `>`/`<` transfers content, `c` creates,
+ * `*` deletes, and `.` means the content already matches and only metadata such as
+ * an mtime would be touched. Only the first group means the site is running
+ * different code, which is the question this check exists to answer.
+ *
+ * @param string $src        Repository plugin directory.
+ * @param string $plugin_dir Installed plugin directory to compare against it.
+ * @return array<int, string>|null Itemized lines for paths whose content differs,
+ *                                 empty when the code matches; null when the
+ *                                 comparison could not be run at all.
+ */
+function diviops_local_site_file_diff( string $src, string $plugin_dir ) {
+	$out    = array();
+	$status = 0;
+	exec(
+		sprintf(
+			'rsync -a -c --delete --itemize-changes --dry-run %s %s 2>/dev/null',
+			escapeshellarg( rtrim( $src, '/' ) . '/' ),
+			escapeshellarg( rtrim( $plugin_dir, '/' ) . '/' )
+		),
+		$out,
+		$status
+	);
+
+	// An identical tree and a missing rsync both print nothing. The exit status is
+	// the only thing separating "in sync" from "never compared", and reading this
+	// wrong turns the gate into one that passes while inspecting nothing.
+	if ( 0 !== $status ) {
+		return null;
+	}
+
+	$changes = array();
+	foreach ( $out as $line ) {
+		$line = trim( $line );
+		if ( '' === $line || '.' === $line[0] ) {
+			continue;
+		}
+		$changes[] = $line;
+	}
+	return $changes;
+}
+
+/**
+ * Reduce rsync's itemized change lines to the paths they name.
+ *
+ * Lines look like `>f.st...... includes/foo.php` or `*deleting   stale.php`.
+ *
+ * @param array<int, string> $changes Itemized change lines.
+ * @return array<int, string> The paths, in the order rsync reported them.
+ */
+function diviops_local_site_changed_paths( array $changes ): array {
+	$paths = array();
+	foreach ( $changes as $line ) {
+		$parts = preg_split( '/\s+/', $line, 2 );
+		if ( isset( $parts[1] ) && '' !== $parts[1] ) {
+			$paths[] = $parts[1];
+		}
+	}
+	return $paths;
 }
 
 /**
@@ -97,9 +183,11 @@ function diviops_local_site_target( $env, string $claude_md ): array {
  *
  *   unconfigured — no env var, no path in CLAUDE.md. Skip.
  *   absent       — a target is configured but nothing is installed there. Skip.
- *   invalid      — the directory exists but is not a DiviOps plugin. Fail.
- *   drift        — installed and repository versions differ. Fail.
- *   current      — they match. Pass.
+ *   invalid      — the directory exists but is not a DiviOps plugin, or the file
+ *                  comparison could not be run. Fail.
+ *   drift        — the installed version or the installed files differ from the
+ *                  repository. Fail.
+ *   current      — the installed tree matches the repository. Pass.
  *
  * @param string|null $env       Value of DIVIOPS_LOCAL_SITE, or null when unset.
  * @param string      $claude_md Path to the CLAUDE.md carrying the fallback path.
@@ -168,8 +256,44 @@ function diviops_local_site_report( $env, string $claude_md, string $repo_main )
 		return $report;
 	}
 
+	// Same version is not the same code. Everything merged since the last version
+	// bump declares the version the repository declares, so only the files can tell
+	// a current install from one that predates a merged fix (#307).
+	$changes = diviops_local_site_file_diff( dirname( $repo_main ), $target['plugin_dir'] );
+
+	if ( null === $changes ) {
+		$report['status'] = 'invalid';
+		$report['reason'] = sprintf(
+			'could not compare %s against %s: rsync exited non-zero. Nothing was inspected, so this is not a pass',
+			$target['plugin_dir'],
+			dirname( $repo_main )
+		);
+		return $report;
+	}
+
+	if ( array() !== $changes ) {
+		$paths = diviops_local_site_changed_paths( $changes );
+		$shown = array_slice( $paths, 0, 5 );
+
+		$report['status'] = 'drift';
+		$report['reason'] = sprintf(
+			'%s runs %s, matching this repository, but the contents of %d path(s) differ from %s: %s%s',
+			$target['plugin_dir'],
+			$installed,
+			count( $paths ),
+			dirname( $repo_main ),
+			implode( ', ', $shown ),
+			count( $paths ) > count( $shown ) ? ', ...' : ''
+		);
+		return $report;
+	}
+
 	$report['status'] = 'current';
-	$report['reason'] = sprintf( '%s runs %s, matching this repository', $target['plugin_dir'], $installed );
+	$report['reason'] = sprintf(
+		'%s runs %s and its files hold the same bytes as this repository',
+		$target['plugin_dir'],
+		$installed
+	);
 	return $report;
 }
 
@@ -186,6 +310,11 @@ if ( 'cli' === PHP_SAPI && isset( $argv[0] ) && realpath( $argv[0] ) === realpat
 		$repo_root . '/plugins/diviops-agent/diviops-agent.php'
 	);
 
+	$cli_src  = $repo_root . '/plugins/diviops-agent';
+	$cli_diff = null === $cli_report['plugin_dir'] || ! is_dir( $cli_report['plugin_dir'] )
+		? null
+		: diviops_local_site_file_diff( $cli_src, $cli_report['plugin_dir'] );
+
 	$fields = array(
 		'plugin-dir'        => $cli_report['plugin_dir'],
 		'status'            => $cli_report['status'],
@@ -193,6 +322,7 @@ if ( 'cli' === PHP_SAPI && isset( $argv[0] ) && realpath( $argv[0] ) === realpat
 		'installed-version' => $cli_report['installed_version'],
 		'repo-version'      => $cli_report['repo_version'],
 		'source'            => $cli_report['source'],
+		'diff'              => null === $cli_diff ? null : implode( PHP_EOL, $cli_diff ),
 	);
 
 	$field = $argv[1] ?? '';
@@ -201,8 +331,14 @@ if ( 'cli' === PHP_SAPI && isset( $argv[0] ) && realpath( $argv[0] ) === realpat
 		exit( 2 );
 	}
 	if ( null === $fields[ $field ] ) {
-		fwrite( STDERR, $cli_report['reason'] . PHP_EOL );
+		fwrite(
+			STDERR,
+			( 'diff' === $field ? 'could not compare ' . $cli_src . ' against the installed plugin' : $cli_report['reason'] ) . PHP_EOL
+		);
 		exit( 1 );
+	}
+	if ( 'diff' === $field && '' === $fields[ $field ] ) {
+		exit( 0 );
 	}
 	echo $fields[ $field ], PHP_EOL;
 	exit( 0 );

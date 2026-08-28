@@ -96,6 +96,31 @@ function diviops_drift_test_site( string $wp_root, ?string $version ): string {
 }
 
 /**
+ * Build a synthetic WordPress root carrying a real copy of the repository plugin.
+ *
+ * A hand-written one-file stub declaring the right version is not "in sync" once the
+ * check compares trees, so anything asserting `current` has to install the actual
+ * plugin the repository ships.
+ *
+ * @param string $wp_root Directory to create as the WordPress root.
+ * @param string $src     Repository plugin directory to copy.
+ * @return string The plugin directory that was created.
+ */
+function diviops_drift_test_clone( string $wp_root, string $src ): string {
+	$plugin_dir = $wp_root . '/wp-content/plugins/diviops-agent';
+	mkdir( $plugin_dir, 0700, true );
+	$out    = array();
+	$status = 0;
+	exec(
+		sprintf( 'cp -a %s/. %s/', escapeshellarg( rtrim( $src, '/' ) ), escapeshellarg( $plugin_dir ) ),
+		$out,
+		$status
+	);
+	assert_same( 0, $status, 'the fixture copied the repository plugin: ' . implode( "\n", $out ) );
+	return $plugin_dir;
+}
+
+/**
  * Write a CLAUDE.md-shaped file declaring (or omitting) a local site path.
  *
  * @param string      $path    File to write.
@@ -151,12 +176,64 @@ assert_true(
 	'the drift reason names BOTH version numbers, so the failure is actionable without further digging'
 );
 
-// 5. Present and current.
-$root_current = $tmp . '/current';
-diviops_drift_test_site( $root_current, (string) $repo_version );
+// 5. Present and current: the same version AND the same files.
+$repo_plugin_dir = dirname( $repo_main );
+$root_current    = $tmp . '/current';
+diviops_drift_test_clone( $root_current, $repo_plugin_dir );
 $report          = diviops_local_site_report( $root_current, $md_none, $repo_main );
 $statuses_seen[] = $report['status'];
-assert_same( 'current', $report['status'], 'an installed version equal to the repository version reports current' );
+assert_same( 'current', $report['status'], 'an installed tree identical to the repository reports current' );
+
+// 5a. Same version, changed file. This is the case the version-only check missed:
+// every change merged to main since the last version bump looks like this, so the
+// gate was reporting "current" over a site missing merged fixes (#307).
+$root_edited = $tmp . '/edited';
+$dir_edited  = diviops_drift_test_clone( $root_edited, $repo_plugin_dir );
+file_put_contents( $dir_edited . '/diviops-agent.php', "\n// stale install, predating a merged fix\n", FILE_APPEND );
+assert_same(
+	$repo_version,
+	diviops_plugin_version( $dir_edited . '/diviops-agent.php' ),
+	'the edited fixture still declares the repository version, so only content can distinguish it'
+);
+$report          = diviops_local_site_report( $root_edited, $md_none, $repo_main );
+$statuses_seen[] = $report['status'];
+assert_same( 'drift', $report['status'], 'a matching version over differing file content still reports drift' );
+assert_same( $repo_version, $report['installed_version'], 'the content-drift report carries the installed version' );
+assert_true(
+	false !== strpos( $report['reason'], 'diviops-agent.php' ),
+	'the content-drift reason names a differing path, not just that something differs: ' . $report['reason']
+);
+
+// 5c. Same version, same bytes, different mtimes. `git checkout` stamps every file
+// with checkout time, so a fresh worktree or a CI clone differs from an installed
+// copy in mtime on every single file while the code is byte-identical. A check that
+// counts those as drift fires constantly and gets ignored, which is a worse gate
+// than the version-only one it replaced (#307).
+$root_touched = $tmp . '/touched';
+$dir_touched  = diviops_drift_test_clone( $root_touched, $repo_plugin_dir );
+foreach ( glob( $dir_touched . '/*' ) ?: array() as $touch_path ) {
+	touch( $touch_path, 315532800 );
+}
+touch( $dir_touched, 315532800 );
+$report = diviops_local_site_report( $root_touched, $md_none, $repo_main );
+assert_same(
+	'current',
+	$report['status'],
+	'identical bytes with different mtimes is current, not drift: ' . $report['reason']
+);
+
+// 5b. Same version, an extra file the repository does not ship. The deploy would
+// delete it, so the check has to see it as drift too.
+$root_extra = $tmp . '/extra';
+$dir_extra  = diviops_drift_test_clone( $root_extra, $repo_plugin_dir );
+file_put_contents( $dir_extra . '/leftover-from-an-older-install.php', "<?php\n" );
+$report          = diviops_local_site_report( $root_extra, $md_none, $repo_main );
+$statuses_seen[] = $report['status'];
+assert_same( 'drift', $report['status'], 'a file present on the site but not in the repository reports drift' );
+assert_true(
+	false !== strpos( $report['reason'], 'leftover-from-an-older-install.php' ),
+	'the drift reason names the extra path: ' . $report['reason']
+);
 
 // 6. The CLAUDE.md fallback resolves when no env var is set.
 $md_site = $tmp . '/CLAUDE-site.md';

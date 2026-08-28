@@ -10,9 +10,10 @@
 #   scripts/deploy-local-site.sh
 #   DIVIOPS_LOCAL_SITE=/path/to/wp-root scripts/deploy-local-site.sh
 #
-# The target resolves through scripts/lib/local-site.php — the same resolution
-# tests/test-local-site-drift.php uses, so the deploy and the drift check can never
-# disagree about which site they mean.
+# The target resolves through scripts/lib/local-site.php, and so does the comparison
+# that decides whether anything needs deploying — the same resolution and the same
+# comparison tests/test-local-site-drift.php uses, so the deploy and the drift check
+# can never disagree about which site they mean or about what "in sync" means.
 #
 # Deliberately NOT run from CI. The site is LocalWP on one machine; CI cannot reach
 # it, and a CI step that silently no-ops is worse than no step. Also do not run this
@@ -54,8 +55,9 @@ echo "source:  $SRC ($REPO_VERSION)"
 echo "target:  $TARGET ($INSTALLED_VERSION)"
 
 # What would change? An identical tree itemizes nothing, which is the whole
-# idempotency story: no changes means no backup and no write.
-CHANGES="$(rsync -a --delete --itemize-changes --dry-run "$SRC/" "$TARGET/")"
+# idempotency story: no changes means no backup and no write. This is the same call
+# the drift check makes, not a second copy of it that could be edited apart from it.
+CHANGES="$(php "$REPO/scripts/lib/local-site.php" diff)"
 
 if [ -z "$CHANGES" ]; then
   echo "no change: the installed plugin already matches this repository"
