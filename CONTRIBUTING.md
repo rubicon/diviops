@@ -48,6 +48,11 @@ Test files are `tests/test-*.php`. A few conventions that are not obvious:
   That is deliberate. A gate that reports what it inspected but derives pass/fail only
   from problems found will pass while inspecting nothing — which has genuinely happened
   here before. If you add a gate, assert that it actually inspected something.
+- **Changing a file under `plugins/diviops-agent/` or `diviops-server/src/` requires a
+  `FORK.md` row.** Those files originated upstream, and `FORK.md`'s divergence table is
+  what makes a future upstream cherry-pick predictable. The suite fails and names the
+  file when one changes without it. Adding a brand-new file under those paths does not
+  need a row — upstream does not have it, so there is nothing to reconcile.
 - **Divi-dependent assertions are environment-gated.** CI has no Divi install. Set
   `DIVIOPS_DIVI_BUILDER5_PATH` to a Divi `includes/builder-5` directory to run them:
 
