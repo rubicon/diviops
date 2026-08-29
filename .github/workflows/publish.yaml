@@ -14,11 +14,24 @@
 # `workflow_dispatch` allows an on-demand (re)publish — used for the first
 # publish, whose release was cut before this workflow existed.
 #
-# Requires the `NPM_TOKEN` repository secret: an npm token authorized to publish
-# `@rubicontv/diviops-mcp`. Provenance is enabled, which needs `id-token: write`
-# and a public repository. Phase 2 replaces the token with a trusted publisher
-# (OIDC); that cannot perform a package's FIRST publish, which is why a token is
-# used to bootstrap.
+# Authenticates by TRUSTED PUBLISHING (OIDC), not a token. npmjs.com trusts this
+# repository + this workflow filename for `@rubicontv/diviops-mcp`, so the job
+# exchanges its GitHub OIDC identity for publish rights at run time and no npm
+# credential exists in this repository to leak or rotate (#170).
+#
+# `id-token: write` is therefore REQUIRED, not optional — it is what mints the
+# OIDC token. Provenance is implicit under trusted publishing, so the explicit
+# `--provenance` flag is gone; attestations still appear on the published
+# package.
+#
+# The trusted-publisher record on npmjs.com is keyed to the workflow FILENAME.
+# Renaming this file silently breaks publishing until the npm setting is updated
+# to match, and the failure is a permissions error at publish time, not a
+# config error at parse time.
+#
+# Phase 1 (#163) bootstrapped with an `NPM_TOKEN` secret because OIDC cannot
+# perform a package's FIRST publish. That token is retired; see #170 for the
+# revocation step.
 name: Publish
 
 on:
@@ -28,7 +41,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write # required for npm provenance
+  id-token: write # mints the OIDC token trusted publishing authenticates with
 
 concurrency:
   group: publish-${{ github.ref }}
@@ -46,9 +59,10 @@ jobs:
       run:
         working-directory: diviops-server
     steps:
-      # SHA-pinned, not tagged (#200). This job holds `id-token: write` and
-      # NPM_TOKEN, so it is the one workflow where a mutable tag would let an
-      # upstream retag execute new code against publish credentials. These are
+      # SHA-pinned, not tagged (#200). This job holds `id-token: write`, which
+      # under trusted publishing IS the publish credential, so it is the one
+      # workflow where a mutable tag would let an upstream retag execute new
+      # code with rights to push to the registry. These are
       # the same SHAs test.yaml uses, so the publish path runs action code this
       # repository's CI has already proven.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -63,6 +77,4 @@ jobs:
       # a drifted tool count, a missing tool, or a version mismatch — so a broken
       # build cannot reach the registry.
       - run: npm run smoke
-      - run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - run: npm publish --access public
