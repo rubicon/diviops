@@ -1235,6 +1235,18 @@ if ( ! function_exists( 'get_posts' ) ) {
 	 * as "the site has no such posts". That is the failure mode #314 is about,
 	 * reproduced inside the harness meant to catch it.
 	 *
+	 * post__in restricts the result to the named ids, and `orderby => 'post__in'`
+	 * returns them in the order the caller listed. numberposts is core's own cap,
+	 * applied whenever posts_per_page is empty (wp-includes/post.php:2643). Both
+	 * were accepted and ignored here, which made a caller passing them look
+	 * satisfied while the shim answered a wider question than it was asked (#316).
+	 *
+	 * `'any'` is honoured for post_type and post_status as "everything in the
+	 * registry". Core is narrower — it excludes types and statuses registered
+	 * with `exclude_from_search`, which this harness has no registry for. Model
+	 * that only alongside a real post-type registry; approximating it with a
+	 * hardcoded exclusion list would be another stub encoding an assumption.
+	 *
 	 * Every call is recorded in $GLOBALS['diviops_test_get_posts_calls'] so a
 	 * test can assert what a scanner actually asked the database for. Tests
 	 * that use it reset the log themselves.
@@ -1243,14 +1255,20 @@ if ( ! function_exists( 'get_posts' ) ) {
 		$GLOBALS['diviops_test_get_posts_calls'][] = $args;
 
 		$post_types = array_values( (array) ( $args['post_type'] ?? 'post' ) );
-		$statuses  = (array) ( $args['post_status'] ?? 'publish' );
-		$per_page  = isset( $args['posts_per_page'] ) ? (int) $args['posts_per_page'] : 5;
-		$order     = strtolower( (string) ( $args['order'] ?? 'desc' ) );
-		$fields    = $args['fields'] ?? '';
+		$statuses   = (array) ( $args['post_status'] ?? 'publish' );
+		$per_page   = ! empty( $args['posts_per_page'] )
+			? (int) $args['posts_per_page']
+			: (int) ( $args['numberposts'] ?? 5 );
+		$order      = strtolower( (string) ( $args['order'] ?? 'desc' ) );
+		$fields     = $args['fields'] ?? '';
+		$post_in    = array_map( 'intval', (array) ( $args['post__in'] ?? array() ) );
 
 		$matches = array();
 		foreach ( (array) ( $GLOBALS['diviops_test_posts'] ?? array() ) as $post ) {
 			if ( ! in_array( 'any', $post_types, true ) && ! in_array( $post->post_type, $post_types, true ) ) {
+				continue;
+			}
+			if ( array() !== $post_in && ! in_array( (int) $post->ID, $post_in, true ) ) {
 				continue;
 			}
 			$status = isset( $post->post_status ) ? $post->post_status : 'publish';
@@ -1258,6 +1276,13 @@ if ( ! function_exists( 'get_posts' ) ) {
 				continue;
 			}
 			$keep = true;
+			// EXISTS / NOT EXISTS only. A clause carrying a `value` and a
+			// comparison operator is ignored rather than applied, so it matches
+			// everything — cross_env_query_attachments_for_hint() in
+			// trait-theme-builder.php passes exactly that shape when resolving
+			// an attachment by _wp_attached_file. Modelling it means modelling
+			// core's value comparison, casting, and clause relations; until a
+			// test needs that, the gap is named here rather than approximated.
 			foreach ( (array) ( $args['meta_query'] ?? array() ) as $clause ) {
 				if ( ! is_array( $clause ) || ! isset( $clause['key'], $clause['compare'] ) ) {
 					continue;
@@ -1276,14 +1301,24 @@ if ( ! function_exists( 'get_posts' ) ) {
 			}
 		}
 
-		usort(
-			$matches,
-			static function ( $a, $b ) {
-				return (int) $a->ID <=> (int) $b->ID;
+		if ( array() !== $post_in && 'post__in' === strtolower( (string) ( $args['orderby'] ?? '' ) ) ) {
+			// Core ignores `order` for this orderby: the caller's list is the order.
+			usort(
+				$matches,
+				static function ( $a, $b ) use ( $post_in ) {
+					return array_search( (int) $a->ID, $post_in, true ) <=> array_search( (int) $b->ID, $post_in, true );
+				}
+			);
+		} else {
+			usort(
+				$matches,
+				static function ( $a, $b ) {
+					return (int) $a->ID <=> (int) $b->ID;
+				}
+			);
+			if ( 'desc' === $order ) {
+				$matches = array_reverse( $matches );
 			}
-		);
-		if ( 'desc' === $order ) {
-			$matches = array_reverse( $matches );
 		}
 		if ( $per_page > 0 ) {
 			$matches = array_slice( $matches, 0, $per_page );
