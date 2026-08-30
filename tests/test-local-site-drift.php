@@ -179,7 +179,7 @@ assert_true(
 // 5. Present and current: the same version AND the same files.
 $repo_plugin_dir = dirname( $repo_main );
 $root_current    = $tmp . '/current';
-diviops_drift_test_clone( $root_current, $repo_plugin_dir );
+$dir_current     = diviops_drift_test_clone( $root_current, $repo_plugin_dir );
 $report          = diviops_local_site_report( $root_current, $md_none, $repo_main );
 $statuses_seen[] = $report['status'];
 assert_same( 'current', $report['status'], 'an installed tree identical to the repository reports current' );
@@ -234,6 +234,108 @@ assert_true(
 	false !== strpos( $report['reason'], 'leftover-from-an-older-install.php' ),
 	'the drift reason names the extra path: ' . $report['reason']
 );
+
+/**
+ * Ask scripts/lib/local-site.php for one field about a synthetic WordPress root.
+ *
+ * `scripts/deploy-local-site.sh` reads this CLI, and it reads the exit status as well
+ * as the output, so the exit status is part of the contract this suite has to pin.
+ *
+ * @param string $lib     Path to scripts/lib/local-site.php.
+ * @param string $field   Field to ask for, e.g. `diff`.
+ * @param string $wp_root Synthetic WordPress root to point it at.
+ * @return array{status: int, output: string}
+ */
+function diviops_drift_test_cli( string $lib, string $field, string $wp_root ): array {
+	$cmd = sprintf(
+		'DIVIOPS_LOCAL_SITE=%s %s %s %s 2>&1',
+		escapeshellarg( $wp_root ),
+		escapeshellarg( PHP_BINARY ),
+		escapeshellarg( $lib ),
+		escapeshellarg( $field )
+	);
+	$out    = array();
+	$status = 0;
+	exec( $cmd, $out, $status );
+	return array(
+		'status' => $status,
+		'output' => implode( "\n", $out ),
+	);
+}
+
+// 5d. The comparison could not run at all (#312). An identical tree and a failed
+// rsync both itemize nothing, so the exit status is the only thing separating "in
+// sync" from "never compared". Collapsing the null into an empty array — the kind of
+// simplification that reads as tidying — makes the deploy print "no change: the
+// installed plugin already matches this repository", exit 0 having compared nothing,
+// and leaves the suite green. This is the assertion that the gate inspected
+// something.
+assert_same(
+	array(),
+	diviops_local_site_file_diff( $repo_plugin_dir, $dir_current ),
+	'an in-sync tree returns an empty array of changes'
+);
+assert_same(
+	null,
+	diviops_local_site_file_diff( $tmp . '/no-such-source', $dir_current ),
+	'a comparison rsync could not run returns null, a different value from the empty in-sync result'
+);
+
+// The same failure through the report. The fixture is a plugin directory rsync
+// cannot list: `--x` still resolves the known path inside it, so the installed
+// version reads fine and the report gets past the version comparison to the file
+// comparison, which is the branch under test. It relies on the suite not running as
+// root, since root ignores the mode bits.
+$root_unreadable = $tmp . '/unreadable';
+$dir_unreadable  = diviops_drift_test_site( $root_unreadable, (string) $repo_version );
+chmod( $dir_unreadable, 0100 );
+clearstatcache( true );
+assert_same(
+	$repo_version,
+	diviops_plugin_version( $dir_unreadable . '/diviops-agent.php' ),
+	'the unreadable fixture still declares the repository version, so the report reaches the file comparison'
+);
+assert_same(
+	null,
+	diviops_local_site_file_diff( $repo_plugin_dir, $dir_unreadable ),
+	'the fixture really does defeat rsync — without this the case below would pass having compared successfully'
+);
+$report          = diviops_local_site_report( $root_unreadable, $md_none, $repo_main );
+$statuses_seen[] = $report['status'];
+assert_same(
+	'invalid',
+	$report['status'],
+	'a comparison that could not run reports invalid, never current: ' . $report['reason']
+);
+assert_true(
+	false !== strpos( $report['reason'], 'could not compare' ),
+	'the reason says the comparison did not run rather than describing a tree it never read: ' . $report['reason']
+);
+
+// The deploy gates on the `diff` subcommand: empty output means "nothing to do", and
+// only `set -e` over a non-zero exit stops a failed comparison from taking that
+// branch. Both halves of that are pinned here, because the two cases print the same
+// nothing.
+$lib = $root . '/scripts/lib/local-site.php';
+$cli = diviops_drift_test_cli( $lib, 'diff', $root_unreadable );
+assert_true(
+	0 !== $cli['status'],
+	'the diff subcommand exits non-zero when the comparison could not run: ' . $cli['output']
+);
+assert_true(
+	false !== stripos( $cli['output'], 'could not compare' ),
+	'the failed diff says why on stderr instead of exiting quietly: ' . $cli['output']
+);
+
+$cli = diviops_drift_test_cli( $lib, 'diff', $root_current );
+assert_same( 0, $cli['status'], 'the diff subcommand exits zero for an in-sync site: ' . $cli['output'] );
+assert_same(
+	'',
+	trim( $cli['output'] ),
+	'an in-sync site prints nothing, which is exactly what a failed comparison prints too: ' . $cli['output']
+);
+
+chmod( $dir_unreadable, 0700 );
 
 // 6. The CLAUDE.md fallback resolves when no env var is set.
 $md_site = $tmp . '/CLAUDE-site.md';
