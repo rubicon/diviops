@@ -149,6 +149,70 @@ assert_same(
  * ---------------------------------------------------------------------- */
 
 $tmp = sys_get_temp_dir() . '/diviops-fork-ledger-test-' . getmypid();
+// ── A release commit bumps the version in guarded files, and that is not a divergence ──
+//
+// release-please rewrites `Version:` and `const VERSION` in diviops-agent.php and
+// `Stable tag:` in readme.txt. Both live under a guarded prefix and the release commit
+// correctly does not touch FORK.md, so before #321 the gate failed every release — in CI
+// as well as locally, which blocked the release rather than merely annoying (#321).
+//
+// The exemption is about what CHANGED, not about who changed it. Keying off the author
+// or the branch name would trust a label and would wave through anything else riding in
+// the same commit.
+
+$repo_release = $tmp . '/release-bump';
+diviops_fork_ledger_test_repo( $repo_release, true );
+diviops_fork_ledger_test_write(
+	$repo_release,
+	'plugins/diviops-agent/diviops-agent.php',
+	"<?php\n/**\n * Version: 1.20.0\n */\nclass A {\n\tconst VERSION = '1.20.0'; // x-release-please-version\n}\n"
+);
+diviops_fork_ledger_test_write( $repo_release, 'plugins/diviops-agent/readme.txt', "Stable tag: 1.20.0\n" );
+diviops_fork_ledger_test_run( $repo_release, 'git add -A' );
+diviops_fork_ledger_test_run( $repo_release, 'git commit -q -m seed' );
+diviops_fork_ledger_test_run( $repo_release, 'git update-ref refs/remotes/origin/main HEAD' );
+
+diviops_fork_ledger_test_write(
+	$repo_release,
+	'plugins/diviops-agent/diviops-agent.php',
+	"<?php\n/**\n * Version: 1.20.1\n */\nclass A {\n\tconst VERSION = '1.20.1'; // x-release-please-version\n}\n"
+);
+diviops_fork_ledger_test_write( $repo_release, 'plugins/diviops-agent/readme.txt', "Stable tag: 1.20.1\n" );
+
+$report          = diviops_fork_ledger_report( $repo_release, 'origin/main' );
+$statuses_seen[] = $report['status'];
+assert_same(
+	'clean',
+	$report['status'],
+	'a version-only bump in guarded files needs no FORK.md row: ' . $report['reason']
+);
+assert_same( array(), $report['undocumented'], 'a version bump accuses nobody' );
+assert_true(
+	false !== strpos( $report['reason'], 'version' ),
+	'the exemption is reported, not silent — "nothing diverged" and "only version bumps changed" must not read the same: ' . $report['reason']
+);
+
+// The exemption must be narrow. One extra changed line in the SAME file and it is a real
+// divergence again. Without this assertion the fix is indistinguishable from switching the
+// gate off for the main plugin file.
+diviops_fork_ledger_test_write(
+	$repo_release,
+	'plugins/diviops-agent/diviops-agent.php',
+	"<?php\n/**\n * Version: 1.20.1\n */\nclass A {\n\tconst VERSION = '1.20.1'; // x-release-please-version\n\tconst SNEAKY = true;\n}\n"
+);
+$report          = diviops_fork_ledger_report( $repo_release, 'origin/main' );
+$statuses_seen[] = $report['status'];
+assert_same(
+	'undocumented',
+	$report['status'],
+	'a version line plus any other change is a divergence again'
+);
+assert_same(
+	array( 'plugins/diviops-agent/diviops-agent.php' ),
+	$report['undocumented'],
+	'only the file carrying the non-version change is named; the readme is still exempt'
+);
+
 diviops_fork_ledger_test_rmtree( $tmp );
 mkdir( $tmp, 0700, true );
 assert_true( is_dir( $tmp ), 'a temporary fixture directory is available' );
@@ -295,6 +359,70 @@ assert_same(
 	'no-changes',
 	diviops_fork_ledger_report( $repo_main, 'origin/main' )['status'],
 	'a checkout sitting on the base ref with a clean tree reports no-changes, and does not fail'
+);
+
+// ── A release commit bumps the version in guarded files, and that is not a divergence ──
+//
+// release-please rewrites `Version:` and `const VERSION` in diviops-agent.php and
+// `Stable tag:` in readme.txt. Both live under a guarded prefix and the release commit
+// correctly does not touch FORK.md, so before #321 the gate failed every release — in CI
+// as well as locally, which blocked the release rather than merely annoying (#321).
+//
+// The exemption is about what CHANGED, not about who changed it. Keying off the author
+// or the branch name would trust a label and would wave through anything else riding in
+// the same commit.
+
+$repo_release = $tmp . '/release-bump';
+diviops_fork_ledger_test_repo( $repo_release, true );
+diviops_fork_ledger_test_write(
+	$repo_release,
+	'plugins/diviops-agent/diviops-agent.php',
+	"<?php\n/**\n * Version: 1.20.0\n */\nclass A {\n\tconst VERSION = '1.20.0'; // x-release-please-version\n}\n"
+);
+diviops_fork_ledger_test_write( $repo_release, 'plugins/diviops-agent/readme.txt', "Stable tag: 1.20.0\n" );
+diviops_fork_ledger_test_run( $repo_release, 'git add -A' );
+diviops_fork_ledger_test_run( $repo_release, 'git commit -q -m seed' );
+diviops_fork_ledger_test_run( $repo_release, 'git update-ref refs/remotes/origin/main HEAD' );
+
+diviops_fork_ledger_test_write(
+	$repo_release,
+	'plugins/diviops-agent/diviops-agent.php',
+	"<?php\n/**\n * Version: 1.20.1\n */\nclass A {\n\tconst VERSION = '1.20.1'; // x-release-please-version\n}\n"
+);
+diviops_fork_ledger_test_write( $repo_release, 'plugins/diviops-agent/readme.txt', "Stable tag: 1.20.1\n" );
+
+$report          = diviops_fork_ledger_report( $repo_release, 'origin/main' );
+$statuses_seen[] = $report['status'];
+assert_same(
+	'clean',
+	$report['status'],
+	'a version-only bump in guarded files needs no FORK.md row: ' . $report['reason']
+);
+assert_same( array(), $report['undocumented'], 'a version bump accuses nobody' );
+assert_true(
+	false !== strpos( $report['reason'], 'version' ),
+	'the exemption is reported, not silent — "nothing diverged" and "only version bumps changed" must not read the same: ' . $report['reason']
+);
+
+// The exemption must be narrow. One extra changed line in the SAME file and it is a real
+// divergence again. Without this assertion the fix is indistinguishable from switching the
+// gate off for the main plugin file.
+diviops_fork_ledger_test_write(
+	$repo_release,
+	'plugins/diviops-agent/diviops-agent.php',
+	"<?php\n/**\n * Version: 1.20.1\n */\nclass A {\n\tconst VERSION = '1.20.1'; // x-release-please-version\n\tconst SNEAKY = true;\n}\n"
+);
+$report          = diviops_fork_ledger_report( $repo_release, 'origin/main' );
+$statuses_seen[] = $report['status'];
+assert_same(
+	'undocumented',
+	$report['status'],
+	'a version line plus any other change is a divergence again'
+);
+assert_same(
+	array( 'plugins/diviops-agent/diviops-agent.php' ),
+	$report['undocumented'],
+	'only the file carrying the non-version change is named; the readme is still exempt'
 );
 
 diviops_fork_ledger_test_rmtree( $tmp );

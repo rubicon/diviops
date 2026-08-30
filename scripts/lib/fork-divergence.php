@@ -135,6 +135,91 @@ function diviops_fork_ledger_changes( string $root, string $base ) {
 }
 
 /**
+ * Is every changed line in this path a version declaration?
+ *
+ * release-please rewrites the plugin version in `diviops-agent.php` (the header
+ * `Version:` and `const VERSION`) and in `readme.txt` (`Stable tag:`). Those files are
+ * upstream-origin and sit under a guarded prefix, so without this the gate failed every
+ * release commit — in CI as well as locally, which blocked the release rather than
+ * merely annoying (#321).
+ *
+ * The question asked here is about CONTENT, deliberately. Exempting by commit author or
+ * by branch name would trust a label instead of the diff, and would wave through
+ * anything else that rode along in the same commit. If every added and removed line is a
+ * version declaration then nothing diverged; if even one line is not, the file is a real
+ * change and needs its row.
+ *
+ * `-U0` so only changed lines appear, and the `+++`/`---` file headers are skipped
+ * explicitly rather than by relying on them never matching the pattern.
+ *
+ * A git invocation that fails returns false — "I could not read this diff" must land on
+ * the side that keeps the gate accusing, never on the side that exempts.
+ *
+ * @param string $root Repository root.
+ * @param string $base Base ref.
+ * @param string $path Path to inspect.
+ * @return bool
+ */
+function diviops_fork_ledger_version_only_change( string $root, string $base, string $path ): bool {
+	$saw_change = false;
+
+	foreach ( array( array( 'diff', '-U0', $base . '...HEAD', '--', $path ), array( 'diff', '-U0', 'HEAD', '--', $path ) ) as $args ) {
+		$out = diviops_fork_ledger_git( $root, $args, $status );
+		if ( 0 !== $status ) {
+			return false;
+		}
+
+		foreach ( $out as $line ) {
+			if ( '' === $line ) {
+				continue;
+			}
+			if ( 0 === strpos( $line, '+++' ) || 0 === strpos( $line, '---' ) ) {
+				continue;
+			}
+			if ( '+' !== $line[0] && '-' !== $line[0] ) {
+				continue;
+			}
+
+			$saw_change = true;
+			if ( ! diviops_fork_ledger_is_version_line( substr( $line, 1 ) ) ) {
+				return false;
+			}
+		}
+	}
+
+	// No changed lines at all means the caller was wrong about this path having changed.
+	// Reporting that as "version-only" would exempt a file on the strength of a diff that
+	// produced nothing, which is the pass-while-inspecting-nothing shape this file exists
+	// to avoid.
+	return $saw_change;
+}
+
+/**
+ * Is one line a version declaration?
+ *
+ * Each pattern requires an actual version NUMBER, so a line that merely mentions the
+ * word cannot buy an exemption.
+ *
+ * @param string $line Line contents, without the diff's leading +/-.
+ * @return bool
+ */
+function diviops_fork_ledger_is_version_line( string $line ): bool {
+	$patterns = array(
+		'/^\s*\*?\s*Version:\s*[0-9]+\.[0-9]+\.[0-9]+/',      // plugin header
+		'/^\s*const\s+VERSION\s*=\s*.[0-9]+\.[0-9]+\.[0-9]+/', // class constant
+		'/^\s*Stable tag:\s*[0-9]+\.[0-9]+\.[0-9]+/',          // readme.txt
+		'/^\s*"version"\s*:\s*"[0-9]+\.[0-9]+\.[0-9]+"/',      // package.json / manifests
+	);
+
+	foreach ( $patterns as $pattern ) {
+		if ( 1 === preg_match( $pattern, $line ) ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
  * Decide whether a set of changed paths needs a FORK.md row it does not have.
  *
  * A brand-new file under a guarded path is exempt. The table exists to make an
@@ -147,7 +232,7 @@ function diviops_fork_ledger_changes( string $root, string $base ) {
  * @param array<string, bool> $changes Path => whether it existed at the base ref.
  * @return array{status: string, reason: string, undocumented: array<int, string>}
  */
-function diviops_fork_ledger_verdict( array $changes ): array {
+function diviops_fork_ledger_verdict( array $changes, array $version_only = array() ): array {
 	if ( array() === $changes ) {
 		return array(
 			'status'       => 'no-changes',
@@ -157,22 +242,38 @@ function diviops_fork_ledger_verdict( array $changes ): array {
 	}
 
 	$undocumented = array();
+	$exempted     = 0;
 	foreach ( $changes as $path => $existed_at_base ) {
 		if ( ! $existed_at_base ) {
 			continue;
 		}
 		foreach ( diviops_fork_ledger_guarded_prefixes() as $prefix ) {
 			if ( 0 === strpos( (string) $path, $prefix ) ) {
+				if ( in_array( (string) $path, $version_only, true ) ) {
+					++$exempted;
+					break;
+				}
 				$undocumented[] = (string) $path;
 				break;
 			}
 		}
 	}
 
+	// Stated, never silent. "Nothing under a guarded prefix changed" and "everything that
+	// changed there was a version bump" are different facts, and a reader deciding whether
+	// to trust this gate needs to be able to tell them apart.
+	$version_note = $exempted > 0
+		? sprintf( '; disregarded %d guarded file(s) whose only change is a version declaration', $exempted )
+		: '';
+
 	if ( array() === $undocumented ) {
 		return array(
 			'status'       => 'clean',
-			'reason'       => sprintf( 'inspected %d changed path(s); none is an upstream-origin file', count( $changes ) ),
+			'reason'       => sprintf(
+				'inspected %d changed path(s); none is an upstream-origin file needing a row%s',
+				count( $changes ),
+				$version_note
+			),
 			'undocumented' => array(),
 		);
 	}
@@ -225,7 +326,21 @@ function diviops_fork_ledger_report( string $root, string $base ): array {
 		);
 	}
 
-	$verdict         = diviops_fork_ledger_verdict( $changes );
+	// Only guarded, pre-existing paths are worth the extra git call — a new file is
+	// already exempt and an unguarded one was never going to be accused.
+	$version_only = array();
+	foreach ( $changes as $path => $existed_at_base ) {
+		if ( ! $existed_at_base ) {
+			continue;
+		}
+		foreach ( diviops_fork_ledger_guarded_prefixes() as $prefix ) {
+			if ( 0 === strpos( (string) $path, $prefix ) && diviops_fork_ledger_version_only_change( $root, $base, (string) $path ) ) {
+				$version_only[] = (string) $path;
+			}
+		}
+	}
+
+	$verdict         = diviops_fork_ledger_verdict( $changes, $version_only );
 	$verdict['base'] = $base;
 	return $verdict;
 }
