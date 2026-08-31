@@ -128,15 +128,22 @@ Releases published before 2026-08-26 are raw automation output and are deliberat
 that way. Release notes are read at release time, and rewriting six of them would mean
 reconstructing retrospective prose from changelogs. The standard applies forward.
 
-### After the tag: deploy to the local dev site
+### Deploying to the local dev site
 
-The dev site runs a **copy** of the plugin, not a symlink, so cutting a release does not
-reach it. Once the tag exists, deploy it:
+The dev site runs a **copy** of the plugin, not a symlink, so nothing that happens in git
+reaches it. Outside a release, deploy from `main` whenever the drift gate reports the site
+behind:
 
 ```bash
 git checkout main && git pull
 scripts/deploy-local-site.sh
 ```
+
+**During a release, deploy from the signed release commit before pushing it** — step 3 of
+the recipe below, not a step after the tag. A release commit raises the repository's
+version while the site still runs the old one, so the drift gate fails until the deploy
+happens (#310). Deploying first is what makes the suite green on the commit that is about
+to ship, and the site then runs exactly what shipped rather than what shipped an hour ago.
 
 The script resolves the target from `DIVIOPS_LOCAL_SITE` (the WordPress root), falling
 back to the ``Local site: `…` `` path in `CLAUDE.md`. It refuses anything that is not a
@@ -233,17 +240,41 @@ git checkout -B release-fix origin/release-please--branches--main
 git commit --amend --reset-author --no-edit -S
 
 # 2. If main has moved since the release branch was cut, rebase or the
-#    fast-forward in step 4 is rejected as non-fast-forward.
+#    fast-forward in step 5 is rejected as non-fast-forward.
 git rebase --gpg-sign origin/main
 
-# 3. Push the branch and WAIT for CI. main requires status checks, the final
+# 3. Deploy the release candidate to the dev site, THEN run the suite. In this
+#    order the suite is green; in the other order it fails on drift.
+scripts/deploy-local-site.sh
+php tests/run.php
+
+# 4. Push the branch and WAIT for CI. main requires status checks, the final
 #    push is a direct push, and amending invalidated the bot commit's checks.
 git push --force-with-lease origin release-fix:release-please--branches--main
 gh pr checks <release-pr> --watch
 
-# 4. Fast-forward. The exact signed object lands; merge buttons rewrite it.
+# 5. Fast-forward. The exact signed object lands; merge buttons rewrite it.
 git push origin "$(git rev-parse HEAD):main"
 ```
+
+**Step 3 is an ordering, not a preference (#310).** The working tree at that point
+declares the new version and the site still runs the previous one, so
+`tests/test-local-site-drift.php` fails until the deploy happens. Running the suite
+first produces a single red assertion on the very commit that is about to ship —
+and a red suite that everyone learns to merge past is the erosion that check exists
+to prevent. Deploying first was confirmed on v1.20.1: the release commit passed the
+full suite, `PASS 2771 assertion(s) in 65 file(s)`, once the FORK.md divergence gate
+was also taught to exempt a version-only bump (#321). The cost is that the deploy
+writes to the dev site before the tag exists, which is the objection this ordering
+was chosen over: an untagged release candidate on the dev site is recoverable, a
+gate nobody reads is not.
+
+**Between step 3 and step 5 the site is briefly ahead of `main`.** A branch cut from
+`main` in that window compares the site's new version against a repository still on
+the old one, and the drift gate reports `drift` naming both. It is an artifact of the
+window, not a finding, and it clears the moment the release lands on `main`. Read the
+two version numbers in the failure message: the site being *ahead* is this window,
+and the site being *behind* is the real bug the gate is for.
 
 Result: `author=Dax Davis  committer=Dax Davis  verified=true`. The release PR
 closes itself as merged once GitHub notices the head commit is reachable from
