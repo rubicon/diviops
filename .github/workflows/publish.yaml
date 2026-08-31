@@ -72,6 +72,17 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: npm
           cache-dependency-path: diviops-server/package-lock.json
+      # Trusted publishing needs an npm that speaks OIDC. Node 22 bundles npm
+      # 10.9.8, which has no OIDC support at all — it does not attempt the token
+      # exchange, falls back to the `.npmrc` setup-node writes, finds NODE_AUTH_TOKEN
+      # empty now that the secret is gone, and the registry answers `E404 Not Found -
+      # PUT` because npm reports an unauthenticated scoped publish as 404 rather than
+      # 401. That is what broke mcp-server-v1.12.1 (#170).
+      #
+      # Upgrading the CLI rather than the runtime keeps the build and smoke test on the
+      # Node version CI exercises, and leaves only the publish client newer.
+      - run: npm install -g npm@latest
+      - run: npm --version
       - run: npm ci
       # Build + credential-free MCP handshake. Fails loudly on an empty registry,
       # a drifted tool count, a missing tool, or a version mismatch — so a broken
