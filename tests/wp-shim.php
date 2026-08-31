@@ -1096,9 +1096,114 @@ if ( ! function_exists( 'delete_post_meta' ) ) {
 	}
 }
 
+// ── Post-type and post-status registries ──────────────────────────────────
+//
+// A query's `'any'` is answered by these registries rather than by the rows.
+// WP_Query resolves `post_type => 'any'` to
+// `get_post_types( array( 'exclude_from_search' => false ) )`
+// (wp-includes/class-wp-query.php:2612-2613), and `post_status => 'any'` to
+// "every status except the ones registered `exclude_from_search` that the caller
+// did not name" (wp-includes/class-wp-query.php:2667-2673). Without registries
+// carrying those flags there is nothing for `'any'` to narrow against, which is
+// why get_posts() treated it as "everything in the fixture set" until #318.
+//
+// Both registries store core's own default derivation rather than a pre-resolved
+// answer, so a type or status a test registers gets the flag core would give it
+// instead of one this harness assumed.
+
+if ( ! function_exists( 'diviops_test_filter_registry' ) ) {
+	/**
+	 * Model wp_list_filter()'s 'AND' operator over one of the registries below:
+	 * keep an entry when every requested key is present and equal, and return
+	 * name => name, which is what core's 'names' output produces.
+	 *
+	 * The comparison is loose because core's is (WP_List_Util::filter in
+	 * wp-includes/class-wp-list-util.php, which wp_list_filter() delegates to), so
+	 * `'exclude_from_search' => false` matches a registered false without the
+	 * caller having to match its type.
+	 *
+	 * @param array<string, mixed> $registry Registered entries, name => resolved args.
+	 * @param array<string, mixed> $args     Flags every kept entry must carry.
+	 * @return array<string, string>
+	 */
+	function diviops_test_filter_registry( array $registry, array $args ): array {
+		$names = array();
+		foreach ( $registry as $name => $registered ) {
+			if ( ! is_array( $registered ) ) {
+				throw new RuntimeException(
+					sprintf(
+						"wp-shim: registry entry '%s' is not a resolved argument array. Register it through diviops_test_register_post_type()/diviops_test_register_post_status() so its flags are derived the way core derives them.",
+						(string) $name
+					)
+				);
+			}
+			foreach ( $args as $key => $value ) {
+				// phpcs:ignore Universal.Operators.StrictComparisons.LooseEqual -- core's own comparison is loose.
+				if ( ! array_key_exists( $key, $registered ) || $registered[ $key ] != $value ) {
+					continue 2;
+				}
+			}
+			$names[ (string) $name ] = (string) $name;
+		}
+		return $names;
+	}
+}
+
+if ( ! function_exists( 'diviops_test_register_post_type' ) ) {
+	/**
+	 * Model WP core's register_post_type() for the flags a query reads: `public`
+	 * defaults to false, and `exclude_from_search` defaults to its negation
+	 * (wp-includes/class-wp-post-type.php:606-607).
+	 *
+	 * @param string               $post_type Post type name.
+	 * @param array<string, mixed> $args      Registration arguments.
+	 * @return array<string, mixed> The resolved arguments.
+	 */
+	function diviops_test_register_post_type( string $post_type, array $args = array() ): array {
+		$args['public'] = (bool) ( $args['public'] ?? false );
+		if ( ! isset( $args['exclude_from_search'] ) ) {
+			$args['exclude_from_search'] = ! $args['public'];
+		}
+		$args['exclude_from_search']                      = (bool) $args['exclude_from_search'];
+		$args['name']                                     = $post_type;
+		$GLOBALS['diviops_test_post_types'][ $post_type ] = $args;
+		return $args;
+	}
+}
+
 if ( ! isset( $GLOBALS['diviops_test_post_types'] ) ) {
-	// The default WordPress content post types; tests register more as needed.
-	$GLOBALS['diviops_test_post_types'] = array( 'page' => true, 'post' => true );
+	/*
+	 * WordPress's built-in post types, transcribed from create_initial_post_types()
+	 * (wp-includes/post.php). Every one of them leaves exclude_from_search unset and
+	 * inherits it from `public`, so only the public/non-public split is recorded
+	 * here. Tests register their own types on top; Divi's own types are not seeded,
+	 * because Divi registers all of them non-public and a test that needs one in an
+	 * `'any'` result should say so.
+	 */
+	$GLOBALS['diviops_test_post_types'] = array();
+	foreach ( array( 'post', 'page', 'attachment' ) as $diviops_test_type ) {
+		diviops_test_register_post_type( $diviops_test_type, array( 'public' => true ) );
+	}
+	foreach (
+		array(
+			'revision',
+			'nav_menu_item',
+			'custom_css',
+			'customize_changeset',
+			'oembed_cache',
+			'user_request',
+			'wp_block',
+			'wp_template',
+			'wp_template_part',
+			'wp_global_styles',
+			'wp_navigation',
+			'wp_font_family',
+			'wp_font_face',
+		) as $diviops_test_type
+	) {
+		diviops_test_register_post_type( $diviops_test_type, array( 'public' => false ) );
+	}
+	unset( $diviops_test_type );
 }
 
 if ( ! function_exists( 'post_type_exists' ) ) {
@@ -1110,20 +1215,95 @@ if ( ! function_exists( 'post_type_exists' ) ) {
 	}
 }
 
+if ( ! function_exists( 'get_post_types' ) ) {
+	/**
+	 * Model WP core's get_post_types(): the registered types matching every flag in
+	 * $args, keyed by name. Only the 'names'/'and' form is modelled — the one both
+	 * WP_Query's `'any'` resolution and canvas_audit_reference_candidates() in
+	 * trait-canvas.php ask for.
+	 */
+	function get_post_types( $args = array(), $output = 'names', $operator = 'and' ) {
+		if ( 'names' !== $output || 'and' !== $operator ) {
+			throw new RuntimeException(
+				sprintf( "wp-shim get_post_types(): only the 'names'/'and' form is modelled, not '%s'/'%s'.", (string) $output, (string) $operator )
+			);
+		}
+		return diviops_test_filter_registry( $GLOBALS['diviops_test_post_types'], (array) $args );
+	}
+}
+
+if ( ! function_exists( 'diviops_test_register_post_status' ) ) {
+	/**
+	 * Model WP core's register_post_status() default derivation
+	 * (wp-includes/post.php:1485-1526, exclude_from_search at 1510-1512): a status
+	 * given none of public/internal/protected/private is internal, each unset flag
+	 * is false, and `exclude_from_search` follows `internal` unless the caller
+	 * sets it.
+	 *
+	 * @param string               $status Post status name.
+	 * @param array<string, mixed> $args   Registration arguments.
+	 * @return array<string, mixed> The resolved arguments.
+	 */
+	function diviops_test_register_post_status( string $status, array $args = array() ): array {
+		$visibility = array( 'public', 'internal', 'protected', 'private' );
+		if ( array() === array_intersect( $visibility, array_keys( $args ) ) ) {
+			$args['internal'] = true;
+		}
+		foreach ( $visibility as $flag ) {
+			$args[ $flag ] = (bool) ( $args[ $flag ] ?? false );
+		}
+		if ( ! isset( $args['exclude_from_search'] ) ) {
+			$args['exclude_from_search'] = $args['internal'];
+		}
+		$args['exclude_from_search']                      = (bool) $args['exclude_from_search'];
+		$args['name']                                     = $status;
+		$GLOBALS['diviops_test_post_statuses'][ $status ] = $args;
+		return $args;
+	}
+}
+
+if ( ! isset( $GLOBALS['diviops_test_post_statuses'] ) ) {
+	/*
+	 * WordPress's built-in post statuses, transcribed from create_initial_post_types()
+	 * (wp-includes/post.php). `inherit` and the four request-* statuses are internal
+	 * but set exclude_from_search back to false explicitly, which leaves trash and
+	 * auto-draft as the only statuses a `post_status => 'any'` query drops.
+	 */
+	$GLOBALS['diviops_test_post_statuses'] = array();
+	foreach (
+		array(
+			'publish'           => array( 'public' => true ),
+			'future'            => array( 'protected' => true ),
+			'draft'             => array( 'protected' => true ),
+			'pending'           => array( 'protected' => true ),
+			'private'           => array( 'private' => true ),
+			'trash'             => array( 'internal' => true ),
+			'auto-draft'        => array( 'internal' => true ),
+			'inherit'           => array( 'internal' => true, 'exclude_from_search' => false ),
+			'request-pending'   => array( 'internal' => true, 'exclude_from_search' => false ),
+			'request-confirmed' => array( 'internal' => true, 'exclude_from_search' => false ),
+			'request-failed'    => array( 'internal' => true, 'exclude_from_search' => false ),
+			'request-completed' => array( 'internal' => true, 'exclude_from_search' => false ),
+		) as $diviops_test_status => $diviops_test_status_args
+	) {
+		diviops_test_register_post_status( $diviops_test_status, $diviops_test_status_args );
+	}
+	unset( $diviops_test_status, $diviops_test_status_args );
+}
+
 if ( ! function_exists( 'get_post_stati' ) ) {
 	/**
-	 * Model WP core's get_post_stati() for the non-internal statuses page_create
-	 * validates against. Values are the status names, matching how the handler
+	 * Model WP core's get_post_stati(): the registered statuses matching every flag
+	 * in $args, keyed by name. Values are the status names, matching how page_create
 	 * consumes them (in_array on values, array_values for the error payload).
 	 */
-	function get_post_stati( $args = array() ) {
-		return array(
-			'publish' => 'publish',
-			'future'  => 'future',
-			'draft'   => 'draft',
-			'pending' => 'pending',
-			'private' => 'private',
-		);
+	function get_post_stati( $args = array(), $output = 'names', $operator = 'and' ) {
+		if ( 'names' !== $output || 'and' !== $operator ) {
+			throw new RuntimeException(
+				sprintf( "wp-shim get_post_stati(): only the 'names'/'and' form is modelled, not '%s'/'%s'.", (string) $output, (string) $operator )
+			);
+		}
+		return diviops_test_filter_registry( $GLOBALS['diviops_test_post_statuses'], (array) $args );
 	}
 }
 
@@ -1217,6 +1397,233 @@ if ( ! function_exists( 'update_post_caches' ) ) {
 	}
 }
 
+// ── meta_query clause evaluation ──────────────────────────────────────────
+//
+// Core turns a clause into a JOIN on the meta table plus a WHERE term
+// (wp-includes/class-wp-meta-query.php, get_sql_for_clause()). Two consequences
+// this models directly: a key with several rows matches when ANY row satisfies the
+// comparison, because the JOIN produces one candidate row per meta row; and a
+// comparison on a post with no row for the key never matches, because there is no
+// row to compare (NOT EXISTS is the one operator with its own LEFT JOIN syntax).
+//
+// The operators modelled are core's non-numeric set minus the regex family: those
+// are the ones whose answer follows from the stored string. Everything else — the
+// numeric operators, REGEXP, a `type` cast, an OR relation, a nested group — raises
+// instead of being approximated. A shim that answers a question it cannot model
+// returns a wider result than the caller asked for, and a wider result is
+// indistinguishable from a filter that worked (#318).
+
+if ( ! function_exists( 'diviops_test_meta_compare_equal' ) ) {
+	/**
+	 * Compare a stored meta value with a queried one the way SQL `=` does, and
+	 * refuse the one case whose answer is not in core's hands.
+	 *
+	 * MySQL decides case sensitivity by the column's collation, not by anything
+	 * WordPress does — wp_postmeta.meta_value takes the database collation, which on
+	 * a stock install is case-insensitive. This harness has no collation, so a pair
+	 * that differs by case alone is a question it must not answer either way.
+	 *
+	 * @param string $stored Stored meta value.
+	 * @param string $value  Queried value.
+	 */
+	function diviops_test_meta_compare_equal( string $stored, string $value ): bool {
+		$exact = ( $stored === $value );
+		if ( ! $exact && 0 === strcasecmp( $stored, $value ) ) {
+			throw new RuntimeException( diviops_test_meta_collation_message( $stored, $value ) );
+		}
+		return $exact;
+	}
+}
+
+if ( ! function_exists( 'diviops_test_meta_compare_like' ) ) {
+	/**
+	 * Compare the way SQL `LIKE` does once core has built the pattern: core wraps the
+	 * value in `%...%` and escapes the caller's own wildcards with esc_like() first
+	 * (wp-includes/class-wp-meta-query.php:753-756), so the pattern is a literal
+	 * substring test. Case sensitivity is refused for the same reason as `=`.
+	 *
+	 * @param string $stored Stored meta value.
+	 * @param string $value  Queried value.
+	 */
+	function diviops_test_meta_compare_like( string $stored, string $value ): bool {
+		$exact = ( '' === $value ) || false !== strpos( $stored, $value );
+		$fuzzy = ( '' === $value ) || false !== stripos( $stored, $value );
+		if ( $exact !== $fuzzy ) {
+			throw new RuntimeException( diviops_test_meta_collation_message( $stored, $value ) );
+		}
+		return $exact;
+	}
+}
+
+if ( ! function_exists( 'diviops_test_meta_collation_message' ) ) {
+	/**
+	 * The refusal both comparisons raise when the answer turns on the collation.
+	 *
+	 * @param string $stored Stored meta value.
+	 * @param string $value  Queried value.
+	 */
+	function diviops_test_meta_collation_message( string $stored, string $value ): string {
+		return sprintf(
+			"wp-shim get_posts(): meta_query comparison of '%s' with '%s' depends on the database collation, which this harness does not model. Use fixtures that differ by more than case.",
+			$stored,
+			$value
+		);
+	}
+}
+
+if ( ! function_exists( 'diviops_test_meta_query_matches' ) ) {
+	/**
+	 * Evaluate a meta_query against one post's meta rows.
+	 *
+	 * @param int                      $post_id    Post id.
+	 * @param array<int|string, mixed> $meta_query meta_query argument.
+	 */
+	function diviops_test_meta_query_matches( int $post_id, array $meta_query ): bool {
+		$modelled = array( '=', '!=', 'LIKE', 'NOT LIKE', 'IN', 'NOT IN', 'EXISTS', 'NOT EXISTS' );
+		// Core recognises these too and coerces anything else to '='
+		// (wp-includes/class-wp-meta-query.php:547-572).
+		$recognised = array_merge(
+			$modelled,
+			array( 'RLIKE', 'REGEXP', 'NOT REGEXP', '>', '>=', '<', '<=', 'BETWEEN', 'NOT BETWEEN' )
+		);
+
+		foreach ( $meta_query as $index => $clause ) {
+			if ( 'relation' === $index ) {
+				if ( 'AND' !== strtoupper( (string) $clause ) ) {
+					throw new RuntimeException(
+						sprintf(
+							"wp-shim get_posts(): meta_query relation '%s' is not modelled. Extend diviops_test_meta_query_matches() or assert against a single clause.",
+							(string) $clause
+						)
+					);
+				}
+				continue;
+			}
+			if ( ! is_array( $clause ) || ! isset( $clause['key'] ) || ! is_string( $clause['key'] ) ) {
+				throw new RuntimeException(
+					'wp-shim get_posts(): meta_query entries other than a first-order clause naming a single key are not modelled. Extend diviops_test_meta_query_matches() or flatten the query under test.'
+				);
+			}
+			$unmodelled = array_diff( array_keys( $clause ), array( 'key', 'value', 'compare' ) );
+			if ( array() !== $unmodelled ) {
+				throw new RuntimeException(
+					sprintf(
+						"wp-shim get_posts(): meta_query clause key '%s' is not modelled. Extend diviops_test_meta_query_matches() or drop the key from the query under test.",
+						(string) reset( $unmodelled )
+					)
+				);
+			}
+
+			$has_value = array_key_exists( 'value', $clause );
+			// Core's default: IN for an array value, otherwise '='
+			// (wp-includes/class-wp-meta-query.php:541-544).
+			$compare = isset( $clause['compare'] )
+				? strtoupper( (string) $clause['compare'] )
+				: ( $has_value && is_array( $clause['value'] ) ? 'IN' : '=' );
+			if ( ! in_array( $compare, $recognised, true ) ) {
+				$compare = '=';
+			}
+			if ( ! in_array( $compare, $modelled, true ) ) {
+				throw new RuntimeException(
+					sprintf(
+						"wp-shim get_posts(): meta_query compare '%s' is not modelled. Extend diviops_test_meta_query_matches() or assert against a modelled operator.",
+						$compare
+					)
+				);
+			}
+
+			$rows = $GLOBALS['diviops_test_post_meta_rows'][ $post_id ][ $clause['key'] ] ?? array();
+			if ( array() === $rows && isset( $GLOBALS['diviops_test_post_meta'][ $post_id ][ $clause['key'] ] ) ) {
+				$rows = array( $GLOBALS['diviops_test_post_meta'][ $post_id ][ $clause['key'] ] );
+			}
+
+			// Core ignores `value` outright for NOT EXISTS
+			// (wp-includes/class-wp-meta-query.php:765-767).
+			if ( 'NOT EXISTS' === $compare ) {
+				if ( array() !== $rows ) {
+					return false;
+				}
+				continue;
+			}
+			// A clause with no value adds no meta_value term at all
+			// (wp-includes/class-wp-meta-query.php:730), so it is a key presence
+			// test whatever the operator says.
+			if ( ! $has_value ) {
+				if ( array() === $rows ) {
+					return false;
+				}
+				continue;
+			}
+			// EXISTS carrying a value is interpreted as '='
+			// (wp-includes/class-wp-meta-query.php:759-762).
+			if ( 'EXISTS' === $compare ) {
+				$compare = '=';
+			}
+
+			$value = $clause['value'];
+			if ( in_array( $compare, array( 'IN', 'NOT IN' ), true ) ) {
+				// Core splits a non-array value on commas and whitespace
+				// (wp-includes/class-wp-meta-query.php:733-736).
+				$value = is_array( $value ) ? array_values( $value ) : preg_split( '/[,\s]+/', (string) $value );
+			} elseif ( is_string( $value ) ) {
+				$value = trim( $value );
+			}
+			if ( is_array( $value ) && ! in_array( $compare, array( 'IN', 'NOT IN' ), true ) ) {
+				throw new RuntimeException(
+					sprintf( "wp-shim get_posts(): meta_query compare '%s' with an array value is not modelled.", $compare )
+				);
+			}
+
+			$matched = false;
+			foreach ( $rows as $row ) {
+				if ( null !== $row && ! is_scalar( $row ) ) {
+					throw new RuntimeException(
+						sprintf(
+							"wp-shim get_posts(): meta_query cannot compare the non-scalar value stored for '%s' on post %d; WordPress serialises such a value before it reaches the column.",
+							$clause['key'],
+							$post_id
+						)
+					);
+				}
+				$stored = (string) $row;
+				switch ( $compare ) {
+					case '=':
+						$matched = diviops_test_meta_compare_equal( $stored, (string) $value );
+						break;
+					case '!=':
+						$matched = ! diviops_test_meta_compare_equal( $stored, (string) $value );
+						break;
+					case 'LIKE':
+						$matched = diviops_test_meta_compare_like( $stored, (string) $value );
+						break;
+					case 'NOT LIKE':
+						$matched = ! diviops_test_meta_compare_like( $stored, (string) $value );
+						break;
+					case 'IN':
+					case 'NOT IN':
+						$in = false;
+						foreach ( (array) $value as $candidate ) {
+							if ( diviops_test_meta_compare_equal( $stored, (string) $candidate ) ) {
+								$in = true;
+								break;
+							}
+						}
+						$matched = ( 'IN' === $compare ) ? $in : ! $in;
+						break;
+				}
+				if ( $matched ) {
+					break;
+				}
+			}
+			if ( ! $matched ) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+}
+
 if ( ! function_exists( 'get_posts' ) ) {
 	/**
 	 * Model the slice of WP core's get_posts() this codebase actually calls:
@@ -1241,11 +1648,19 @@ if ( ! function_exists( 'get_posts' ) ) {
 	 * were accepted and ignored here, which made a caller passing them look
 	 * satisfied while the shim answered a wider question than it was asked (#316).
 	 *
-	 * `'any'` is honoured for post_type and post_status as "everything in the
-	 * registry". Core is narrower — it excludes types and statuses registered
-	 * with `exclude_from_search`, which this harness has no registry for. Model
-	 * that only alongside a real post-type registry; approximating it with a
-	 * hardcoded exclusion list would be another stub encoding an assumption.
+	 * `'any'` reads the post-type and post-status registries above, as WP_Query
+	 * does: for post_type it is the types registered `exclude_from_search => false`
+	 * (class-wp-query.php:2612-2613), tested with string identity so `array( 'any' )`
+	 * is a literal type name; for post_status it is every status except those
+	 * registered `exclude_from_search => true` the caller did not name
+	 * (class-wp-query.php:2667-2673). It used to mean "everything in the fixture
+	 * registry", which returned trashed and auto-draft rows, revisions, and rows of
+	 * types nothing had registered (#318).
+	 *
+	 * meta_query is evaluated by diviops_test_meta_query_matches() above, which
+	 * models core's non-numeric operators and refuses the rest rather than skipping
+	 * a clause it cannot apply. A skipped clause matched everything, so the shim
+	 * answered a wider question than the caller asked (#318).
 	 *
 	 * Every call is recorded in $GLOBALS['diviops_test_get_posts_calls'] so a
 	 * test can assert what a scanner actually asked the database for. Tests
@@ -1254,48 +1669,45 @@ if ( ! function_exists( 'get_posts' ) ) {
 	function get_posts( $args = array() ) {
 		$GLOBALS['diviops_test_get_posts_calls'][] = $args;
 
-		$post_types = array_values( (array) ( $args['post_type'] ?? 'post' ) );
-		$statuses   = (array) ( $args['post_status'] ?? 'publish' );
-		$per_page   = ! empty( $args['posts_per_page'] )
+		$post_type_arg = $args['post_type'] ?? 'post';
+		$post_types    = ( 'any' === $post_type_arg )
+			? array_values( get_post_types( array( 'exclude_from_search' => false ) ) )
+			: array_values( (array) $post_type_arg );
+
+		$status_arg = $args['post_status'] ?? 'publish';
+		$statuses   = is_array( $status_arg ) ? array_values( $status_arg ) : explode( ',', (string) $status_arg );
+		$any_status = in_array( 'any', $statuses, true );
+		// The statuses `'any'` drops: excluded from search, and not named by the
+		// caller alongside it.
+		$dropped_statuses = $any_status
+			? array_values( array_diff( get_post_stati( array( 'exclude_from_search' => true ) ), $statuses ) )
+			: array();
+
+		$per_page = ! empty( $args['posts_per_page'] )
 			? (int) $args['posts_per_page']
 			: (int) ( $args['numberposts'] ?? 5 );
-		$order      = strtolower( (string) ( $args['order'] ?? 'desc' ) );
-		$fields     = $args['fields'] ?? '';
-		$post_in    = array_map( 'intval', (array) ( $args['post__in'] ?? array() ) );
+		$order    = strtolower( (string) ( $args['order'] ?? 'desc' ) );
+		$fields   = $args['fields'] ?? '';
+		$post_in  = array_map( 'intval', (array) ( $args['post__in'] ?? array() ) );
 
 		$matches = array();
 		foreach ( (array) ( $GLOBALS['diviops_test_posts'] ?? array() ) as $post ) {
-			if ( ! in_array( 'any', $post_types, true ) && ! in_array( $post->post_type, $post_types, true ) ) {
+			if ( ! in_array( $post->post_type, $post_types, true ) ) {
 				continue;
 			}
 			if ( array() !== $post_in && ! in_array( (int) $post->ID, $post_in, true ) ) {
 				continue;
 			}
 			$status = isset( $post->post_status ) ? $post->post_status : 'publish';
-			if ( ! in_array( 'any', $statuses, true ) && ! in_array( $status, $statuses, true ) ) {
-				continue;
-			}
-			$keep = true;
-			// EXISTS / NOT EXISTS only. A clause carrying a `value` and a
-			// comparison operator is ignored rather than applied, so it matches
-			// everything — cross_env_query_attachments_for_hint() in
-			// trait-theme-builder.php passes exactly that shape when resolving
-			// an attachment by _wp_attached_file. Modelling it means modelling
-			// core's value comparison, casting, and clause relations; until a
-			// test needs that, the gap is named here rather than approximated.
-			foreach ( (array) ( $args['meta_query'] ?? array() ) as $clause ) {
-				if ( ! is_array( $clause ) || ! isset( $clause['key'], $clause['compare'] ) ) {
+			if ( $any_status ) {
+				if ( in_array( $status, $dropped_statuses, true ) ) {
 					continue;
 				}
-				$exists = isset( $GLOBALS['diviops_test_post_meta'][ $post->ID ][ $clause['key'] ] )
-					|| ! empty( $GLOBALS['diviops_test_post_meta_rows'][ $post->ID ][ $clause['key'] ] );
-				if ( 'NOT EXISTS' === $clause['compare'] && $exists ) {
-					$keep = false;
-				}
-				if ( 'EXISTS' === $clause['compare'] && ! $exists ) {
-					$keep = false;
-				}
+			} elseif ( ! in_array( $status, $statuses, true ) ) {
+				continue;
 			}
+			$keep = empty( $args['meta_query'] )
+				|| diviops_test_meta_query_matches( (int) $post->ID, (array) $args['meta_query'] );
 			if ( $keep ) {
 				$matches[] = $post;
 			}
