@@ -10,6 +10,13 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.20.2](https://github.com/rubicon/diviops/compare/v1.20.1...v1.20.2) (2026-08-31)
+
+
+### Bug Fixes
+
+* **ci:** install an npm that supports OIDC before publishing ([#323](https://github.com/rubicon/diviops/issues/323)) ([1e551ec](https://github.com/rubicon/diviops/commit/1e551eca4b368ca8bbe706b6bd69e60602a70670))
+
 ## [1.20.1](https://github.com/rubicon/diviops/compare/v1.20.0...v1.20.1) (2026-08-31)
 
 
