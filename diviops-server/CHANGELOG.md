@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.1](https://github.com/rubicon/diviops/compare/mcp-server-v1.12.0...mcp-server-v1.12.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* **preset:** scan Theme Builder post types for preset references ([#315](https://github.com/rubicon/diviops/issues/315)) ([66b4e51](https://github.com/rubicon/diviops/commit/66b4e51730b4025b5350f5985d03ac3a8c81e9ed)), closes [#314](https://github.com/rubicon/diviops/issues/314)
+
 ## [1.12.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.11.0...mcp-server-v1.12.0) (2026-08-28)
 
 

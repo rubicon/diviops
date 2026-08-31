@@ -10,6 +10,15 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.20.1](https://github.com/rubicon/diviops/compare/v1.20.0...v1.20.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* **ci:** exempt version-only bumps from the FORK.md divergence gate ([#322](https://github.com/rubicon/diviops/issues/322)) ([e4a243c](https://github.com/rubicon/diviops/commit/e4a243ce92aaaed152385d36e1542fd84419a56b))
+* **drift:** compare the installed plugin's files, not just its version string ([#308](https://github.com/rubicon/diviops/issues/308)) ([dcf937f](https://github.com/rubicon/diviops/commit/dcf937f47266c15b1a651730791bde96a03cb429)), closes [#307](https://github.com/rubicon/diviops/issues/307)
+* **preset:** scan Theme Builder post types for preset references ([#315](https://github.com/rubicon/diviops/issues/315)) ([66b4e51](https://github.com/rubicon/diviops/commit/66b4e51730b4025b5350f5985d03ac3a8c81e9ed)), closes [#314](https://github.com/rubicon/diviops/issues/314)
+
 ## [1.20.0](https://github.com/rubicon/diviops/compare/v1.19.2...v1.20.0) (2026-08-28)
 
 
