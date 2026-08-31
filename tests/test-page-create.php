@@ -28,8 +28,12 @@
 require_once __DIR__ . '/wp-shim.php';
 
 $GLOBALS['diviops_test_posts']       = array();
-$GLOBALS['diviops_test_post_types']  = array( 'page' => true, 'post' => true, 'product' => true );
 $GLOBALS['diviops_test_next_id']     = 9000;
+
+// 'page' and 'post' come from the shim's built-in registry; a site custom post type
+// is registered the way a site registers one, so post_type_exists() and the
+// `'any'` resolution answer from the same place.
+diviops_test_register_post_type( 'product', array( 'public' => true ) );
 
 function diviops_pc_request( array $params ) {
 	return new DiviOps_Test_Request( $params );
