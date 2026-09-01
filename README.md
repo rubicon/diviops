@@ -32,6 +32,12 @@ Claude Code ◄──► MCP Server (stdio) ◄──► WordPress REST API ◄�
 | **`divi-5-builder`** skill | Block format rules, verified attribute paths, design patterns. Without it, agents guess attr formats and produce broken pages. | `skills/divi-5-builder/` (Claude: `claude plugin install rubicon/diviops`; Codex: copy `skills/*` into `~/.codex/skills`) |
 | **`diviops-design-library`** plugin | Optional. CSS entrance animations, gradient text, glass effects, Three.js WebGL shaders. | `diviops-design-library.zip` at repo root |
 
+The WordPress plugin, npm MCP server, and client-side skill are three independent
+components. WordPress and npm updates do not install or refresh a manually copied
+skill. A working MCP tool call proves connectivity only; native Divi authoring also
+requires a current `divi-5-builder` skill in the active client session. See
+[SETUP.md](SETUP.md#three-independent-components).
+
 ## Use cases
 
 DiviOps fits multiple WordPress workflows where AI-driven authoring + management is the value:
@@ -127,9 +133,10 @@ Claude orchestrates a few tool calls in sequence:
 
 1. `diviops_global_color_list` — discovers your brand palette.
 2. `diviops_template_list` / `diviops_template_get` — pulls a verified hero template that matches the request.
-3. `diviops_page_create` — creates `Spring Launch` as a draft with the hero block markup.
-4. `diviops_validate_blocks` — confirms the markup is well-formed before save.
-5. `diviops_render_preview` — returns the rendered HTML so you can verify before publishing.
+3. `diviops_validate_blocks` with inline `content` — confirms the constructed hero markup is well-formed before any write.
+4. `diviops_page_create` — creates `Spring Launch` as a draft from those exact validated bytes.
+5. `diviops_validate_blocks` with the saved `page_id` — verifies the persisted readback.
+6. `diviops_render_preview` — returns the rendered HTML so you can verify before publishing.
 
 The skill enforces the Divi block format, the design system, and the response contract throughout — you stay at the prompt level.
 

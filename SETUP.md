@@ -12,6 +12,21 @@ Get from zero to generating Divi 5 pages with Claude Code or Codex in ~15 minute
 - **Claude Code** CLI or **Codex** installed
 - A local or remote WordPress site (Local by Flywheel recommended for local dev)
 
+## Three independent components
+
+Native Divi authoring requires all three components below. They are installed and
+updated independently:
+
+1. **DiviOps Agent** runs inside WordPress and owns the REST capability surface.
+2. **`@rubicontv/diviops-mcp`** connects the AI client to that WordPress site.
+3. **`divi-5-builder` skill** gives the client the verified Divi block formats and
+   native-module authoring rules.
+
+A successful MCP connection proves transport, not native Divi authoring knowledge.
+Updating WordPress or npm does not update a manually copied skill. Verify all three
+components before the first write and after changing clients, workspaces, or skill
+installation methods.
+
 ## Step 1: Install the WordPress Plugin
 
 1. If installing from WordPress.org after listing, go to **WP Admin → Plugins → Add New**, search for **DiviOps Agent**, install it, and activate it.
@@ -276,11 +291,28 @@ cd /path/to/your-project
 claude
 ```
 
+This project-local path is
+`<workspace>/.claude/skills/divi-5-builder/SKILL.md`. Start Claude Code from that
+workspace so the project skill is discoverable.
+
+**Option D — Copy skill for Claude Code user-wide use**:
+```bash
+mkdir -p "$HOME/.claude/skills"
+cp -R /path/to/diviops/skills/divi-5-builder "$HOME/.claude/skills/"
+```
+
+The resulting path is `~/.claude/skills/divi-5-builder/SKILL.md`.
+
 Verify the skill loaded:
 ```
 What skills do you have?
 ```
 You should see `divi-5-builder` in the list.
+
+Use one ownership path for a skill. Do not keep a Claude plugin-managed copy and a
+stale manual copy active at the same time. Plugin-managed skills update with
+`claude plugin update divi-5-builder`; manual project or user copies update only
+when you replace those copied files from a newer distribution.
 
 Pro packages include additional slice skills such as `diviops-fluentcart` and `diviops-scf`. Install or copy all bundled `skills/*` entries when you want those Pro workflows available to the agent.
 
@@ -295,6 +327,33 @@ Restart Codex after copying skills. Verify with:
 What skills do you have?
 ```
 You should see `divi-5-builder` and any bundled DiviOps slice skills you installed.
+
+Codex manual skills are not updated by npm, WordPress, or Claude plugin updates;
+replace the copied directory from the new distribution and restart Codex. Claude
+Desktop and other MCP clients may connect to the server without loading Claude
+Code's `.claude/skills` directories. Use that client's supported knowledge or
+skill mechanism; otherwise treat the client as read-only for Divi authoring.
+
+## First-run native Divi verification
+
+Run this on a disposable local site or disposable draft before real authoring:
+
+```text
+Confirm that divi-5-builder is available, then call diviops_meta_info. Construct
+inline markup containing native Divi section, row, column, heading, text, and
+button modules and validate that inline content with diviops_validate_blocks
+before any write. Do not use a Code module, page-sized HTML, an iframe layout, or
+structural HTML inside text or container fields. Only when inline validation has
+zero errors, create one disposable draft from the validated bytes, validate the
+saved page again by page ID, and report the exact native module names written:
+divi/section, divi/row, divi/column, divi/heading, divi/text, and divi/button. If
+the skill or required DiviOps tools are unavailable, stop without creating or
+changing content.
+```
+
+Pass only when the client reports the native module tree and validation succeeds.
+A visually correct page made from large HTML blobs is a failed setup, not an
+acceptable fallback. Trash the disposable draft after verification.
 
 ## Step 8: Optional — Bootstrap the Design System
 
