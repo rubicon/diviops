@@ -45,7 +45,8 @@
  * nothing while looking like coverage.
  *
  * Every assertion below fails against the shim that preceded the issue it is
- * filed under — #326 for the sections above, #330 for the last one — except
+ * filed under — #326 for the sections above, #330 for the refusal and title
+ * sections, #335 for the no_found_rows one at the end — except
  * those marked inline as a control or a guard.
  *
  * The final sections are #330. #326 left `title`, `orderby`/`order`, `perm`,
@@ -657,4 +658,96 @@ assert_same(
 	'',
 	wp_shim_wp_query_error( array( 'post_type' => 'page', 'post_status' => 'publish' ) ),
 	'control: a query carrying none of the refused arguments is unaffected by any of this'
+);
+
+/* -- no_found_rows suppresses both counters (#335) ---------------------- */
+
+/**
+ * Run a type/status query and report the two paging counters plus the row count.
+ *
+ * Only the post registry is swapped, unlike wp_shim_wp_query_ids() above:
+ * nothing in this section passes a meta_query, so the meta registries are never
+ * read, and none of these arguments is one diviops_test_query_refuse_unmodelled()
+ * refuses, so a waiver left behind by another file cannot change these answers. `posts_per_page => 1` against a two-row match is deliberate — it makes
+ * found_posts (2), max_num_pages (2) and the returned row count (1) three
+ * distinct numbers, so a counter that is wrongly zero cannot hide behind one
+ * that is coincidentally right.
+ *
+ * @param array<string, mixed> $args WP_Query arguments.
+ * @return array{found_posts: int, max_num_pages: int, posts: int}
+ */
+function wp_shim_wp_query_counters( array $args ): array {
+	$saved_posts = $GLOBALS['diviops_test_posts'];
+
+	$GLOBALS['diviops_test_posts'] = array();
+	wp_shim_wp_query_type_fixtures();
+
+	try {
+		$query = new WP_Query(
+			array_merge( array( 'fields' => 'ids', 'posts_per_page' => 1 ), $args )
+		);
+		return array(
+			'found_posts'   => (int) $query->found_posts,
+			'max_num_pages' => (int) $query->max_num_pages,
+			'posts'         => count( $query->posts ),
+		);
+	} finally {
+		$GLOBALS['diviops_test_posts'] = $saved_posts;
+	}
+}
+
+// Guard, not a red case: this is the arrangement every assertion below is
+// measured against. `post_type => 'page', post_status => 'any'` matches two of
+// the nine fixtures, and one page of one row is served from them.
+assert_same(
+	array( 'found_posts' => 2, 'max_num_pages' => 2, 'posts' => 1 ),
+	wp_shim_wp_query_counters( array( 'post_type' => 'page', 'post_status' => 'any' ) ),
+	'control: with no_found_rows absent the stub counts the full match set and pages it, which is what core does for the same query'
+);
+
+assert_same(
+	array( 'found_posts' => 0, 'max_num_pages' => 0, 'posts' => 1 ),
+	wp_shim_wp_query_counters(
+		array( 'post_type' => 'page', 'post_status' => 'any', 'no_found_rows' => true )
+	),
+	'no_found_rows leaves both counters at the 0 they are declared with, because core returns from set_found_posts() before computing either (class-wp-query.php:3699) and never assigns them anywhere else'
+);
+
+// The row count above carries the other half of the contract: core skips the
+// SQL_CALC_FOUND_ROWS pass, not the LIMIT, so the page of rows is unchanged.
+// Asserted separately as ids rather than a count, because "one row" would still
+// hold if the model had quietly changed which row.
+assert_same(
+	array( 987701 ),
+	wp_shim_wp_query_type_ids(
+		array( 'post_type' => 'page', 'post_status' => 'any', 'posts_per_page' => 1, 'no_found_rows' => true )
+	),
+	'no_found_rows changes neither the rows returned nor their order, which is why this argument is modelled rather than refused'
+);
+
+// Guard, not a red case: false is core's own default (class-wp-query.php:2063-2066),
+// so refusing or suppressing on the mere presence of the key would diverge from
+// core for the value core assumes.
+assert_same(
+	array( 'found_posts' => 2, 'max_num_pages' => 2, 'posts' => 1 ),
+	wp_shim_wp_query_counters(
+		array( 'post_type' => 'page', 'post_status' => 'any', 'no_found_rows' => false )
+	),
+	'no_found_rows => false is core\'s default and computes both counters, so the suppression is scoped to the truthy value rather than to the argument'
+);
+
+assert_same(
+	array( 'found_posts' => 0, 'max_num_pages' => 0, 'posts' => 1 ),
+	wp_shim_wp_query_counters(
+		array( 'post_type' => 'page', 'post_status' => 'any', 'no_found_rows' => 1 )
+	),
+	'core casts the argument to bool before reading it (class-wp-query.php:2063-2064), so a truthy non-boolean suppresses the counters exactly as true does'
+);
+
+assert_same(
+	array( 'found_posts' => 2, 'max_num_pages' => 2, 'posts' => 1 ),
+	wp_shim_wp_query_counters(
+		array( 'post_type' => 'page', 'post_status' => 'any', 'no_found_rows' => '0' )
+	),
+	'and that same cast reads the string "0" as false, so it computes rather than suppressing'
 );
