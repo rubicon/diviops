@@ -215,6 +215,21 @@ Verify with `gh workflow run release.yaml --ref main`, then check the run log fo
 
 ### Cutting a release so it is both yours and signed
 
+> **Never merge a release PR with the GitHub merge button.** Use the recipe in this
+> section. The button leaves the PR merged but untagged, and release-please then aborts
+> every subsequent run with `There are untagged, merged release PRs outstanding` — a
+> deadlock whose abort happens *before* the tag-creating step, so it cannot clear itself
+> and nothing ships until someone recovers it by hand. This has now happened **three
+> times**: v1.19.1, the case tracked in
+> [#249](https://github.com/rubicon/diviops/issues/249), and v1.20.2 on 2026-08-31. The
+> recovery is documented below under "If a release PR merges but no tag appears", and it
+> is fiddly enough — the replacement tag must be lightweight and the release must target a
+> SHA rather than a branch — that avoiding the trigger is much cheaper than knowing the cure.
+>
+> Ordinary feature PRs are unaffected. This applies only to release PRs, which are the ones
+> release-please expects to tag itself.
+
+
 These two properties are exclusive under either GitHub merge button, and the
 reason is measured rather than assumed. Both were probed in a throwaway repo with
 the branch commit and the PR deliberately authored by different people:
