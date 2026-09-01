@@ -1316,10 +1316,10 @@ if ( ! function_exists( 'diviops_test_query_post_filter' ) ) {
 	 * `post_type => 'any'` is a string identity test in core, resolved to
 	 * `get_post_types( array( 'exclude_from_search' => false ) )`
 	 * (wp-includes/class-wp-query.php:2612-2613); anything else, array or string,
-	 * is a list of literal type names (class-wp-query.php:2624-2629).
+	 * is a list of literal type names (class-wp-query.php:2620-2623).
 	 *
 	 * `post_status` is split on commas when it is a string
-	 * (class-wp-query.php:2661-2663), and `'any'` is a member test: core adds a
+	 * (class-wp-query.php:2660-2662), and `'any'` is a member test: core adds a
 	 * `post_status <> x` term for every status registered `exclude_from_search`
 	 * that the caller did not also name (class-wp-query.php:2667-2673).
 	 *

@@ -140,7 +140,7 @@ assert_same(
 assert_same(
 	array( 987701, 987702 ),
 	wp_shim_wp_query_type_ids( array( 'post_type' => array( 'page', 'post' ), 'post_status' => 'publish' ) ),
-	'an array post_type is an IN list in core (class-wp-query.php:2624-2626), not a value to compare a single post_type against — the `!==` defect #314 filed against get_posts(), still live in this class'
+	'an array post_type is an IN list in core (class-wp-query.php:2620-2623), not a value to compare a single post_type against — the `!==` defect #314 filed against get_posts(), still live in this class'
 );
 
 assert_same(
@@ -178,13 +178,13 @@ assert_same(
 assert_same(
 	array( 987701, 987708 ),
 	wp_shim_wp_query_type_ids( array( 'post_type' => 'page', 'post_status' => array( 'publish', 'draft' ) ) ),
-	'an array post_status is a list of statuses in core (class-wp-query.php:2660-2661), not a value to compare one status against'
+	'core takes post_status as a list, using an array as given and splitting only a string (class-wp-query.php:2659-2662), not as a value to compare one status against'
 );
 
 assert_same(
 	array( 987706, 987708 ),
 	wp_shim_wp_query_type_ids( array( 'post_type' => 'page', 'post_status' => 'draft,trash' ) ),
-	'a comma-separated post_status string is a list, as core splits it (class-wp-query.php:2661-2663), not one status literally named "draft,trash"'
+	'a comma-separated post_status string is a list, as core splits it (class-wp-query.php:2660-2662), not one status literally named "draft,trash"'
 );
 
 assert_same(
