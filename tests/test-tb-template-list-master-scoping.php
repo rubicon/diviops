@@ -97,6 +97,15 @@ update_post_meta( 804, '_et_default', '1' );
 update_post_meta( 805, '_et_default', '1' );
 add_post_meta( 703, '_et_template', 805 );
 
+// tb_template_list() asks WP_Query for `orderby => 'ID', order => 'ASC'`
+// (trait-theme-builder.php:284-291). The shim refuses orderby rather than
+// approximating an ordering it cannot compute from these fixtures (#330);
+// waiving it here asserts that the argument is inert for this file, which holds
+// because every fixture is registered in ascending id order, and registry order
+// is what the stub returns. That makes the stub's answer the one core gives for
+// this query, so the positional reads below (`$rows[0]`) mean what they say.
+$GLOBALS['diviops_test_wp_query_unmodelled_ok'] = array( 'orderby', 'order' );
+
 $response = diviops_call( 'tb_template_list', array( new DiviOps_Test_Request( array() ) ) );
 $payload  = $response->get_data();
 
@@ -191,3 +200,5 @@ assert_same( 900335, $simple_rows[0]['header_layout_id'] ?? null, 'the pre-exist
 assert_same( true, $simple_rows[0]['enabled'] ?? null, 'the pre-existing enabled flag is untouched' );
 
 diviops_tb_forget_fixtures( array( 710, 810 ) );
+
+unset( $GLOBALS['diviops_test_wp_query_unmodelled_ok'] );
