@@ -48,12 +48,19 @@
  * filed under — #326 for the sections above, #330 for the last one — except
  * those marked inline as a control or a guard.
  *
- * The final section is #330. #326 left `title`, `orderby`/`order`, `perm`,
+ * The final sections are #330. #326 left `title`, `orderby`/`order`, `perm`,
  * `tax_query` and a negative `posts_per_page` accepted and ignored, which held two
  * standards inside one class: a meta_query feature the shim cannot model refuses
- * loudly, while a query argument it cannot model is silently dropped. Those
- * arguments now raise, on the same reasoning — a refusal is a visible gap, an
- * approximation is invisible wrong coverage.
+ * loudly, while a query argument it cannot model is silently dropped.
+ *
+ * They are split by whether this harness can answer them the way core does.
+ * `title` can — it is exact string equality on a value core reaches by a stated
+ * route — so it is modelled, and the cases below pin it to core's own predicate
+ * rather than to a truthiness test, which is where a `! empty()` reading of it
+ * goes wrong in both directions at once ('0' silently ignored, '   ' wrongly
+ * refused). The rest cannot: there is no term registry for `tax_query`, no user
+ * or `post_author` for `perm`, no ordering for `orderby`, so those raise. A
+ * refusal is a visible gap; an approximation is invisible wrong coverage.
  *
  * @package DiviOps
  */
@@ -473,19 +480,77 @@ function wp_shim_wp_query_error( array $args, array $waive = array() ): string {
 	}
 }
 
+/**
+ * Fixtures for the title cases: one plain title plus the three values that
+ * separate core's predicate from a truthiness test.
+ */
+function wp_shim_wp_query_title_fixtures(): void {
+	$titles = array( 987801 => 'alpha', 987802 => '0', 987803 => '   ', 987804 => "O'Brien" );
+	foreach ( $titles as $post_id => $title ) {
+		$post              = diviops_test_register_post( $post_id, 'fixture', 'page', $title );
+		$post->post_status = 'publish';
+	}
+}
+
+/**
+ * Run a title lookup over wp_shim_wp_query_title_fixtures().
+ *
+ * @param mixed $title The title argument, passed through exactly as given.
+ * @return array<int, int>
+ */
+function wp_shim_wp_query_title_ids( $title ): array {
+	return wp_shim_wp_query_ids(
+		array( 'post_type' => 'page', 'post_status' => 'publish', 'title' => $title ),
+		'wp_shim_wp_query_title_fixtures'
+	);
+}
+
 assert_same(
-	"wp-shim WP_Query: 'title' is not modelled. Core adds an exact post_title term for it (class-wp-query.php:2178-2179), so ignoring it returns every row the rest of the query matched. Model it in the WP_Query stub or drop 'title' from the query under test. Alternatively list 'title' in \$GLOBALS['diviops_test_wp_query_unmodelled_ok'] when the argument is inert for the fixtures under test.",
-	wp_shim_wp_query_error( array( 'post_type' => 'page', 'post_status' => 'any', 'title' => 'fixture 987701' ) ),
-	'an exact-title lookup raises rather than returning every row under the other arguments — canvas_existing_id_by_title() and library_existing_id_by_title() are collision checks that read posts[0], so a widened result reports a conflict against the wrong post'
+	array( 987801 ),
+	wp_shim_wp_query_title_ids( 'alpha' ),
+	'an exact-title lookup returns the single row core returns — canvas_existing_id_by_title() and library_existing_id_by_title() are collision checks that read posts[0], so a widened result reports a conflict against the wrong post'
 );
 
-// Guard, not a red case: core only adds the post_title term for a non-empty title
-// (class-wp-query.php:2178), so an empty one is genuinely inert and refusing it
-// would refuse a query this class already answers as core does.
 assert_same(
-	'',
-	wp_shim_wp_query_error( array( 'post_type' => 'page', 'post_status' => 'publish', 'title' => '' ) ),
-	'an empty title adds no term in core, so it is inert here too rather than a refusal'
+	array(),
+	wp_shim_wp_query_title_ids( 'no fixture carries this title' ),
+	'a title nothing matches returns nothing rather than every row, which is the answer that makes a collision check mean anything at all'
+);
+
+assert_same(
+	array( 987802 ),
+	wp_shim_wp_query_title_ids( '0' ),
+	"the string '0' is a title like any other: core's test is '' !== the trimmed title (class-wp-query.php:850, 2178), not a truthiness test, so it filters rather than reading as absent"
+);
+
+assert_same(
+	array( 987802 ),
+	wp_shim_wp_query_title_ids( 0 ),
+	'core runs a scalar title through trim() before that comparison (class-wp-query.php:850), so the integer 0 is the string "0" and matches the same row'
+);
+
+assert_same(
+	array( 987804 ),
+	wp_shim_wp_query_title_ids( "O\\'Brien" ),
+	'core compares against stripslashes() of the title (class-wp-query.php:2179), so a slashed apostrophe matches the unslashed row rather than nothing'
+);
+
+assert_same(
+	array( 987801, 987802, 987803, 987804 ),
+	wp_shim_wp_query_title_ids( '   ' ),
+	'a whitespace-only title trims to the empty string in core and adds no term at all, so it is inert rather than a filter matching the whitespace-titled row'
+);
+
+assert_same(
+	array( 987801, 987802, 987803, 987804 ),
+	wp_shim_wp_query_title_ids( '' ),
+	'an empty title adds no term in core, so every row under the other arguments comes back'
+);
+
+assert_same(
+	array( 987801, 987802, 987803, 987804 ),
+	wp_shim_wp_query_title_ids( array( 'alpha' ) ),
+	'core replaces a non-scalar title with the empty string before the comparison (class-wp-query.php:850), so an array is inert rather than matching or raising'
 );
 
 assert_same(
@@ -508,7 +573,7 @@ assert_same(
 );
 
 assert_same(
-	"wp-shim WP_Query: perm 'editable' is not modelled. Core narrows the result to posts the current user may edit and this stub applies no capability filter at all, so a coarse prefilter cannot be told apart from the exact check that follows it. Model it in the WP_Query stub or drop 'perm' from the query under test. Alternatively list 'perm' in \$GLOBALS['diviops_test_wp_query_unmodelled_ok'] when the argument is inert for the fixtures under test.",
+	"wp-shim WP_Query: perm 'editable' is not modelled. Core narrows to the current user's own posts, and only when that user lacks the edit_others capability for the post type (class-wp-query.php:2694); this stub has no user, role or post_author to compute either half from, so it can neither apply that narrowing nor rule out that core would. Model it in the WP_Query stub or drop 'perm' from the query under test. Alternatively list 'perm' in \$GLOBALS['diviops_test_wp_query_unmodelled_ok'] when the argument is inert for the fixtures under test.",
 	wp_shim_wp_query_error( array( 'post_type' => 'page', 'post_status' => 'any', 'perm' => 'editable' ) ),
 	'query_inspectable_post_ids() passes perm as a coarse prefilter before its own per-object edit_post check; with no capability filter here a test cannot tell the two apart, so the prefilter reads as tested while being untested'
 );
@@ -525,8 +590,31 @@ assert_same(
 	"order alone still changes core's answer, because core's default orderby is post_date rather than nothing"
 );
 
+// Guard, not a red case: core blanks ORDER BY outright for 'none'
+// (class-wp-query.php:2518), so registry order is the answer core gives and a
+// refusal here would refuse a query this class already answers correctly.
 assert_same(
-	"wp-shim WP_Query: posts_per_page '-1' is not modelled. Core reads a negative value as unlimited; this stub passes it to array_slice() as a length, which drops the last row. Model it in the WP_Query stub or pass a positive cap larger than the fixture set. Alternatively list 'posts_per_page' in \$GLOBALS['diviops_test_wp_query_unmodelled_ok'] when the argument is inert for the fixtures under test.",
+	'',
+	wp_shim_wp_query_error( array( 'post_type' => 'page', 'post_status' => 'any', 'orderby' => 'none' ) ),
+	"orderby 'none' blanks core's ORDER BY, so the refusal is scoped to an ordering this stub would actually get wrong rather than to the argument"
+);
+
+assert_same(
+	'',
+	wp_shim_wp_query_error( array( 'post_type' => 'page', 'post_status' => 'any', 'orderby' => 'none', 'order' => 'DESC' ) ),
+	'order is inert alongside a blanked ORDER BY, because there is no ordering left for a direction to apply to'
+);
+
+// Guard, not a red case: false and an empty array blank ORDER BY in core too
+// (class-wp-query.php:2513), and both were already inert here.
+assert_same(
+	'',
+	wp_shim_wp_query_error( array( 'post_type' => 'page', 'post_status' => 'any', 'orderby' => false ) ),
+	'a false orderby blanks ORDER BY in core rather than falling back to the post_date default, so it is inert here as well'
+);
+
+assert_same(
+	"wp-shim WP_Query: posts_per_page '-1' is not modelled. Core reads -1 as unlimited (class-wp-query.php:2024) but anything below -1 as abs() rows (class-wp-query.php:2042-2043), so -5 asks for five rows rather than every row; this stub passes the value straight to array_slice() as a length, which drops rows from the end in either case. Model it in the WP_Query stub or pass a positive cap larger than the fixture set. Alternatively list 'posts_per_page' in \$GLOBALS['diviops_test_wp_query_unmodelled_ok'] when the argument is inert for the fixtures under test.",
 	wp_shim_wp_query_error( array( 'post_type' => 'page', 'post_status' => 'any', 'posts_per_page' => -1 ) ),
 	'the shape a test author reaches for first to mean "every row" raises rather than silently returning all but the last one'
 );
@@ -557,12 +645,12 @@ assert_same(
 );
 
 assert_same(
-	"wp-shim WP_Query: 'title' is not modelled. Core adds an exact post_title term for it (class-wp-query.php:2178-2179), so ignoring it returns every row the rest of the query matched. Model it in the WP_Query stub or drop 'title' from the query under test. Alternatively list 'title' in \$GLOBALS['diviops_test_wp_query_unmodelled_ok'] when the argument is inert for the fixtures under test.",
+	"wp-shim WP_Query: perm 'editable' is not modelled. Core narrows to the current user's own posts, and only when that user lacks the edit_others capability for the post type (class-wp-query.php:2694); this stub has no user, role or post_author to compute either half from, so it can neither apply that narrowing nor rule out that core would. Model it in the WP_Query stub or drop 'perm' from the query under test. Alternatively list 'perm' in \$GLOBALS['diviops_test_wp_query_unmodelled_ok'] when the argument is inert for the fixtures under test.",
 	wp_shim_wp_query_error(
-		array( 'post_type' => 'page', 'post_status' => 'any', 'orderby' => 'ID', 'title' => 'fixture 987701' ),
+		array( 'post_type' => 'page', 'post_status' => 'any', 'orderby' => 'ID', 'perm' => 'editable' ),
 		array( 'orderby' )
 	),
-	'the waiver is per argument name rather than a blanket off switch — a file that waives orderby still gets the title refusal, which is what keeps it from becoming the silent accept it replaced'
+	'the waiver is per argument name rather than a blanket off switch — a file that waives orderby still gets the perm refusal, which is what keeps it from becoming the silent accept it replaced'
 );
 
 assert_same(
