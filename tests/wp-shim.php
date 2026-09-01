@@ -2561,6 +2561,11 @@ if ( ! class_exists( 'WP_Query' ) ) {
 	 * registry, no user or post_author, and no ordering here to compute them
 	 * from. See diviops_test_query_refuse_unmodelled().
 	 *
+	 * `no_found_rows` is modelled rather than ignored (#335). It changes neither
+	 * the rows returned nor their order, only whether found_posts and
+	 * max_num_pages are computed, so honouring it is one branch rather than an
+	 * approximation of core this harness could get wrong.
+	 *
 	 * post_type and post_status resolve through diviops_test_query_post_filter(),
 	 * the same registries get_posts() reads, and meta_query through
 	 * diviops_test_meta_query_matches(), the same clause evaluator. Both were
@@ -2625,8 +2630,19 @@ if ( ! class_exists( 'WP_Query' ) ) {
 				$matches[] = $post;
 			}
 
-			$this->found_posts   = count( $matches );
-			$this->max_num_pages = $per_page > 0 ? (int) ceil( $this->found_posts / $per_page ) : 0;
+			// Core skips the count for a truthy no_found_rows rather than
+			// computing it: set_found_posts() returns before assigning either
+			// counter (class-wp-query.php:3699) and nothing else in the class
+			// assigns them, so both keep the 0 they are declared with
+			// (class-wp-query.php:178, 186). empty() is core's own (bool) cast
+			// (class-wp-query.php:2063-2066) on every value it can be handed,
+			// the string '0' included, and false is the default core assumes
+			// when the argument is absent. Only the count is skipped — the LIMIT
+			// still applies, so the slice below is deliberately outside this.
+			if ( empty( $args['no_found_rows'] ) ) {
+				$this->found_posts   = count( $matches );
+				$this->max_num_pages = $per_page > 0 ? (int) ceil( $this->found_posts / $per_page ) : 0;
+			}
 
 			$offset     = ( $paged - 1 ) * $per_page;
 			$page_posts = array_slice( $matches, $offset, $per_page );
