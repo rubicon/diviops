@@ -1368,6 +1368,116 @@ if ( ! function_exists( 'diviops_test_query_post_matches' ) ) {
 	}
 }
 
+if ( ! function_exists( 'diviops_test_query_refuse_unmodelled' ) ) {
+	/**
+	 * Raise on the WP_Query arguments this harness does not model (#330).
+	 *
+	 * The class held two standards. A meta_query feature it cannot model refuses
+	 * loudly — eleven `wp-shim meta_query:` refusals cover unmodelled casts,
+	 * operators, relations, nested groups and uncastable values — while a query
+	 * argument it cannot model was accepted and dropped. That is the same defect
+	 * class #318 and #326 closed one level down: the stub answers a different
+	 * question than the caller asked and nothing says so. A refusal is a visible
+	 * gap; four more faithful implementations are four more chances to encode an
+	 * assumption about core that no test here can check.
+	 *
+	 * `title` is the case that shows why. It got worse rather than better when
+	 * meta_query started filtering: canvas_existing_id_by_title() went from
+	 * returning nothing (the meta_query matched everything and `post_status =>
+	 * 'any'` matched nothing) to reporting the first canvas under the parent page
+	 * as a title collision whatever its title, which is a plausible answer to a
+	 * different question. Measured with `title` waived, which is the pre-#330
+	 * behaviour: three canvases under parent 4242 and a lookup for a title none of
+	 * them carries returns 900001. A test asserting "duplicating a canvas whose
+	 * title already exists reports a conflict" would pass on any canvas existing.
+	 *
+	 * The line drawn here: an argument raises when ignoring it would change the
+	 * answer core gives — the rows returned, or their order. An argument value
+	 * that is inert in core is inert here too, and a value this class already
+	 * answers as core does is not refused. So an empty `title` or `tax_query`
+	 * passes (core adds no term for either), a positive `posts_per_page` pages as
+	 * before, and only a negative one — which core reads as unlimited and
+	 * array_slice() reads as a length — raises.
+	 *
+	 * `$GLOBALS['diviops_test_wp_query_unmodelled_ok']` is the waiver seam, a list
+	 * of argument names. A handler-driven test cannot edit the query its handler
+	 * builds, so without a seam a refusal deletes that handler's coverage
+	 * outright — and reducing coverage is worse than the gap the refusal closes.
+	 * Listing an argument asserts that it is inert for that file's fixtures, and
+	 * that assertion is the test author's to justify in a comment. The waiver is
+	 * per argument name, never a blanket off switch, so a file that waives
+	 * `orderby` still refuses `title`. Three files take it today
+	 * (test-media.php, test-tb-marked-unused-at.php,
+	 * test-tb-template-list-master-scoping.php); the gap is legible in each of
+	 * them rather than invisible everywhere, which is the whole point.
+	 *
+	 * @param array<string, mixed> $args WP_Query arguments.
+	 * @throws RuntimeException When an argument's effect is not modelled.
+	 */
+	function diviops_test_query_refuse_unmodelled( array $args ): void {
+		$waived = (array) ( $GLOBALS['diviops_test_wp_query_unmodelled_ok'] ?? array() );
+
+		$refuse = static function ( string $key, string $label, string $reason ) use ( $waived ): void {
+			if ( in_array( $key, $waived, true ) ) {
+				return;
+			}
+			throw new RuntimeException(
+				sprintf(
+					"wp-shim WP_Query: %s is not modelled. %s Alternatively list '%s' in \$GLOBALS['diviops_test_wp_query_unmodelled_ok'] when the argument is inert for the fixtures under test.",
+					$label,
+					$reason,
+					$key
+				)
+			);
+		};
+
+		if ( ! empty( $args['title'] ) ) {
+			$refuse(
+				'title',
+				"'title'",
+				"Core adds an exact post_title term for it (class-wp-query.php:2178-2179), so ignoring it returns every row the rest of the query matched. Model it in the WP_Query stub or drop 'title' from the query under test."
+			);
+		}
+		if ( ! empty( $args['tax_query'] ) ) {
+			$refuse(
+				'tax_query',
+				"'tax_query'",
+				"Ignoring it returns rows under every term rather than the terms the caller scoped to. Model it in the WP_Query stub or drop 'tax_query' from the query under test."
+			);
+		}
+		if ( ! empty( $args['perm'] ) ) {
+			$refuse(
+				'perm',
+				sprintf( "perm '%s'", (string) $args['perm'] ),
+				"Core narrows the result to posts the current user may edit and this stub applies no capability filter at all, so a coarse prefilter cannot be told apart from the exact check that follows it. Model it in the WP_Query stub or drop 'perm' from the query under test."
+			);
+		}
+		foreach ( array( 'orderby', 'order' ) as $key ) {
+			if ( ! empty( $args[ $key ] ) ) {
+				$refuse(
+					$key,
+					sprintf(
+						"%s '%s'",
+						$key,
+						is_scalar( $args[ $key ] ) ? (string) $args[ $key ] : gettype( $args[ $key ] )
+					),
+					sprintf(
+						"This stub returns fixtures in registry order whatever the caller asks for, which is a different order than core's and, once posts_per_page truncates, a different set of rows. Model it in the WP_Query stub or drop '%s' from the query under test.",
+						$key
+					)
+				);
+			}
+		}
+		if ( isset( $args['posts_per_page'] ) && (int) $args['posts_per_page'] < 0 ) {
+			$refuse(
+				'posts_per_page',
+				sprintf( "posts_per_page '%d'", (int) $args['posts_per_page'] ),
+				'Core reads a negative value as unlimited; this stub passes it to array_slice() as a length, which drops the last row. Model it in the WP_Query stub or pass a positive cap larger than the fixture set.'
+			);
+		}
+	}
+}
+
 if ( ! function_exists( 'wp_slash' ) ) {
 	function wp_slash( $value ) {
 		return $value;
@@ -2427,9 +2537,9 @@ if ( ! class_exists( 'WP_Query' ) ) {
 	 * prefix match subsumes that), a meta_query, and posts_per_page/paged
 	 * pagination — run against the same $GLOBALS['diviops_test_posts'] registry
 	 * get_post()/diviops_test_register_post() use, so a fixture registered there
-	 * is what this class scans. NOT a general WP_Query reimplementation: no
-	 * tax_query, no orderby, and `title` and `perm` are still accepted and
-	 * ignored, because no handler under test asserts on them yet.
+	 * is what this class scans. NOT a general WP_Query reimplementation: `title`,
+	 * `tax_query`, `perm`, `orderby`/`order` and a negative `posts_per_page` are
+	 * refused rather than modelled — see diviops_test_query_refuse_unmodelled().
 	 *
 	 * post_type and post_status resolve through diviops_test_query_post_filter(),
 	 * the same registries get_posts() reads, and meta_query through
@@ -2448,6 +2558,8 @@ if ( ! class_exists( 'WP_Query' ) ) {
 		public $max_num_pages = 0;
 
 		public function __construct( array $args = array() ) {
+			diviops_test_query_refuse_unmodelled( $args );
+
 			$filter      = diviops_test_query_post_filter(
 				$args['post_type'] ?? 'post',
 				$args['post_status'] ?? 'publish'

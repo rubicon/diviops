@@ -75,6 +75,15 @@ update_post_meta( 931, '_et_theme_builder_marked_as_unused', DIVIOPS_MARKED_STAM
 
 // ── tb_template_list ─────────────────────────────────────────────────────
 
+// tb_template_list() asks WP_Query for `orderby => 'ID', order => 'ASC'`
+// (trait-theme-builder.php:284-291). The shim refuses orderby rather than
+// approximating an ordering it cannot compute from these fixtures (#330);
+// waiving it here asserts that the argument is inert for this file, which holds
+// twice over — the fixtures are registered in ascending id order, and every
+// assertion below reads the result through diviops_marked_rows_by_id(), which
+// indexes by template id rather than by position.
+$GLOBALS['diviops_test_wp_query_unmodelled_ok'] = array( 'orderby', 'order' );
+
 $rows = diviops_marked_rows_by_id(
 	diviops_call( 'tb_template_list', array( new DiviOps_Test_Request( array() ) ) )->get_data()['data']['results'] ?? array()
 );
@@ -135,3 +144,5 @@ foreach ( array( 'update_post_meta', 'add_post_meta', 'delete_post_meta' ) as $w
 }
 
 diviops_marked_forget( array( 730, 830, 831, 930, 931 ) );
+
+unset( $GLOBALS['diviops_test_wp_query_unmodelled_ok'] );

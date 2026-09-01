@@ -738,6 +738,20 @@ assert_true( false === $d['ok'], 'media_get non-attachment: not ok' );
 assert_true( 'not_found' === $d['error']['code'], 'media_get non-attachment: not_found code' );
 
 // ── media_list(): pagination ────────────────────────────────────────────
+// media_list() reaches WP_Query through query_inspectable_post_ids(), which sets
+// `perm => 'editable'` as a coarse prefilter and then still runs the exact
+// per-object edit_post check on every row it got back (trait-core.php:2023-2047).
+// The shim refuses perm rather than approximating a capability filter it has no
+// user, role or post_author to compute from (#330). Waiving it here asserts the
+// prefilter is inert for the answers these assertions read, and it is: ignoring
+// perm hands filter_inspectable_post_objects() a superset, and that function
+// narrows it by the same edit_post capability perm is a coarse form of. The
+// uneditable-attachment block below proves the exact check is what decides —
+// 803 is opted into $GLOBALS['diviops_test_uneditable_ids'] and media_list
+// reports a total of 2 without it. Nothing here asserts on the scan-truncation
+// counters, which are the one place the prefilter's width could show through.
+$GLOBALS['diviops_test_wp_query_unmodelled_ok'] = array( 'perm' );
+
 // Reset: the media_get fixtures above (501 attachment, 502 non-attachment)
 // must not leak into these counts.
 $GLOBALS['diviops_test_posts']       = array();
@@ -1157,6 +1171,7 @@ unset(
 	$GLOBALS['diviops_test_posts'],
 	$GLOBALS['diviops_test_attachments'],
 	$GLOBALS['diviops_test_post_meta'],
-	$GLOBALS['diviops_test_uneditable_ids']
+	$GLOBALS['diviops_test_uneditable_ids'],
+	$GLOBALS['diviops_test_wp_query_unmodelled_ok']
 );
 $GLOBALS['diviops_test_allowed_mimes'] = array( 'png' => 'image/png' );
