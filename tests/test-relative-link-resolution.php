@@ -96,18 +96,17 @@ function diviops_link_resolve( string $path ): array {
 }
 
 /**
- * Remove fenced code blocks and inline code spans from Markdown source.
+ * Remove fenced code blocks from Markdown source, leaving inline code spans alone.
  *
- * Link-shaped text inside code is a quotation, not a link. The plan documents under
- * `docs/superpowers/` are full of it: they quote the exact table row a later task must
- * paste into `SKILL.md`, links and all. Checking those would report a "broken link" for
- * a path that is correct relative to the file the row is destined for -- a gate that
- * cries wolf on correct documentation is a gate that gets switched off.
+ * Split out from diviops_link_strip_code() for the heading scanner (#336), which needs
+ * the fence half and must not have the span half: a code span inside a heading IS the
+ * heading text, so `## ``divi/contact-field`` ` anchors at `#divicontact-field`, and
+ * stripping the span would slug it to the empty string and silently drop the heading.
  *
  * @param string $content Markdown source.
- * @return string Source with code fences and code spans removed.
+ * @return string Source with fenced code blocks removed.
  */
-function diviops_link_strip_code( string $content ): string {
+function diviops_link_strip_fences( string $content ): string {
 	$lines  = explode( "\n", $content );
 	$kept   = array();
 	$fence  = '';
@@ -128,8 +127,22 @@ function diviops_link_strip_code( string $content ): string {
 			$fence = '';
 		}
 	}
-	$stripped = implode( "\n", $kept );
+	return implode( "\n", $kept );
+}
 
+/**
+ * Remove fenced code blocks and inline code spans from Markdown source.
+ *
+ * Link-shaped text inside code is a quotation, not a link. The plan documents under
+ * `docs/superpowers/` are full of it: they quote the exact table row a later task must
+ * paste into `SKILL.md`, links and all. Checking those would report a "broken link" for
+ * a path that is correct relative to the file the row is destined for -- a gate that
+ * cries wolf on correct documentation is a gate that gets switched off.
+ *
+ * @param string $content Markdown source.
+ * @return string Source with code fences and code spans removed.
+ */
+function diviops_link_strip_code( string $content ): string {
 	/*
 	 * Inline spans: a run of backticks closed by a run of the same length on the SAME
 	 * line. Bounding it to one line is not a simplification, it is the correctness
@@ -141,7 +154,7 @@ function diviops_link_strip_code( string $content ): string {
 	 * reported a clean pass. An unpaired backtick now leaves the rest of its line
 	 * intact, which fails toward checking too much rather than too little.
 	 */
-	return (string) preg_replace( '/(`+)[^\n]*?\1/', '', $stripped );
+	return (string) preg_replace( '/(`+)[^\n]*?\1/', '', diviops_link_strip_fences( $content ) );
 }
 
 /**
@@ -160,6 +173,153 @@ function diviops_link_targets( string $content ): array {
 		return array();
 	}
 	return $matches[1];
+}
+
+/**
+ * Slugify one heading's text the way GitHub anchors it.
+ *
+ * The rule is html-pipeline's TableOfContentsFilter, which is what renders every
+ * heading anchor a reader of this repository will ever click:
+ *
+ *     text.downcase.gsub(/[^\p{Word}\- ]/u, '').tr(' ', '-')
+ *
+ * Ruby's `\p{Word}` is letters, marks, decimal digits and connector punctuation, so
+ * `_` survives and every other punctuation mark is **deleted in place** rather than
+ * replaced by a separator. That deletion is the whole trap, and it is why a naive
+ * slugger reports false positives on this corpus:
+ *
+ *   - `presets -- broad scope` (em-dash) loses the dash but keeps BOTH spaces around
+ *     it, so the anchor carries a double hyphen. Four links in `skills/` wrote a
+ *     single one and dangled (#336), while `variable-bindings.md`'s namespace anchors
+ *     and `presets.md`'s own table of contents had the doubled form right all along.
+ *   - `presets (broad scope)` loses the parenthesis with no space beside it, so that
+ *     shape yields a single hyphen. Same words, different anchor.
+ *
+ * GitHub slugs the *rendered* text, so markup producing no text of its own is removed
+ * first: HTML comments, HTML tags, and the URL half of an inline link. Emphasis
+ * markers and backticks need no special handling because the strip below deletes
+ * them -- and it must not delete what they wrap.
+ *
+ * Not trimmed, deliberately. A trailing `<!-- UNVERIFIED -->` leaves a real trailing
+ * space in the rendered heading, which GitHub turns into a trailing hyphen; trimming
+ * would invent an anchor GitHub does not serve and pass a link that 404s.
+ *
+ * @param string $heading Heading text, with the leading `#` run already removed.
+ * @return string GitHub anchor slug, without the leading `#`.
+ */
+function diviops_link_slug( string $heading ): string {
+	$text = (string) preg_replace( '/<!--.*?-->/s', '', $heading );
+	$text = (string) preg_replace( '/!?\[([^\]]*)\]\([^)]*\)/', '$1', $text );
+	$text = (string) preg_replace( '/<[^>]+>/', '', $text );
+	$text = mb_strtolower( $text, 'UTF-8' );
+	$text = (string) preg_replace( '/[^\p{L}\p{Nl}\p{M}\p{Nd}\p{Pc}\- ]+/u', '', $text );
+	return str_replace( ' ', '-', $text );
+}
+
+/**
+ * Collect every heading anchor a Markdown document publishes, in document order.
+ *
+ * ATX headings only (`## Title`). The corpus has no setext headings -- the only
+ * `---` underlines in it close YAML front matter -- and inventing support for a form
+ * nobody writes would be untested code guarding nothing.
+ *
+ * Repeated headings are disambiguated the way GitHub does it, by appending `-1`,
+ * `-2`, and so on to the second and later occurrences.
+ *
+ * @param string $content Markdown source.
+ * @return array<int, string> Anchor slugs, without the leading `#`.
+ */
+function diviops_link_heading_anchors( string $content ): array {
+	$seen    = array();
+	$anchors = array();
+	foreach ( explode( "\n", diviops_link_strip_fences( $content ) ) as $line ) {
+		if ( ! preg_match( '/^ {0,3}#{1,6}\s+(.*?)\s*#*\s*$/', $line, $heading ) ) {
+			continue;
+		}
+		$slug = diviops_link_slug( $heading[1] );
+		if ( '' === $slug ) {
+			continue;
+		}
+		$count         = isset( $seen[ $slug ] ) ? $seen[ $slug ] : 0;
+		$seen[ $slug ] = $count + 1;
+		$anchors[]     = 0 === $count ? $slug : $slug . '-' . $count;
+	}
+	return $anchors;
+}
+
+/**
+ * Anchors published by one document, parsed once per run.
+ *
+ * `SKILL.md` and its reference files link into each other repeatedly; without the
+ * cache the larger references get re-scanned on every inbound link.
+ *
+ * @param string $root     Repository root.
+ * @param string $relative Repository-relative path to a Markdown file.
+ * @return array<int, string> Anchor slugs.
+ */
+function diviops_link_anchors_for( string $root, string $relative ): array {
+	static $cache = array();
+	if ( ! isset( $cache[ $relative ] ) ) {
+		$cache[ $relative ] = diviops_link_heading_anchors( (string) file_get_contents( $root . '/' . $relative ) );
+	}
+	return $cache[ $relative ];
+}
+
+/**
+ * Nearest anchor to a fragment, by edit distance.
+ *
+ * Only ever called on a failure, to make the message actionable. Every dangling
+ * anchor found when this check was written was one or two characters off a real
+ * heading, so naming the nearest one turns the failure into the fix.
+ *
+ * @param string             $fragment Fragment that did not match.
+ * @param array<int, string> $anchors  Anchors the target document publishes.
+ * @return string Closest anchor, or the empty string when the document has none.
+ */
+function diviops_link_nearest_anchor( string $fragment, array $anchors ): string {
+	$nearest  = '';
+	$shortest = PHP_INT_MAX;
+	foreach ( $anchors as $anchor ) {
+		// levenshtein() returns -1 for arguments over 255 bytes before PHP 8.0.
+		if ( strlen( $fragment ) > 255 || strlen( $anchor ) > 255 ) {
+			continue;
+		}
+		$distance = levenshtein( $fragment, $anchor );
+		if ( $distance < $shortest ) {
+			$shortest = $distance;
+			$nearest  = $anchor;
+		}
+	}
+	return $nearest;
+}
+
+/**
+ * Assert that a link's `#fragment` names a heading the target document publishes.
+ *
+ * Reported through assert_same() rather than assert_true() so the runner prints the
+ * fragment against the nearest real anchor. `expected` vs `actual` on two strings
+ * one hyphen apart is the entire diagnosis for the em-dash class above; a bare
+ * `true` vs `false` would leave the reader to slug the headings by hand.
+ *
+ * @param string $root        Repository root.
+ * @param string $source      Document the link was written in.
+ * @param string $target_path Document the link resolves to.
+ * @param string $target      Raw link target, for the message.
+ * @param string $fragment    Fragment, without the leading `#`.
+ */
+function diviops_link_assert_fragment( string $root, string $source, string $target_path, string $target, string $fragment ): void {
+	$anchors = diviops_link_anchors_for( $root, $target_path );
+	$found   = in_array( $fragment, $anchors, true );
+	assert_same(
+		$fragment,
+		$found ? $fragment : diviops_link_nearest_anchor( $fragment, $anchors ),
+		sprintf(
+			'%s: link target "%s" names a heading that exists in %s (actual = nearest real anchor)',
+			$source,
+			$target,
+			$target_path
+		)
+	);
 }
 
 /**
@@ -222,6 +382,47 @@ function diviops_link_gate_run(): void {
 		'the link extractor ignores links quoted inside code spans and fenced code blocks'
 	);
 
+	/*
+	 * Same reasoning for the fragment half. Every one of these is a shape that exists
+	 * in this repository, and the first three are the exact distinctions a naive
+	 * slugger gets wrong -- so a corpus that goes clean still proves the slug rule
+	 * itself is the one GitHub applies.
+	 */
+	$slug_cases = array(
+		// [ heading text, expected anchor ].
+		// The em-dash: deleted in place, both spaces kept, so the anchor doubles the
+		// hyphen. This is the shape four links in skills/ got wrong (#336).
+		array( 'Hover-padding gate on Button group presets — broad scope, upstream-tracked', 'hover-padding-gate-on-button-group-presets--broad-scope-upstream-tracked' ),
+		// A parenthesis has no space beside it, so the same words yield ONE hyphen.
+		array( 'Hover-padding gate on Button group presets (broad scope)', 'hover-padding-gate-on-button-group-presets-broad-scope' ),
+		// Code spans are heading text; stripping them would slug this to nothing.
+		array( '`divi/contact-field`', 'divicontact-field' ),
+		array( 'Namespace 2 — Global colors (`type:"color"`, `gcid-`)', 'namespace-2--global-colors-typecolor-gcid-' ),
+		array( 'Shared family inventory (47 maps)', 'shared-family-inventory-47-maps' ),
+		// `$` and parentheses go; `_` and `-` are word characters and stay.
+		array( 'Divi 5 `$variable()` Bindings', 'divi-5-variable-bindings' ),
+		array( 'Keep_the_underscores and-the-hyphens', 'keep_the_underscores-and-the-hyphens' ),
+		// A link renders as its text, not its URL.
+		array( 'A [linked](https://example.test/) word', 'a-linked-word' ),
+	);
+	foreach ( $slug_cases as $case ) {
+		assert_same( $case[1], diviops_link_slug( $case[0] ), sprintf( 'heading "%s" anchors at "#%s"', $case[0], $case[1] ) );
+	}
+
+	assert_same(
+		array( 'title', 'section', 'section-1', 'divicontact-field' ),
+		diviops_link_heading_anchors(
+			"# Title\n"
+			. "## Section\n"
+			. "```\n### Section in a fence\n```\n"
+			. "### Section\n"
+			. "#### `divi/contact-field`\n"
+			. "Not a heading: #hashtag\n"
+			. "#no-space-after-hash\n"
+		),
+		'heading anchors are collected at every level, deduplicated GitHub-style, and never read out of a code fence'
+	);
+
 	$files = diviops_link_tracked_markdown( $root );
 
 	// A corpus that silently went empty -- a bad pathspec, git missing from PATH --
@@ -231,21 +432,33 @@ function diviops_link_gate_run(): void {
 		'git reported at least one tracked Markdown file for this gate to inspect'
 	);
 
-	$checked = 0;
+	$checked   = 0;
+	$fragments = 0;
 	foreach ( $files as $relative ) {
 		$content = (string) file_get_contents( $root . '/' . $relative );
 		$dir     = dirname( $relative );
 		$dir     = '.' === $dir ? '' : $dir;
 
 		foreach ( diviops_link_targets( $content ) as $target ) {
-			// Scheme-qualified, protocol-relative and pure-fragment targets are out of
-			// scope: this gate never touches the network.
-			if ( preg_match( '~^([a-z][a-z0-9+.-]*:|//|#)~i', $target ) ) {
+			// Scheme-qualified and protocol-relative targets are out of scope: this
+			// gate never touches the network.
+			if ( preg_match( '~^([a-z][a-z0-9+.-]*:|//)~i', $target ) ) {
 				continue;
 			}
 
-			$path_only = (string) preg_replace( '/#.*$/', '', $target );
+			$hash      = strpos( $target, '#' );
+			$path_only = false === $hash ? $target : substr( $target, 0, $hash );
+			$fragment  = false === $hash ? '' : substr( $target, $hash + 1 );
+
+			// A bare `#fragment` addresses a heading in the document it is written in.
+			// Skipped outright before #336, along with the fragment half of every
+			// cross-file link -- which is how six dangling anchors were free to be
+			// authored under a gate that reported a clean pass.
 			if ( '' === $path_only ) {
+				if ( '' !== $fragment ) {
+					diviops_link_assert_fragment( $root, $relative, $relative, $target, $fragment );
+					++$fragments;
+				}
 				continue;
 			}
 
@@ -274,10 +487,20 @@ function diviops_link_gate_run(): void {
 				continue;
 			}
 
+			$exists = file_exists( $root . '/' . $resolved['path'] );
+
 			assert_true(
-				file_exists( $root . '/' . $resolved['path'] ),
+				$exists,
 				sprintf( '%s: link target "%s" resolves to %s on disk', $relative, $target, $resolved['path'] )
 			);
+
+			// A heading anchor is a property of a rendered Markdown document, so a
+			// fragment on anything else -- an image, a PHP file -- is left alone
+			// rather than reported against headings that do not exist there.
+			if ( $exists && '' !== $fragment && 1 === preg_match( '/\.md$/i', $resolved['path'] ) ) {
+				diviops_link_assert_fragment( $root, $relative, $resolved['path'], $target, $fragment );
+				++$fragments;
+			}
 		}
 	}
 
@@ -285,9 +508,15 @@ function diviops_link_gate_run(): void {
 	// none means the extractor stopped matching. That is a blind gate, not a pass.
 	assert_true( $checked > 0, 'the gate found relative links to check across the tracked Markdown corpus' );
 
+	// Same guard one level down. The fragment half is checked by a second, narrower
+	// path -- Markdown targets only -- and a change that made that path unreachable
+	// would leave the link count healthy while every anchor went uninspected.
+	assert_true( $fragments > 0, 'the gate found link fragments to resolve against target headings' );
+
 	printf(
-		'relative-link-resolution: checked %d relative link(s) across %d tracked Markdown file(s)%s',
+		'relative-link-resolution: checked %d relative link(s) and %d anchor fragment(s) across %d tracked Markdown file(s)%s',
 		$checked,
+		$fragments,
 		count( $files ),
 		PHP_EOL
 	);
