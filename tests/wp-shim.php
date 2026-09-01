@@ -1307,6 +1307,67 @@ if ( ! function_exists( 'get_post_stati' ) ) {
 	}
 }
 
+if ( ! function_exists( 'diviops_test_query_post_filter' ) ) {
+	/**
+	 * Resolve a query's post_type and post_status arguments into the filter core
+	 * builds from them, so get_posts() and WP_Query answer the question the same
+	 * way instead of each carrying its own interpretation (#326).
+	 *
+	 * `post_type => 'any'` is a string identity test in core, resolved to
+	 * `get_post_types( array( 'exclude_from_search' => false ) )`
+	 * (wp-includes/class-wp-query.php:2612-2613); anything else, array or string,
+	 * is a list of literal type names (class-wp-query.php:2624-2629).
+	 *
+	 * `post_status` is split on commas when it is a string
+	 * (class-wp-query.php:2661-2663), and `'any'` is a member test: core adds a
+	 * `post_status <> x` term for every status registered `exclude_from_search`
+	 * that the caller did not also name (class-wp-query.php:2667-2673).
+	 *
+	 * @param mixed $post_type_arg   post_type argument.
+	 * @param mixed $post_status_arg post_status argument.
+	 * @return array{types: array<int, string>, statuses: array<int, mixed>, any_status: bool, dropped: array<int, string>}
+	 */
+	function diviops_test_query_post_filter( $post_type_arg, $post_status_arg ): array {
+		$types = ( 'any' === $post_type_arg )
+			? array_values( get_post_types( array( 'exclude_from_search' => false ) ) )
+			: array_values( (array) $post_type_arg );
+
+		$statuses   = is_array( $post_status_arg )
+			? array_values( $post_status_arg )
+			: explode( ',', (string) $post_status_arg );
+		$any_status = in_array( 'any', $statuses, true );
+
+		return array(
+			'types'      => $types,
+			'statuses'   => $statuses,
+			'any_status' => $any_status,
+			// The statuses `'any'` drops: excluded from search, and not named by
+			// the caller alongside it.
+			'dropped'    => $any_status
+				? array_values( array_diff( get_post_stati( array( 'exclude_from_search' => true ) ), $statuses ) )
+				: array(),
+		);
+	}
+}
+
+if ( ! function_exists( 'diviops_test_query_post_matches' ) ) {
+	/**
+	 * Whether one fixture row passes the type/status filter above.
+	 *
+	 * @param object               $post   Post fixture.
+	 * @param array<string, mixed> $filter diviops_test_query_post_filter() result.
+	 */
+	function diviops_test_query_post_matches( $post, array $filter ): bool {
+		if ( ! in_array( $post->post_type, $filter['types'], true ) ) {
+			return false;
+		}
+		$status = isset( $post->post_status ) ? $post->post_status : 'publish';
+		return $filter['any_status']
+			? ! in_array( $status, $filter['dropped'], true )
+			: in_array( $status, $filter['statuses'], true );
+	}
+}
+
 if ( ! function_exists( 'wp_slash' ) ) {
 	function wp_slash( $value ) {
 		return $value;
@@ -1464,16 +1525,52 @@ if ( ! function_exists( 'diviops_test_meta_collation_message' ) ) {
 	 */
 	function diviops_test_meta_collation_message( string $stored, string $value ): string {
 		return sprintf(
-			"wp-shim get_posts(): meta_query comparison of '%s' with '%s' depends on the database collation, which this harness does not model. Use fixtures that differ by more than case.",
+			"wp-shim meta_query: comparison of '%s' with '%s' depends on the database collation, which this harness does not model. Use fixtures that differ by more than case.",
 			$stored,
 			$value
 		);
 	}
 }
 
+if ( ! function_exists( 'diviops_test_meta_numeric_int' ) ) {
+	/**
+	 * The integer `CAST( meta_value AS SIGNED )` produces, for the one input shape
+	 * whose result does not come from MySQL's own conversion rules: a canonical
+	 * integer. Returns null for anything else, which the caller turns into a
+	 * refusal.
+	 *
+	 * `type => 'NUMERIC'` casts to SIGNED (wp-includes/class-wp-meta-query.php:329-331)
+	 * and MySQL turns a non-integer string into a truncated value plus a warning
+	 * rather than rejecting it, so `'42.5'` and `'canvas-7f3a'` both have answers
+	 * this harness would be inventing. Leading and trailing whitespace is trimmed
+	 * because core trims a string value itself before binding it
+	 * (class-wp-meta-query.php:737-739).
+	 *
+	 * @param mixed $value Queried or stored value.
+	 */
+	function diviops_test_meta_numeric_int( $value ): ?int {
+		if ( is_int( $value ) ) {
+			return $value;
+		}
+		if ( ! is_string( $value ) ) {
+			return null;
+		}
+		$text = trim( $value );
+		return preg_match( '/^-?[0-9]+$/', $text ) ? (int) $text : null;
+	}
+}
+
 if ( ! function_exists( 'diviops_test_meta_query_matches' ) ) {
 	/**
 	 * Evaluate a meta_query against one post's meta rows.
+	 *
+	 * Shared by get_posts() and WP_Query so the two cannot drift into two answers
+	 * for one question (#326).
+	 *
+	 * `type => 'NUMERIC'` is modelled for `=` on integer values, which is the whole
+	 * of the shape the three canvas callers in trait-canvas.php pass. Every other
+	 * cast, and every comparison under a cast whose answer would come from MySQL's
+	 * conversion rules, raises — see diviops_test_meta_numeric_int().
 	 *
 	 * @param int                      $post_id    Post id.
 	 * @param array<int|string, mixed> $meta_query meta_query argument.
@@ -1492,7 +1589,7 @@ if ( ! function_exists( 'diviops_test_meta_query_matches' ) ) {
 				if ( 'AND' !== strtoupper( (string) $clause ) ) {
 					throw new RuntimeException(
 						sprintf(
-							"wp-shim get_posts(): meta_query relation '%s' is not modelled. Extend diviops_test_meta_query_matches() or assert against a single clause.",
+							"wp-shim meta_query: relation '%s' is not modelled. Extend diviops_test_meta_query_matches() or assert against a single clause.",
 							(string) $clause
 						)
 					);
@@ -1501,15 +1598,25 @@ if ( ! function_exists( 'diviops_test_meta_query_matches' ) ) {
 			}
 			if ( ! is_array( $clause ) || ! isset( $clause['key'] ) || ! is_string( $clause['key'] ) ) {
 				throw new RuntimeException(
-					'wp-shim get_posts(): meta_query entries other than a first-order clause naming a single key are not modelled. Extend diviops_test_meta_query_matches() or flatten the query under test.'
+					'wp-shim meta_query: entries other than a first-order clause naming a single key are not modelled. Extend diviops_test_meta_query_matches() or flatten the query under test.'
 				);
 			}
-			$unmodelled = array_diff( array_keys( $clause ), array( 'key', 'value', 'compare' ) );
+			$unmodelled = array_diff( array_keys( $clause ), array( 'key', 'value', 'compare', 'type' ) );
 			if ( array() !== $unmodelled ) {
 				throw new RuntimeException(
 					sprintf(
-						"wp-shim get_posts(): meta_query clause key '%s' is not modelled. Extend diviops_test_meta_query_matches() or drop the key from the query under test.",
+						"wp-shim meta_query: clause key '%s' is not modelled. Extend diviops_test_meta_query_matches() or drop the key from the query under test.",
 						(string) reset( $unmodelled )
+					)
+				);
+			}
+
+			$cast = isset( $clause['type'] ) ? strtoupper( (string) $clause['type'] ) : '';
+			if ( '' !== $cast && 'NUMERIC' !== $cast ) {
+				throw new RuntimeException(
+					sprintf(
+						"wp-shim meta_query: type '%s' is not modelled; only NUMERIC equality on integer values is. Extend diviops_test_meta_query_matches() or drop the cast from the query under test.",
+						$cast
 					)
 				);
 			}
@@ -1523,10 +1630,18 @@ if ( ! function_exists( 'diviops_test_meta_query_matches' ) ) {
 			if ( ! in_array( $compare, $recognised, true ) ) {
 				$compare = '=';
 			}
+			if ( 'NUMERIC' === $cast && '=' !== $compare ) {
+				throw new RuntimeException(
+					sprintf(
+						"wp-shim meta_query: type 'NUMERIC' is modelled for compare '=' only, not '%s'. An ordering comparison under a cast is decided by MySQL's own conversion rules. Extend diviops_test_meta_query_matches() or assert against equality.",
+						$compare
+					)
+				);
+			}
 			if ( ! in_array( $compare, $modelled, true ) ) {
 				throw new RuntimeException(
 					sprintf(
-						"wp-shim get_posts(): meta_query compare '%s' is not modelled. Extend diviops_test_meta_query_matches() or assert against a modelled operator.",
+						"wp-shim meta_query: compare '%s' is not modelled. Extend diviops_test_meta_query_matches() or assert against a modelled operator.",
 						$compare
 					)
 				);
@@ -1570,8 +1685,21 @@ if ( ! function_exists( 'diviops_test_meta_query_matches' ) ) {
 			}
 			if ( is_array( $value ) && ! in_array( $compare, array( 'IN', 'NOT IN' ), true ) ) {
 				throw new RuntimeException(
-					sprintf( "wp-shim get_posts(): meta_query compare '%s' with an array value is not modelled.", $compare )
+					sprintf( "wp-shim meta_query: compare '%s' with an array value is not modelled.", $compare )
 				);
+			}
+
+			$queried_int = null;
+			if ( 'NUMERIC' === $cast ) {
+				$queried_int = diviops_test_meta_numeric_int( $value );
+				if ( null === $queried_int ) {
+					throw new RuntimeException(
+						sprintf(
+							"wp-shim meta_query: type 'NUMERIC' compares integers, and the queried value '%s' is not one. MySQL's CAST truncates a non-integer rather than rejecting it, which this harness does not model.",
+							is_scalar( $value ) ? (string) $value : gettype( $value )
+						)
+					);
+				}
 			}
 
 			$matched = false;
@@ -1579,37 +1707,52 @@ if ( ! function_exists( 'diviops_test_meta_query_matches' ) ) {
 				if ( null !== $row && ! is_scalar( $row ) ) {
 					throw new RuntimeException(
 						sprintf(
-							"wp-shim get_posts(): meta_query cannot compare the non-scalar value stored for '%s' on post %d; WordPress serialises such a value before it reaches the column.",
+							"wp-shim meta_query: cannot compare the non-scalar value stored for '%s' on post %d; WordPress serialises such a value before it reaches the column.",
 							$clause['key'],
 							$post_id
 						)
 					);
 				}
 				$stored = (string) $row;
-				switch ( $compare ) {
-					case '=':
-						$matched = diviops_test_meta_compare_equal( $stored, (string) $value );
-						break;
-					case '!=':
-						$matched = ! diviops_test_meta_compare_equal( $stored, (string) $value );
-						break;
-					case 'LIKE':
-						$matched = diviops_test_meta_compare_like( $stored, (string) $value );
-						break;
-					case 'NOT LIKE':
-						$matched = ! diviops_test_meta_compare_like( $stored, (string) $value );
-						break;
-					case 'IN':
-					case 'NOT IN':
-						$in = false;
-						foreach ( (array) $value as $candidate ) {
-							if ( diviops_test_meta_compare_equal( $stored, (string) $candidate ) ) {
-								$in = true;
-								break;
+				if ( 'NUMERIC' === $cast ) {
+					$stored_int = diviops_test_meta_numeric_int( $row );
+					if ( null === $stored_int ) {
+						throw new RuntimeException(
+							sprintf(
+								"wp-shim meta_query: type 'NUMERIC' compares integers, and the value '%s' stored for '%s' on post %d is not one. MySQL's CAST truncates a non-integer rather than rejecting it, which this harness does not model.",
+								$stored,
+								$clause['key'],
+								$post_id
+							)
+						);
+					}
+					$matched = ( $stored_int === $queried_int );
+				} else {
+					switch ( $compare ) {
+						case '=':
+							$matched = diviops_test_meta_compare_equal( $stored, (string) $value );
+							break;
+						case '!=':
+							$matched = ! diviops_test_meta_compare_equal( $stored, (string) $value );
+							break;
+						case 'LIKE':
+							$matched = diviops_test_meta_compare_like( $stored, (string) $value );
+							break;
+						case 'NOT LIKE':
+							$matched = ! diviops_test_meta_compare_like( $stored, (string) $value );
+							break;
+						case 'IN':
+						case 'NOT IN':
+							$in = false;
+							foreach ( (array) $value as $candidate ) {
+								if ( diviops_test_meta_compare_equal( $stored, (string) $candidate ) ) {
+									$in = true;
+									break;
+								}
 							}
-						}
-						$matched = ( 'IN' === $compare ) ? $in : ! $in;
-						break;
+							$matched = ( 'IN' === $compare ) ? $in : ! $in;
+							break;
+					}
 				}
 				if ( $matched ) {
 					break;
@@ -1669,19 +1812,10 @@ if ( ! function_exists( 'get_posts' ) ) {
 	function get_posts( $args = array() ) {
 		$GLOBALS['diviops_test_get_posts_calls'][] = $args;
 
-		$post_type_arg = $args['post_type'] ?? 'post';
-		$post_types    = ( 'any' === $post_type_arg )
-			? array_values( get_post_types( array( 'exclude_from_search' => false ) ) )
-			: array_values( (array) $post_type_arg );
-
-		$status_arg = $args['post_status'] ?? 'publish';
-		$statuses   = is_array( $status_arg ) ? array_values( $status_arg ) : explode( ',', (string) $status_arg );
-		$any_status = in_array( 'any', $statuses, true );
-		// The statuses `'any'` drops: excluded from search, and not named by the
-		// caller alongside it.
-		$dropped_statuses = $any_status
-			? array_values( array_diff( get_post_stati( array( 'exclude_from_search' => true ) ), $statuses ) )
-			: array();
+		$filter = diviops_test_query_post_filter(
+			$args['post_type'] ?? 'post',
+			$args['post_status'] ?? 'publish'
+		);
 
 		$per_page = ! empty( $args['posts_per_page'] )
 			? (int) $args['posts_per_page']
@@ -1692,18 +1826,10 @@ if ( ! function_exists( 'get_posts' ) ) {
 
 		$matches = array();
 		foreach ( (array) ( $GLOBALS['diviops_test_posts'] ?? array() ) as $post ) {
-			if ( ! in_array( $post->post_type, $post_types, true ) ) {
+			if ( ! diviops_test_query_post_matches( $post, $filter ) ) {
 				continue;
 			}
 			if ( array() !== $post_in && ! in_array( (int) $post->ID, $post_in, true ) ) {
-				continue;
-			}
-			$status = isset( $post->post_status ) ? $post->post_status : 'publish';
-			if ( $any_status ) {
-				if ( in_array( $status, $dropped_statuses, true ) ) {
-					continue;
-				}
-			} elseif ( ! in_array( $status, $statuses, true ) ) {
 				continue;
 			}
 			$keep = empty( $args['meta_query'] )
@@ -2295,15 +2421,26 @@ if ( ! function_exists( 'wp_basename' ) ) {
 
 if ( ! class_exists( 'WP_Query' ) ) {
 	/**
-	 * Minimal WP_Query stub modeling only what media_list() (trait-media.php)
-	 * needs: post_type / post_status filtering, an 's' substring search against
-	 * post_title, a 'post_mime_type' prefix filter (WP core lets a bare group
-	 * like 'image' match any 'image/*' — this stub's prefix match subsumes
-	 * that), and posts_per_page/paged pagination — run against the same
-	 * $GLOBALS['diviops_test_posts'] registry get_post()/
-	 * diviops_test_register_post() use, so a fixture registered there is what
-	 * this class scans. NOT a general WP_Query reimplementation: no
-	 * tax_query/meta_query/orderby, because no handler under test needs them.
+	 * Minimal WP_Query stub modeling post_type / post_status filtering, an 's'
+	 * substring search against post_title, a 'post_mime_type' prefix filter (WP
+	 * core lets a bare group like 'image' match any 'image/*' — this stub's
+	 * prefix match subsumes that), a meta_query, and posts_per_page/paged
+	 * pagination — run against the same $GLOBALS['diviops_test_posts'] registry
+	 * get_post()/diviops_test_register_post() use, so a fixture registered there
+	 * is what this class scans. NOT a general WP_Query reimplementation: no
+	 * tax_query, no orderby, and `title` and `perm` are still accepted and
+	 * ignored, because no handler under test asserts on them yet.
+	 *
+	 * post_type and post_status resolve through diviops_test_query_post_filter(),
+	 * the same registries get_posts() reads, and meta_query through
+	 * diviops_test_meta_query_matches(), the same clause evaluator. Both were
+	 * this class's own: post_type and post_status were compared with `!==`
+	 * against a single string, so an array matched nothing and
+	 * `post_status => 'any'` matched nothing at all, and meta_query was not read,
+	 * so a clause matched everything. Every `'any'` and meta_query caller in
+	 * trait-canvas.php and trait-library.php goes through this class rather than
+	 * get_posts(), so both defects survived the get_posts() corrections in #315
+	 * and #318 until #326.
 	 */
 	class WP_Query {
 		public $posts         = array();
@@ -2311,8 +2448,10 @@ if ( ! class_exists( 'WP_Query' ) ) {
 		public $max_num_pages = 0;
 
 		public function __construct( array $args = array() ) {
-			$post_type   = $args['post_type'] ?? 'post';
-			$post_status = $args['post_status'] ?? 'publish';
+			$filter      = diviops_test_query_post_filter(
+				$args['post_type'] ?? 'post',
+				$args['post_status'] ?? 'publish'
+			);
 			$search      = isset( $args['s'] ) ? strtolower( (string) $args['s'] ) : '';
 			$mime_prefix = isset( $args['post_mime_type'] ) ? (string) $args['post_mime_type'] : '';
 			$fields      = $args['fields'] ?? '';
@@ -2321,11 +2460,7 @@ if ( ! class_exists( 'WP_Query' ) ) {
 
 			$matches = array();
 			foreach ( (array) ( $GLOBALS['diviops_test_posts'] ?? array() ) as $post ) {
-				if ( $post_type !== $post->post_type ) {
-					continue;
-				}
-				$status = isset( $post->post_status ) ? $post->post_status : 'publish';
-				if ( $post_status !== $status ) {
+				if ( ! diviops_test_query_post_matches( $post, $filter ) ) {
 					continue;
 				}
 				if ( '' !== $search && false === strpos( strtolower( (string) $post->post_title ), $search ) ) {
@@ -2336,6 +2471,12 @@ if ( ! class_exists( 'WP_Query' ) ) {
 					if ( 0 !== strpos( $post_mime, $mime_prefix ) ) {
 						continue;
 					}
+				}
+				if (
+					! empty( $args['meta_query'] )
+					&& ! diviops_test_meta_query_matches( (int) $post->ID, (array) $args['meta_query'] )
+				) {
+					continue;
 				}
 				$matches[] = $post;
 			}
