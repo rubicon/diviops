@@ -313,25 +313,32 @@ assert_same(
 /* -- a gap the shim will not model announces itself --------------------- */
 
 assert_same(
-	"wp-shim get_posts(): meta_query compare '>' is not modelled. Extend diviops_test_meta_query_matches() or assert against a modelled operator.",
+	"wp-shim meta_query: compare '>' is not modelled. Extend diviops_test_meta_query_matches() or assert against a modelled operator.",
 	wp_shim_meta_error( array( array( 'key' => '_wp_attached_file', 'value' => '5', 'compare' => '>' ) ) ),
 	'a numeric operator raises rather than matching everything — the silent-widening this issue exists to remove'
 );
 
 assert_same(
-	"wp-shim get_posts(): meta_query compare 'REGEXP' is not modelled. Extend diviops_test_meta_query_matches() or assert against a modelled operator.",
+	"wp-shim meta_query: compare 'REGEXP' is not modelled. Extend diviops_test_meta_query_matches() or assert against a modelled operator.",
 	wp_shim_meta_error( array( array( 'key' => '_wp_attached_file', 'value' => 'photo', 'compare' => 'REGEXP' ) ) ),
 	'the regex operators core recognises are refused too, rather than approximated with preg_match'
 );
 
+// #326 taught the evaluator `type => 'NUMERIC'` for equality on integer values,
+// because the three canvas callers in trait-canvas.php pass exactly that and go
+// through WP_Query rather than get_posts(). The refusal moved rather than
+// disappearing: these attachment paths are not integers, so the cast still has no
+// answer that does not come from MySQL's truncation rules. Casts other than
+// NUMERIC, and comparisons other than `=` under one, are covered in
+// test-wp-shim-wp-query-contract.php.
 assert_same(
-	"wp-shim get_posts(): meta_query clause key 'type' is not modelled. Extend diviops_test_meta_query_matches() or drop the key from the query under test.",
+	"wp-shim meta_query: type 'NUMERIC' compares integers, and the value '2024/05/photo.jpg' stored for '_wp_attached_file' on post 987601 is not one. MySQL's CAST truncates a non-integer rather than rejecting it, which this harness does not model.",
 	wp_shim_meta_error( array( array( 'key' => '_wp_attached_file', 'value' => 5, 'type' => 'NUMERIC' ) ) ),
-	'a cast core would apply in SQL is refused rather than ignored — canvas_find_by_title() passes exactly this shape through WP_Query'
+	'a cast whose operands are not integers is refused rather than approximated — CAST( ... AS SIGNED ) would turn this path into 2024, which is MySQL behaviour this harness does not model'
 );
 
 assert_same(
-	"wp-shim get_posts(): meta_query relation 'OR' is not modelled. Extend diviops_test_meta_query_matches() or assert against a single clause.",
+	"wp-shim meta_query: relation 'OR' is not modelled. Extend diviops_test_meta_query_matches() or assert against a single clause.",
 	wp_shim_meta_error(
 		array(
 			'relation' => 'OR',
@@ -343,7 +350,7 @@ assert_same(
 );
 
 assert_same(
-	"wp-shim get_posts(): meta_query comparison of '2024/05/Photo.JPG' with '2024/05/photo.jpg' depends on the database collation, which this harness does not model. Use fixtures that differ by more than case.",
+	"wp-shim meta_query: comparison of '2024/05/Photo.JPG' with '2024/05/photo.jpg' depends on the database collation, which this harness does not model. Use fixtures that differ by more than case.",
 	wp_shim_meta_error( array( array( 'key' => 'diviops_shim_case', 'value' => '2024/05/photo.jpg', 'compare' => '=' ) ) ),
 	'a comparison whose answer depends on whether the column collation is case-sensitive raises rather than picking one — the shim cannot know the collation, so it must not guess'
 );
