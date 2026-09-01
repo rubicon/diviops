@@ -214,13 +214,13 @@ Use `divi/link` for actual links, but wrap it with list-item HTML. Do not use `e
       }
     }
   },
-  "link": {
+  "content": {
     "innerContent": {
       "desktop": {
         "value": {
           "text": "Kontakt",
-          "url": "#",
-          "target": "off"
+          "linkUrl": "#",
+          "linkTarget": "off"
         }
       }
     }
@@ -228,6 +228,13 @@ Use `divi/link` for actual links, but wrap it with list-item HTML. Do not use `e
   "builderVersion": "5.1.1"
 }
 ```
+
+The element key is `content`, not `link`, and the value object uses `linkUrl` /
+`linkTarget`, not `url` / `target`. Divi reads all three fields from exactly
+`content.innerContent.desktop.value.{text,linkUrl,linkTarget}`
+(`LinkModule::render_callback`, source-verified on Divi 5.11.1). A `link` bucket or
+a bare `url` / `target` key is stored by the free-form dot-path merge and then
+ignored at render, so the anchor comes out with empty text and an empty `href`.
 
 ## ARIA Accessibility Pattern
 

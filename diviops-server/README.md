@@ -61,7 +61,7 @@ WP_USER = "your-wp-username"
 WP_APP_PASSWORD = "xxxxXXXXxxxxXXXXxxxxXXXX"
 ```
 
-Then ask your AI client: **"List the pages on my site."** It calls `diviops_page_list` and renders the result. You're authoring with the suite.
+Then ask your AI client: **"List the pages on my site."** It calls `diviops_page_list` and renders the result. That proves the plugin and the MCP transport; it does not prove the client has loaded Divi authoring knowledge. Install the `divi-5-builder` skill and run the [first-run native Divi verification](../SETUP.md#first-run-native-divi-verification) before authoring content.
 
 For Claude Desktop JSON, use `"command": "npx"` with args `["-y", "--package", "@rubicontv/diviops-mcp", "diviops-mcp"]`. The package also ships `diviops-preset`, so the explicit package/bin form is required; shorthand package invocation cannot reliably infer which bin to run.
 
@@ -75,9 +75,10 @@ Claude orchestrates a few tool calls in sequence:
 
 1. `diviops_global_color_list` — discovers your brand palette.
 2. `diviops_template_list` / `diviops_template_get` — pulls a verified hero template that matches the request.
-3. `diviops_page_create` — creates `Spring Launch` as a draft with the hero block markup.
-4. `diviops_validate_blocks` — confirms the markup is well-formed before save. Accepts inline `content` or a `page_id` to validate already-saved markup.
-5. `diviops_render_preview` — returns the rendered HTML so you can verify before publishing. Accepts inline `content` or a `page_id` to preview an existing page.
+3. `diviops_validate_blocks` with inline `content` — confirms the constructed hero markup is well-formed before any write.
+4. `diviops_page_create` — creates `Spring Launch` as a draft from those exact validated bytes.
+5. `diviops_validate_blocks` with the saved `page_id` — verifies the persisted readback. The tool accepts either inline `content` or a `page_id`.
+6. `diviops_render_preview` — returns the rendered HTML so you can verify before publishing. Accepts inline `content` or a `page_id` to preview an existing page.
 
 The skill enforces the Divi block format, the design system, and the response contract throughout — you stay at the prompt level.
 
