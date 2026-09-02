@@ -2907,6 +2907,83 @@ if ( ! function_exists( 'diviops_test_term_slug' ) ) {
 	}
 }
 
+if ( ! function_exists( 'diviops_test_term_id_by_slug' ) ) {
+	/**
+	 * Resolve a slug to a term id, creating the term when it does not exist (#358).
+	 *
+	 * This is core's wp_set_object_terms() branch for a non-integer term, which is
+	 * term_exists() first and wp_insert_term() when that misses
+	 * (wp-includes/taxonomy.php:2888-2896 on the reference install). Creating rather
+	 * than refusing is what makes a library_save() -> library_get() round trip
+	 * assertable here without a hand-registered fixture standing in for the write.
+	 *
+	 * ponytail: one slug is one term across every taxonomy here, where core scopes
+	 * term_exists() per taxonomy, so two taxonomies sharing a slug collapse to a
+	 * single id. Nothing observes the difference: object-term storage is keyed by
+	 * taxonomy and the read path only ever maps an id back to a slug. Key this
+	 * registry by taxonomy if a test ever needs two same-slug terms to be distinct.
+	 *
+	 * New ids start above the fixture range so an auto-created term is visibly not
+	 * one a test hand-registered, and cannot collide with one.
+	 *
+	 * @param string $slug Term slug.
+	 * @return int The existing or newly created term id.
+	 */
+	function diviops_test_term_id_by_slug( string $slug ): int {
+		$existing = array_search( $slug, $GLOBALS['diviops_test_terms'], true );
+		if ( false !== $existing ) {
+			return (int) $existing;
+		}
+		$ids = array_map( 'intval', array_keys( $GLOBALS['diviops_test_terms'] ) );
+		$id  = max( array_merge( array( 9000 ), $ids ) ) + 1;
+
+		$GLOBALS['diviops_test_terms'][ $id ] = $slug;
+		return $id;
+	}
+}
+
+if ( ! function_exists( 'diviops_test_object_terms_refuse_unmodelled' ) ) {
+	/**
+	 * Raise on the wp_get_object_terms() arguments this harness does not model (#358).
+	 *
+	 * Same line this file draws for WP_Query in
+	 * diviops_test_query_refuse_unmodelled(): an argument raises when ignoring it
+	 * would change the terms returned or their order AND this stub cannot compute
+	 * that answer. It returns every attached term in registration order, so
+	 * `number`, `offset` and `meta_query` all change the SET and `orderby` changes
+	 * the order, while none of them is answerable here. No caller in this repo
+	 * passes any of them today, which is why the silence had not yet cost anything.
+	 *
+	 * A value that is inert in core is inert here. `orderby => 'none'` blanks ORDER
+	 * BY, which is the registration order this stub returns anyway, and takes
+	 * `order` with it; a zero `number`/`offset` and an empty `meta_query` restrict
+	 * nothing.
+	 *
+	 * @param array<string, mixed> $args wp_get_object_terms() arguments.
+	 * @throws RuntimeException When an argument's effect is not modelled.
+	 */
+	function diviops_test_object_terms_refuse_unmodelled( array $args ): void {
+		$refuse = static function ( string $key, string $reason ): void {
+			throw new RuntimeException(
+				sprintf( "wp-shim wp_get_object_terms: '%s' is not modelled. %s", $key, $reason )
+			);
+		};
+
+		if ( ! empty( $args['number'] ) ) {
+			$refuse( 'number', 'Ignoring it returns every attached term rather than the first N the caller asked for.' );
+		}
+		if ( ! empty( $args['offset'] ) ) {
+			$refuse( 'offset', 'Ignoring it returns the terms the caller asked to skip.' );
+		}
+		if ( ! empty( $args['meta_query'] ) ) {
+			$refuse( 'meta_query', 'Ignoring it returns terms whose meta the caller filtered out. There is no term meta store here.' );
+		}
+		if ( ! empty( $args['orderby'] ) && 'none' !== $args['orderby'] ) {
+			$refuse( 'orderby', "Ignoring it returns registration order rather than the requested one; core defaults to name ASC (WP_Term_Query). Pass 'none', which is inert in core and here." );
+		}
+	}
+}
+
 if ( ! function_exists( 'wp_get_object_terms' ) ) {
 	/**
 	 * Model WP core's wp_get_object_terms(): the terms assigned to the given
@@ -2947,6 +3024,8 @@ if ( ! function_exists( 'wp_get_object_terms' ) ) {
 		}
 		$ids = array_values( array_unique( array_map( 'intval', $ids ) ) );
 
+		diviops_test_object_terms_refuse_unmodelled( (array) $args );
+
 		$fields = isset( $args['fields'] ) ? (string) $args['fields'] : 'all';
 
 		if ( 'ids' === $fields ) {
@@ -2986,10 +3065,38 @@ if ( ! function_exists( 'wp_set_object_terms' ) ) {
 	 * resulting term id list, mirroring core's success return of
 	 * term_taxonomy_ids closely enough for callers here, which don't
 	 * inspect the return value's shape.
+	 *
+	 * Entries are resolved the way core resolves them
+	 * (wp-includes/taxonomy.php:2883-2896 on the reference install): an empty or
+	 * whitespace-only term is skipped, an integer is taken as a term id, and
+	 * anything else is a slug resolved through term_exists() or created by
+	 * wp_insert_term(). This function used to run array_map( 'intval', ... ) over
+	 * the lot, so library_save()'s slug strings (trait-library.php:260-261) became
+	 * term id 0 -- a value core cannot produce, which then made the read side
+	 * refuse and point the author at registering a slug for term 0 (#358).
+	 *
+	 * Two deliberate simplifications, neither reachable from this repo's callers:
+	 * a numeric STRING is treated as a slug, where core's term_exists() would try
+	 * it as an id first; and a non-existent integer id is stored rather than
+	 * skipped as core skips it, which stays visible because the read side refuses
+	 * an id with no registered slug rather than inventing one.
 	 */
 	function wp_set_object_terms( $object_id, $terms, $taxonomy, $append = false ) {
 		$object_id = (int) $object_id;
-		$terms     = array_map( 'intval', (array) $terms );
+
+		$resolved = array();
+		foreach ( (array) $terms as $term ) {
+			if ( is_string( $term ) ) {
+				$term = trim( $term );
+				if ( '' === $term ) {
+					continue;
+				}
+				$resolved[] = diviops_test_term_id_by_slug( $term );
+				continue;
+			}
+			$resolved[] = (int) $term;
+		}
+		$terms = $resolved;
 		if ( $append && isset( $GLOBALS['diviops_test_object_terms'][ $object_id ][ $taxonomy ] ) ) {
 			$terms = array_values( array_unique( array_merge( $GLOBALS['diviops_test_object_terms'][ $object_id ][ $taxonomy ], $terms ) ) );
 		}

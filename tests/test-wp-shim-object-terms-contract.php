@@ -172,6 +172,96 @@ assert_same( 1, count( $objects ), 'the default shape returns one object per ter
 assert_same( 61, $objects[0]->term_id, 'the default shape carries term_id' );
 assert_same( 'section', $objects[0]->slug, 'the default shape carries the slug' );
 
+/* =========================================================================
+ * The write side. wp_set_object_terms() is the other half of the round trip,
+ * and it was intval()ing everything it was handed.
+ * ====================================================================== */
+
+/**
+ * Run one wp_set_object_terms() call against an empty pair of registries and
+ * report what the object ended up holding, plus the slugs it reads back as.
+ *
+ * @param mixed $terms  Terms to set, in whatever shape the caller passes.
+ * @param array $seed   Term ids to pre-register, as id => slug.
+ * @return array{returned:mixed, stored:array, slugs:mixed}
+ */
+function wp_shim_set_object_terms_probe( $terms, array $seed = array() ): array {
+	$saved_terms  = $GLOBALS['diviops_test_terms'];
+	$saved_object = $GLOBALS['diviops_test_object_terms'];
+
+	$GLOBALS['diviops_test_terms']        = $seed;
+	$GLOBALS['diviops_test_object_terms'] = array();
+
+	try {
+		$returned = wp_set_object_terms( 987950, $terms, 'layout_type' );
+		return array(
+			'returned' => $returned,
+			'stored'   => $GLOBALS['diviops_test_object_terms'][987950]['layout_type'] ?? array(),
+			'slugs'    => wp_get_object_terms( 987950, 'layout_type', array( 'fields' => 'slugs' ) ),
+		);
+	} finally {
+		$GLOBALS['diviops_test_terms']        = $saved_terms;
+		$GLOBALS['diviops_test_object_terms'] = $saved_object;
+	}
+}
+
+// The case library_save() actually exercises. trait-library.php:260-261 passes
+// the slug strings 'section' and 'non_global' straight to wp_set_object_terms(),
+// and core resolves a string through term_exists() / wp_insert_term()
+// (wp-includes/taxonomy.php:2888-2896 on the reference install). Before this,
+// array_map( 'intval', ... ) turned 'section' into 0 and stored it, so the
+// save-then-read round trip could not be asserted at all -- reading the slugs
+// back raised, and the refusal told the author to register a slug for term id 0,
+// which core can never produce.
+$fresh = wp_shim_set_object_terms_probe( 'section' );
+assert_same( array( 'section' ), $fresh['slugs'], 'a slug string written through wp_set_object_terms() reads back as that slug' );
+assert_same( 1, count( $fresh['stored'] ), 'a slug string is stored as exactly one term id' );
+assert_true( 0 !== $fresh['stored'][0], 'a slug string is never stored as term id 0' );
+
+// An already-registered slug resolves to its existing id rather than being
+// created a second time, which is term_exists() winning over wp_insert_term().
+$known = wp_shim_set_object_terms_probe( 'section', array( 61 => 'section' ) );
+assert_same( array( 61 ), $known['stored'], 'a slug that already has a term id resolves to it rather than creating another' );
+assert_same( array( 'section' ), $known['slugs'], 'the resolved term reads back as its slug' );
+
+// Mixed input, which is what the two callers look like side by side:
+// page_duplicate() passes ids it read with fields => 'ids', library_save() passes
+// slugs. Both shapes have to survive the same function.
+$mixed = wp_shim_set_object_terms_probe( array( 61, 'row' ), array( 61 => 'section' ) );
+assert_same( array( 'section', 'row' ), $mixed['slugs'], 'an int id and a slug string in one call both resolve' );
+
+// Core skips an empty or whitespace-only term rather than storing it
+// (wp-includes/taxonomy.php:2884). Storing it here would auto-create a term
+// whose slug is the empty string, which reads back as "unclassified" and is
+// exactly the plausible-wrong answer this file exists to stop.
+$blank = wp_shim_set_object_terms_probe( array( 'row', '', '   ' ) );
+assert_same( array( 'row' ), $blank['slugs'], 'an empty or whitespace-only term is skipped rather than stored' );
+
+/* =========================================================================
+ * Arguments wp_get_object_terms() was accepting and ignoring.
+ * ====================================================================== */
+
+// Same rule this file states for WP_Query at tests/wp-shim.php: an argument
+// raises when ignoring it would change the rows returned or their order AND this
+// harness cannot compute that answer. None of these has a caller in this repo
+// today, which is why the silence had not cost anything yet.
+foreach ( array( 'number' => 1, 'offset' => 1, 'meta_query' => array( array( 'key' => 'k' ) ), 'orderby' => 'name' ) as $arg => $value ) {
+	$message = wp_shim_object_terms_error( array( 'fields' => 'ids', $arg => $value ) );
+	assert_true(
+		false !== strpos( $message, "'" . $arg . "'" ),
+		sprintf( "wp_get_object_terms refuses '%s' rather than accepting and ignoring it", $arg )
+	);
+}
+
+// A value that is inert in core is inert here. orderby => 'none' blanks ORDER BY,
+// which is the registration order this stub returns anyway, and it takes `order`
+// with it -- the same carve-out diviops_test_query_refuse_unmodelled() makes.
+assert_same(
+	array( 61 ),
+	wp_shim_object_terms_call( array( 'fields' => 'ids', 'orderby' => 'none', 'order' => 'ASC' ) ),
+	"orderby => 'none' is inert in core, so it passes rather than raising"
+);
+
 // The registry split, pinned. A handler that writes its own terms goes through
 // wp_set_object_terms(), which stores bare ids; slugs registered beforehand must
 // survive that write, or every write-then-read test would silently lose them.
