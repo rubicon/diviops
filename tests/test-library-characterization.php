@@ -26,13 +26,23 @@
  * records its calls rather than pretending to fill a cache this harness has no
  * storage for.
  *
- * WHAT IS NOT CHARACTERIZED HERE, and why: taxonomy-scoped filtering.
- * library_list()'s `layout_type`/`scope` params and
- * library_existing_id_by_title()'s uniqueness scope both express themselves as
- * a `tax_query`, and this harness has no term registry to resolve a slug
- * against. Waiving the argument (below) makes the filter inert, so an assertion
- * about filtered output would be an assertion about the harness's blindness
- * rather than about the handler. It is left to tests-live/ rather than faked.
+ * WHAT IS NOT CHARACTERIZED HERE, and why: taxonomy-scoped FILTERING. Reporting
+ * is characterized, and was not when this file was written.
+ *
+ * The original note said this harness had no term registry to resolve a slug
+ * against, which was true of both halves at the time. #358 supplied the registry
+ * and taught wp_get_object_terms() the `fields => 'slugs'` shape get_term_slug()
+ * actually asks for, so the `layout_type`/`scope` a row REPORTS is real output
+ * now and is asserted below. Before that the stub answered `'slugs'` with term
+ * objects, so an item carrying terms would have reported a stdClass in a string
+ * field, and this file could only ever assert the empty-term branch.
+ *
+ * Filtering is still not modelled. library_list()'s `layout_type`/`scope` params
+ * and library_existing_id_by_title()'s uniqueness scope both express themselves
+ * as a `tax_query`, which WP_Query here still refuses. Waiving the argument
+ * (below) makes the filter inert, so an assertion about filtered output would be
+ * an assertion about the harness's blindness rather than about the handler. That
+ * half is left to tests-live/ rather than faked.
  *
  * @package DiviOps
  */
@@ -69,6 +79,7 @@ $GLOBALS['diviops_test_wp_query_unmodelled_ok'] = array( 'perm', 'orderby', 'ord
 
 $GLOBALS['diviops_test_posts']             = array();
 $GLOBALS['diviops_test_object_terms']      = array();
+$GLOBALS['diviops_test_terms']             = array();
 $GLOBALS['diviops_test_post_meta']         = array();
 $GLOBALS['diviops_test_uneditable_ids']    = array();
 $GLOBALS['diviops_test_term_cache_primed'] = array();
@@ -171,6 +182,29 @@ assert_same( '2026-02-03 04:05:06', $data['data']['modified'], 'library_get: the
 assert_same( '', $data['data']['layout_type'], 'library_get: an item with no layout_type term reports an empty string' );
 assert_same( '', $data['data']['scope'], 'library_get: an item with no scope term reports an empty string' );
 
+// An item that IS classified reports the slugs, which is the other half of that
+// branch and the half this file could not reach before #358: the harness answered
+// get_term_slug()'s `fields => 'slugs'` with term objects, so this assertion would
+// have compared a string against a stdClass.
+diviops_test_register_term( 71, 'section' );
+diviops_test_register_term( 72, 'non_global' );
+diviops_test_register_term( 73, 'row' );
+
+diviops_lib_layout( 610, 'Classified Hero', 'publish', '', '2026-03-04 05:06:07' );
+diviops_test_register_object_terms( 610, 'layout_type', array( 71 ) );
+diviops_test_register_object_terms( 610, 'scope', array( 72 ) );
+$data = diviops_call( 'library_get', array( diviops_lib_req( array( 'id' => 610 ) ) ) )->get_data();
+assert_same( 'section', $data['data']['layout_type'], 'library_get: a classified item reports its layout_type slug' );
+assert_same( 'non_global', $data['data']['scope'], 'library_get: a classified item reports its scope slug' );
+
+// get_term_slug() returns element 0 and discards the rest. Divi's own UI assigns
+// one layout_type, but nothing in the schema enforces it, and a second term is
+// silently invisible rather than reported or refused. Pinned because it is the
+// handler's behaviour, not because it is obviously the right one.
+diviops_test_register_object_terms( 610, 'layout_type', array( 73, 71 ) );
+$data = diviops_call( 'library_get', array( diviops_lib_req( array( 'id' => 610 ) ) ) )->get_data();
+assert_same( 'row', $data['data']['layout_type'], 'library_get: an item carrying several layout_type terms reports only the first' );
+
 /* =========================================================================
  * library_list()
  * ====================================================================== */
@@ -254,6 +288,25 @@ assert_true( true === $beyond['ok'], 'library_list: a page past the end still su
 assert_same( array(), $beyond['data']['results'], 'library_list: a page past the end returns no rows' );
 assert_same( 2, $beyond['data']['total'], 'library_list: total describes the whole set, not the empty page' );
 assert_same( array(), $GLOBALS['diviops_test_term_cache_primed'], 'library_list: an empty page primes nothing' );
+
+// Rows report real slugs, per row rather than per response: 810 is classified on
+// both taxonomies and 820 on neither scope, so the populated and empty branches
+// are asserted in the same result set. Keyed by id because row order is not
+// observable under the orderby waiver above.
+diviops_test_register_object_terms( 810, 'layout_type', array( 71 ) );
+diviops_test_register_object_terms( 810, 'scope', array( 72 ) );
+diviops_test_register_object_terms( 820, 'layout_type', array( 73 ) );
+
+$rows = array();
+foreach ( diviops_call( 'library_list', array( diviops_lib_req( array() ) ) )->get_data()['data']['results'] as $row ) {
+	$rows[ (int) $row['id'] ] = $row;
+}
+ksort( $rows );
+assert_same( array( 810, 820 ), array_keys( $rows ), 'library_list: both classified fixtures are on the page, so neither assertion below is vacuous' );
+assert_same( 'section', $rows[810]['layout_type'], 'library_list: a row reports its layout_type slug' );
+assert_same( 'non_global', $rows[810]['scope'], 'library_list: a row reports its scope slug' );
+assert_same( 'row', $rows[820]['layout_type'], 'library_list: each row resolves its own terms rather than reusing the first row\'s' );
+assert_same( '', $rows[820]['scope'], 'library_list: a row classified on one taxonomy and not the other reports the empty string for the missing one' );
 
 $GLOBALS['diviops_test_uneditable_ids'] = array();
 
@@ -447,5 +500,6 @@ unset(
 );
 $GLOBALS['diviops_test_posts']             = array();
 $GLOBALS['diviops_test_object_terms']      = array();
+$GLOBALS['diviops_test_terms']             = array();
 $GLOBALS['diviops_test_post_meta']         = array();
 $GLOBALS['diviops_test_term_cache_primed'] = array();
