@@ -202,6 +202,42 @@ trait DiviOps_Agent_Validate {
 					];
 				}
 
+				// Legacy divi/link attribute paths, adopted from upstream (#328).
+				// LinkModule::render_callback() reads text, linkUrl and linkTarget
+				// from exactly content.innerContent.desktop.value; there is no
+				// `link` element bucket on the module at all, and the Divi 4 field
+				// names url/target have no reader. Either shape saves, validates
+				// clean without this, and renders an anchor with empty text and an
+				// empty href.
+				if ( 'divi/link' === $name ) {
+					$legacy_link_content = self::get_nested_array_value( $attrs, [ 'link', 'innerContent' ], [] );
+					if ( is_array( $legacy_link_content ) && ! empty( $legacy_link_content ) ) {
+						$errors[] = [
+							'block'   => $name,
+							'index'   => $index,
+							'code'    => 'link_legacy_inner_content_path',
+							'message' => 'divi/link ignores link.innerContent. Store link text and destination under content.innerContent instead.',
+							'path'    => 'link.innerContent → content.innerContent.<breakpoint>.value.{text,linkUrl,linkTarget}',
+						];
+					}
+
+					$content_inner = self::get_nested_array_value( $attrs, [ 'content', 'innerContent' ], [] );
+					if ( is_array( $content_inner ) ) {
+						foreach ( $content_inner as $breakpoint => $states ) {
+							$values = is_array( $states ) && is_array( $states['value'] ?? null ) ? $states['value'] : [];
+							if ( array_key_exists( 'url', $values ) || array_key_exists( 'target', $values ) ) {
+								$errors[] = [
+									'block'   => $name,
+									'index'   => $index,
+									'code'    => 'link_legacy_field_names',
+									'message' => 'divi/link ignores legacy url/target fields. Use linkUrl/linkTarget in the content value.',
+									'path'    => sprintf( 'content.innerContent.%s.value.{url,target} → {linkUrl,linkTarget}', $breakpoint ),
+								];
+							}
+						}
+					}
+				}
+
 				foreach ( self::extract_divi_custom_attributes( $attrs ) as $custom_attr ) {
 					$attr_name = $custom_attr['name'];
 					$attr_val  = $custom_attr['value'];
