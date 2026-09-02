@@ -61,11 +61,11 @@ WP_USER = "your-wp-username"
 WP_APP_PASSWORD = "xxxxXXXXxxxxXXXXxxxxXXXX"
 ```
 
-Then ask your AI client: **"List the pages on my site."** It calls `diviops_page_list` and renders the result. That proves the plugin and the MCP transport; it does not prove the client has loaded Divi authoring knowledge. Install the `divi-5-builder` skill and run the [first-run native Divi verification](../SETUP.md#first-run-native-divi-verification) before authoring content.
+Then ask your AI client: **"List the pages on my site."** It calls `diviops_page_list` and renders the result. That proves the plugin and the MCP transport; it does not prove the client has loaded Divi authoring knowledge. Install the `divi-5-builder` skill and run the [first-run native Divi verification](https://github.com/rubicon/diviops/blob/main/SETUP.md#first-run-native-divi-verification) before authoring content.
 
 For Claude Desktop JSON, use `"command": "npx"` with args `["-y", "--package", "@rubicontv/diviops-mcp", "diviops-mcp"]`. The package also ships `diviops-preset`, so the explicit package/bin form is required; shorthand package invocation cannot reliably infer which bin to run.
 
-For a deeper walkthrough (containerized environments, WP-CLI configuration, troubleshooting installation), see the [Setup Guide](../SETUP.md#step-1-install-the-wordpress-plugin).
+For a deeper walkthrough (containerized environments, WP-CLI configuration, troubleshooting installation), see the [Setup Guide](https://github.com/rubicon/diviops/blob/main/SETUP.md#step-1-install-the-wordpress-plugin).
 
 ## Example workflow
 
@@ -114,7 +114,7 @@ is allowed, and fails closed with `svg_sanitizer_required` (415) otherwise. A si
 can additionally require a higher capability for SVG uploads specifically, via the
 `DIVIOPS_SVG_UPLOAD_CAPABILITY` constant or environment variable (default
 `upload_files`); a caller without it gets `svg_capability_required` (403). See
-the [main README's Media domain section](../README.md#media-domain) for the full
+the [main README's Media domain section](https://github.com/rubicon/diviops/blob/main/README.md#media-domain) for the full
 write-up, including deployment hardening notes.
 
 Use `diviops_meta_info` as the S0 preflight before dogfooding or product work. It returns `server_version`, a numeric `tool_count`, a `tools` catalog summary (`registered_total`, always-on count, Pro possible/registered counts by target), `plugins` version records for `diviops-agent`, `diviops-agent-pro`, FluentCart, and FluentCart Pro when available, plus the existing handshake and slice state.
@@ -549,33 +549,58 @@ Every tool's `_meta.idempotent` field documents how it behaves under repeat call
 | `WP_USER` | Yes | WordPress username with Editor or Admin role |
 | `WP_APP_PASSWORD` | Yes | Application Password (spaces stripped) |
 | `WP_PATH` | No | WordPress filesystem path for Local by Flywheel, or wrapper working directory when `WP_CLI_CMD` needs project context |
-| `WP_CLI_CMD` | No | Custom WP-CLI command prefix for containerized environments (e.g. `ddev wp`, `npx wp-env run cli wp`) |
+| `WP_CLI_CMD` | No | Custom WP-CLI command prefix for containerized environments (e.g. `ddev wp`, `npx wp-env run cli wp`). Arguments are passed to the wrapper individually, with no shell in between — a wrapper that crosses a **shell boundary** must re-quote them per argument; see [Remote hosts over SSH](#remote-hosts-over-ssh) |
 | `LOCAL_SITE_ID` | No | Override auto-detection of Local by Flywheel site ID |
-| `DIVIOPS_WP_CLI_ALLOW` | No | Opt-in extended WP-CLI commands — see [SETUP.md#wp-cli-security](../SETUP.md#wp-cli-security) |
+| `DIVIOPS_WP_CLI_ALLOW` | No | Opt-in extended WP-CLI commands — see [SETUP.md#wp-cli-security](https://github.com/rubicon/diviops/blob/main/SETUP.md#wp-cli-security) |
+| `DIVIOPS_WP_CLI_TIMEOUT_MS` | No | Deadline for each WP-CLI child process, in milliseconds. Default `30000`; raise it for remote wrappers. A value that is not a positive integer is ignored with a warning |
 | `DIVIOPS_WP_CLI_SAFE_FS_ROOT` | No | Path to constrain filesystem-touching wp-cli commands. **Required** in `WP_CLI_CMD` wrapper mode |
 | `DIVIOPS_WP_CLI_UNSAFE_FS` | No | Set to `1` to disable filesystem flag validation entirely |
 
 ### Containerized environments
 
-The server connects via standard WordPress REST API and works with any environment that exposes WordPress over HTTP with Application Password support — Local by Flywheel, DDEV, wp-env, WordPress Studio, DevKinsta, custom hosts. See the [Setup Guide's Local Development Environments section](../SETUP.md#local-development-environments) for environment-specific `WP_CLI_CMD` examples and HTTPS / `WP_ENVIRONMENT_TYPE` notes.
+The server connects via standard WordPress REST API and works with any environment that exposes WordPress over HTTP with Application Password support — Local by Flywheel, DDEV, wp-env, WordPress Studio, DevKinsta, custom hosts. See the [Setup Guide's Local Development Environments section](https://github.com/rubicon/diviops/blob/main/SETUP.md#local-development-environments) for environment-specific `WP_CLI_CMD` examples and HTTPS / `WP_ENVIRONMENT_TYPE` notes.
+
+### Remote hosts over SSH
+
+`WP_CLI_CMD` runs through `execFile`, which passes arguments to the wrapper one by one with no shell in between. `ddev wp` and `docker exec … wp` forward them the same way, so nothing is lost. **ssh does not** — it joins everything after the host into a single string that the *remote* shell re-parses, and every argument boundary disappears:
+
+```
+WP_CLI_CMD="ssh HOST wp --path=/srv/site"
+wp eval 'echo wp_get_environment_type();'
+  → bash: -c: line 0: syntax error near unexpected token `('
+```
+
+The remote shell is what reports the error, so it reads like a malformed wp-cli command when the argument was well-formed before it crossed. The server warns at startup when `WP_CLI_CMD` begins with `ssh`. Point it at a local shim that re-quotes each argument instead:
+
+```bash
+#!/bin/bash
+exec ssh -o BatchMode=yes HOST "cd /srv/site && wp $(printf '%q ' "$@")"
+```
+
+Keep `WP_PATH` local, or leave it unset: in wrapper mode it is the working directory the *wrapper* is launched from on this machine, so the remote site path belongs inside the shim (`cd /srv/site && wp …`). Pointing `WP_PATH` at the remote path fails every command before it starts, with `failure_kind: "spawn_failed"` and errno `ENOENT`.
+
+Two settings that matter as much as the shim: enable ssh connection multiplexing (`ControlMaster auto` with a `ControlPath` and `ControlPersist` in `~/.ssh/config`), because otherwise every wp-cli call opens a fresh session and a managed host starts refusing them — which surfaces as `failure_kind: "spawn_failed"` and reads like a missing binary; and raise `DIVIOPS_WP_CLI_TIMEOUT_MS` above the 30-second default, which a cold connection plus a large `search-replace` or `export` will exceed. Full walkthrough: [SETUP.md#remote-hosts-over-ssh](https://github.com/rubicon/diviops/blob/main/SETUP.md#remote-hosts-over-ssh).
 
 ## Troubleshooting
 
-Common quick fixes — full reference in [SETUP.md#troubleshooting](../SETUP.md#troubleshooting).
+Common quick fixes — full reference in [SETUP.md#troubleshooting](https://github.com/rubicon/diviops/blob/main/SETUP.md#troubleshooting).
 
 - **"Missing required environment variable(s)"** — ensure `WP_URL`, `WP_USER`, `WP_APP_PASSWORD` are all set on `claude mcp add`.
 - **`npx` fails with "could not determine executable to run"** — use `npx -y --package @rubicontv/diviops-mcp diviops-mcp`; this explicitly selects the MCP server bin.
 - **"Connection failed"** — verify the plugin is active by visiting `{WP_URL}/wp-json/diviops/v1/schema/settings`; test the credentials with `curl -u "user:pass" …`.
 - **"This tool requires plugin capability"** — the connected plugin does not advertise the capability this tool needs. Server and plugin versions are independent; install a compatible plugin from the same DiviOps suite release or a newer supported component, then reconnect or restart the MCP session to refresh the handshake.
 - **Preset edits not visible on the frontend** — Divi serves frontend CSS from `wp-content/et-cache/{post_id}/`, which `wp cache flush` doesn't touch. Use `diviops_meta_flush_cache` after preset writes; `post_id` mode also sweeps that exact directory and reports `post_dir_sweep` evidence.
+- **Remote wp-cli reports `bash: -c: line 0: syntax error`** — `WP_CLI_CMD` points straight at `ssh`, which destroys per-argument quoting. Use the re-quoting shim in [Remote hosts over SSH](#remote-hosts-over-ssh).
+- **`failure_kind: "spawn_failed"` on a remote wrapper with wp-cli installed** — the connection failed, not the binary. Enable ssh multiplexing (`ControlMaster auto` / `ControlPersist`) and confirm the wrapper runs by hand.
+- **`failure_kind: "killed"` / "Command timed out"** — raise `DIVIOPS_WP_CLI_TIMEOUT_MS` above the `30000` default, or split the command into smaller batches.
 
 ## Learn more
 
-- [SETUP.md](../SETUP.md) — full onboarding walkthrough (containerized envs, HTTPS, Application Passwords)
+- [SETUP.md](https://github.com/rubicon/diviops/blob/main/SETUP.md) — full onboarding walkthrough (containerized envs, HTTPS, Application Passwords)
 - [Per-tool reference](#per-tool-reference) — one row per tool (inputs, `_meta.idempotent`, summary), generated from the registration call sites in `src/index.ts`. The full per-tool description, including response payload and error codes, lives in each tool's own MCP `description` field.
-- [SETUP.md#wp-cli-security](../SETUP.md#wp-cli-security) — allowlist, extended commands, FS validation
+- [SETUP.md#wp-cli-security](https://github.com/rubicon/diviops/blob/main/SETUP.md#wp-cli-security) — allowlist, extended commands, FS validation
 - Pattern A (refuse-with-override) + Pattern B (preview-then-commit) + universal `dry_run` are documented inline above, in [`dry_run` plan shape](#dry_run-plan-shape); there is no separate safety-patterns document.
-- [SETUP.md#troubleshooting](../SETUP.md#troubleshooting) — common errors and resolutions
+- [SETUP.md#troubleshooting](https://github.com/rubicon/diviops/blob/main/SETUP.md#troubleshooting) — common errors and resolutions
 - Per-tool repeat-call semantics are documented inline above, in [`_meta.idempotent` markers](#_metaidempotent-markers); there is no separate idempotency-audit document.
 - **`divi-5-builder` skill** — block format rules, design patterns, workflow guidance (ships in the dist repo)
 

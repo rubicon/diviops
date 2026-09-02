@@ -58,7 +58,12 @@ import {
 import { optimizeSchema } from "./schema-optimizer.js";
 import { schemaModuleRoute } from "./schema-route.js";
 import { SEO_CHANGES, SEO_PROVIDER } from "./seo-schema.js";
-import { createWpCli, parseWpCliJson, WpCliJsonParseError } from "./wp-cli.js";
+import {
+  createWpCli,
+  describeWpCliFailure,
+  parseWpCliJson,
+  WpCliJsonParseError,
+} from "./wp-cli.js";
 import {
   META_INFO_CONFIG,
   META_PING_CONFIG,
@@ -4590,36 +4595,13 @@ registerLocalTool(
         //   pass 2 — collapsed 'spawn_failed' (ENOENT etc.) onto 'killed',
         //            telling callers the child was launched and killed
         //            even though it never spawned. This branch.
-        const detail = result.error ?? "wp-cli command failed";
-        const kind = result.failureKind ?? "exited";
-        let message: string;
-        let hint: string;
-        let stderrForData: string;
-        if (kind === "rejected") {
-          message = detail;
-          hint =
-            "Command was rejected before execution. Common causes: not in the allowlist (see DIVIOPS_WP_CLI_ALLOW for opt-ins) or filesystem path outside DIVIOPS_WP_CLI_SAFE_FS_ROOT.";
-          stderrForData = detail;
-        } else if (kind === "spawn_failed") {
-          message = `wp-cli could not spawn: ${detail}`;
-          hint =
-            "The OS refused to start the wp-cli executable — common causes: WP_CLI_CMD points at a missing binary (ENOENT), the binary is not executable (EACCES), or PATH does not include wp-cli. Verify `which wp` (or your WP_CLI_CMD prefix) resolves and is executable. error.data.stdout / error.data.stderr are empty because the child never ran.";
-          stderrForData = detail;
-        } else if (kind === "killed") {
-          message = `wp-cli command terminated: ${detail}`;
-          hint =
-            "Command was launched but killed before it finished (timeout or signal). error.data.stdout / error.data.stderr carry whatever streamed before the kill. Consider raising the timeout or splitting the command into smaller batches.";
-          stderrForData = result.stderr;
-        } else {
-          message = `wp-cli exited with code ${result.exitCode}`;
-          hint =
-            "Inspect error.data.stderr for the failure reason; re-run with WP_CLI_DEBUG=1 in the env to surface PHP traceback.";
-          stderrForData = result.stderr;
-        }
+        const { message, hint, stderr } = describeWpCliFailure(result, {
+          isWrapper: !!WP_CLI_CMD,
+        });
         withCode("meta_wp_cli.command_failed", message, hint, {
           exit_code: result.exitCode,
           stdout: result.stdout,
-          stderr: stderrForData,
+          stderr,
         });
       }
       return {
@@ -4700,8 +4682,9 @@ function pushScfFlag(args: string[], name: string, value: string | undefined): v
 }
 
 /**
- * Mirror of `meta_wp_cli.command_failed`'s four-failureKind branch logic,
- * scoped to the scf_* namespace. Inputs:
+ * `scf_*`-scoped wrapper over `describeWpCliFailure`, which owns the
+ * four-failureKind branch logic this and `meta_wp_cli.command_failed` share.
+ * Both used to carry their own byte-identical copy of it (#344). Inputs:
  *   - `result`: the raw `wpCli.runArgs(...)` payload (success === false here)
  *   - `args`: the wp-cli argv (sanitized of secrets at the wrapper level —
  *     SCF args carry no credentials) so callers can see exactly what was
@@ -4723,36 +4706,13 @@ function failScfCommand(
   },
   args: readonly string[],
 ): never {
-  const detail = result.error ?? "wp-cli command failed";
-  const kind = result.failureKind ?? "exited";
-  let message: string;
-  let hint: string;
-  let stderrForData: string;
-  if (kind === "rejected") {
-    message = detail;
-    hint =
-      "Command was rejected before execution. Common causes: not in the allowlist (see DIVIOPS_WP_CLI_ALLOW for opt-ins) or filesystem path outside DIVIOPS_WP_CLI_SAFE_FS_ROOT.";
-    stderrForData = detail;
-  } else if (kind === "spawn_failed") {
-    message = `wp-cli could not spawn: ${detail}`;
-    hint =
-      "The OS refused to start the wp-cli executable — common causes: WP_CLI_CMD points at a missing binary (ENOENT), the binary is not executable (EACCES), or PATH does not include wp-cli. Verify `which wp` (or your WP_CLI_CMD prefix) resolves and is executable. error.data.stdout / error.data.stderr are empty because the child never ran.";
-    stderrForData = detail;
-  } else if (kind === "killed") {
-    message = `wp-cli command terminated: ${detail}`;
-    hint =
-      "Command was launched but killed before it finished (timeout or signal). error.data.stdout / error.data.stderr carry whatever streamed before the kill. Consider raising the timeout or splitting the command into smaller batches.";
-    stderrForData = result.stderr;
-  } else {
-    message = `wp-cli exited with code ${result.exitCode}`;
-    hint =
-      "Inspect error.data.stderr for the failure reason; re-run with WP_CLI_DEBUG=1 in the env to surface PHP traceback.";
-    stderrForData = result.stderr;
-  }
+  const { kind, message, hint, stderr } = describeWpCliFailure(result, {
+    isWrapper: !!WP_CLI_CMD,
+  });
   withCode("scf.command_failed", message, hint, {
     exit_code: result.exitCode,
     stdout: result.stdout,
-    stderr: stderrForData,
+    stderr,
     failure_kind: kind,
     command: [...args],
   });
