@@ -24,8 +24,45 @@ interface WpCliConfig {
   wpPath: string;
   /** Local by Flywheel site ID (e.g. "BKr7xMxlH"). Auto-detected from wpPath if omitted. */
   localSiteId?: string;
-  /** Custom WP-CLI command prefix for containerized environments (e.g. "ddev wp"). */
+  /**
+   * Custom WP-CLI command prefix for containerized environments (e.g. "ddev wp").
+   *
+   * The prefix is split into an executable plus argv and run through `execFile`,
+   * so a wrapper that forwards argv element for element — `ddev wp`,
+   * `docker exec … wp`, `npx wp-env run cli wp` — preserves every argument
+   * exactly. A wrapper that crosses a *shell* boundary does not: see the ssh
+   * warning in `createWpCli`.
+   */
   wpCliCmd?: string;
+}
+
+/** Default child-process deadline, in milliseconds. */
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+/**
+ * Resolve the wp-cli child-process deadline.
+ *
+ * 30s covers a local wp-cli comfortably and is far too short for a remote one:
+ * a cold ssh connection plus a large `search-replace` or `export` blows through
+ * it, and the caller sees a timeout kill that looks like a hung site (#344).
+ *
+ * A non-positive or non-integer override is refused rather than coerced —
+ * `Number('soon')` is NaN and `parseInt('1.5')` is 1, and either quietly
+ * becomes a deadline nobody chose.
+ */
+function resolveWpCliTimeoutMs(): number {
+  const raw = process.env.DIVIOPS_WP_CLI_TIMEOUT_MS?.trim();
+  if (!raw) return DEFAULT_TIMEOUT_MS;
+
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    console.warn(
+      `[diviops] Ignoring DIVIOPS_WP_CLI_TIMEOUT_MS="${raw}" — expected a positive integer of milliseconds. Using ${DEFAULT_TIMEOUT_MS}.`,
+    );
+    return DEFAULT_TIMEOUT_MS;
+  }
+
+  return parsed;
 }
 
 /**
@@ -371,7 +408,80 @@ export const __wpCliTesting = {
   isCommandAllowed,
   parseCommand,
   normalizeWpCliPathArgs,
+  resolveWpCliTimeoutMs,
 };
+
+/** How a wp-cli invocation failed. See `runArgv`'s docblock for the taxonomy. */
+export type WpCliFailureKind = 'rejected' | 'spawn_failed' | 'killed' | 'exited';
+
+/**
+ * Turn a failed wp-cli result into the message, hint and stderr an error
+ * envelope should carry.
+ *
+ * Lives here rather than at the call sites because `meta_wp_cli` and the
+ * `scf_*` round-trip both emit it, and they had drifted into two byte-identical
+ * copies — a shape that guarantees the next correction lands in one of them.
+ *
+ * `isWrapper` is whether `WP_CLI_CMD` is configured. It only changes the
+ * spawn-failure hint, and it has to: without a wrapper, a spawn failure really
+ * is a missing or non-executable binary. With one that reaches a remote host,
+ * the far likelier cause is the connection — refused, timed out, or throttled
+ * after repeated connects, which is what a managed host does to a server that
+ * opens a fresh ssh session per command (#344). Naming only ENOENT there sends
+ * the operator to check a binary that was never the problem.
+ */
+export function describeWpCliFailure(
+  result: {
+    error?: string;
+    stderr: string;
+    exitCode: number | null;
+    failureKind?: WpCliFailureKind;
+  },
+  options: { isWrapper: boolean },
+): { kind: WpCliFailureKind; message: string; hint: string; stderr: string } {
+  const detail = result.error ?? 'wp-cli command failed';
+  const kind = result.failureKind ?? 'exited';
+
+  if (kind === 'rejected') {
+    return {
+      kind,
+      message: detail,
+      hint: 'Command was rejected before execution. Common causes: not in the allowlist (see DIVIOPS_WP_CLI_ALLOW for opt-ins) or filesystem path outside DIVIOPS_WP_CLI_SAFE_FS_ROOT.',
+      stderr: detail,
+    };
+  }
+
+  if (kind === 'spawn_failed') {
+    const transport = options.isWrapper
+      ? ' For a WP_CLI_CMD wrapper that reaches a remote host, the connection is the likelier cause than the binary: refused, timed out, or rate-limited after repeated connects. Every command opens a new session unless ssh multiplexing is on — set `ControlMaster auto` with a `ControlPath` and a `ControlPersist` window for that host in ~/.ssh/config, and confirm the wrapper runs by hand.'
+      : '';
+    return {
+      kind,
+      message: `wp-cli could not spawn: ${detail}`,
+      hint:
+        'The OS refused to start the wp-cli executable — common causes: WP_CLI_CMD points at a missing binary (ENOENT), the binary is not executable (EACCES), or PATH does not include wp-cli. Verify `which wp` (or your WP_CLI_CMD prefix) resolves and is executable.' +
+        transport +
+        ' error.data.stdout / error.data.stderr are empty because the child never ran.',
+      stderr: detail,
+    };
+  }
+
+  if (kind === 'killed') {
+    return {
+      kind,
+      message: `wp-cli command terminated: ${detail}`,
+      hint: 'Command was launched but killed before it finished (timeout or signal). error.data.stdout / error.data.stderr carry whatever streamed before the kill. Raise the deadline with DIVIOPS_WP_CLI_TIMEOUT_MS (default 30000) or split the command into smaller batches.',
+      stderr: result.stderr,
+    };
+  }
+
+  return {
+    kind,
+    message: `wp-cli exited with code ${result.exitCode}`,
+    hint: 'Inspect error.data.stderr for the failure reason; re-run with WP_CLI_DEBUG=1 in the env to surface PHP traceback.',
+    stderr: result.stderr,
+  };
+}
 
 /** Longest excerpt of the offending stream carried on a parse failure. */
 const JSON_EXCERPT_LIMIT = 512;
@@ -657,6 +767,37 @@ function buildLocalEnv(localSiteId: string): Record<string, string> {
   };
 }
 
+/**
+ * Warn when `WP_CLI_CMD` invokes `ssh` directly.
+ *
+ * `execFile` hands argv to the child untouched, which every local wrapper
+ * forwards faithfully. ssh does not: it joins everything after the host into
+ * one string and the *remote* shell re-parses it, so `wp eval 'echo foo();'`
+ * arrives as a broken command line and the remote bash — not wp-cli — reports
+ * the syntax error. Reproduced against a real host on 2026-09-01:
+ *
+ *   bash: -c: line 0: syntax error near unexpected token `('
+ *
+ * Nothing in this process can repair that, because only the wrapper knows what
+ * the far shell will do with the string. So the operator is told at startup
+ * instead, before the first mangled command turns into a hunt for a wp-cli bug
+ * that is not there.
+ *
+ * Matched on the executable's basename, not on the command string: a shim
+ * *named* for ssh is the recommended fix and must not be warned about.
+ */
+function warnIfShellBoundaryWrapper(executable: string, wpCliCmd: string): void {
+  const command = executable.split(/[\\/]/).pop();
+  if (command !== 'ssh') return;
+
+  console.warn(
+    `[diviops] WP_CLI_CMD="${wpCliCmd}" invokes ssh directly. ssh concatenates its command argv into one string that the remote shell re-parses, so per-argument quoting is lost — \`wp eval\`, \`search-replace\` patterns, and JSON filters fail as remote shell syntax errors rather than wp-cli errors. Point WP_CLI_CMD at a local shim that re-quotes instead:\n` +
+      `  #!/bin/bash\n` +
+      `  exec ssh -o BatchMode=yes HOST "cd /srv/site && wp $(printf '%q ' "$@")"\n` +
+      `See https://github.com/rubicon/diviops/blob/main/SETUP.md#remote-hosts-over-ssh`,
+  );
+}
+
 export function createWpCli(config: WpCliConfig) {
   let executable = 'wp';
   let prefixArgs: string[] = [];
@@ -664,7 +805,7 @@ export function createWpCli(config: WpCliConfig) {
   const customWpCliCmd = config.wpCliCmd?.trim();
   const execOptions = {
     env: process.env as Record<string, string>,
-    timeout: 30_000,
+    timeout: resolveWpCliTimeoutMs(),
     maxBuffer: 5 * 1024 * 1024,
   };
 
@@ -673,6 +814,7 @@ export function createWpCli(config: WpCliConfig) {
     if (!executable) {
       throw new Error('WP_CLI_CMD must include an executable.');
     }
+    warnIfShellBoundaryWrapper(executable, customWpCliCmd);
     env = { ...(process.env as Record<string, string>) };
   } else {
     // Auto-detect site ID if not provided.

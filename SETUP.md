@@ -140,13 +140,51 @@ DiviOps connects via standard WordPress REST API and works with any host that ex
 | **DDEV** | `https://site-name.ddev.site` | `WP_CLI_CMD="ddev wp"` plus `WP_PATH=/path/to/project` | Wrapper runs from `WP_PATH` |
 | **wp-env** | `http://localhost:8888` | `WP_CLI_CMD="npx wp-env run cli wp"` plus `WP_PATH=/path/to/project` | Requires `WP_ENVIRONMENT_TYPE=local` (see below) |
 | **DevKinsta** | `https://site-name.local` | `WP_CLI_CMD="docker exec -u www-data devkinsta_fpm wp --path=/www/kinsta/public/sitename"` | HTTPS with self-signed certs |
-| **Custom / Remote** | Your site URL | `WP_PATH=/path/to/site` or `WP_CLI_CMD="..."` | Works with any WP host |
+| **Custom / Remote** | Your site URL | `WP_PATH=/path/to/site` or `WP_CLI_CMD="..."` | Works with any WP host; over ssh, [use a shim](#remote-hosts-over-ssh) |
 
 > **Application Passwords on HTTP:** WordPress requires HTTPS for Application Passwords unless `WP_ENVIRONMENT_TYPE` is set to `'local'`. HTTPS environments (DDEV, DevKinsta) work out of the box. HTTP environments (wp-env, WordPress Studio) need this in `wp-config.php`:
 > ```php
 > define('WP_ENVIRONMENT_TYPE', 'local');
 > ```
 > Local by Flywheel sets this automatically.
+
+### Remote hosts over SSH
+
+A remote host is the same shape as a containerized one — `WP_CLI_CMD` runs a wrapper, the wrapper runs `wp` somewhere else — but ssh needs one extra step that the container wrappers do not.
+
+**Never point `WP_CLI_CMD` straight at `ssh`.** The server runs the wrapper with `execFile`, which passes arguments to the child one by one with no shell in between. `ddev wp` and `docker exec … wp` forward them the same way, so nothing is lost. ssh does not: it joins everything after the host into a single string that the *remote* shell re-parses, and every argument boundary disappears on the way:
+
+```
+WP_CLI_CMD="ssh HOST wp --path=/srv/site"
+wp eval 'echo wp_get_environment_type();'
+  → bash: -c: line 0: syntax error near unexpected token `('
+```
+
+The remote shell is the one complaining, so the message reads like a malformed wp-cli command. It is not — the argument was well-formed when it left. This breaks `eval`, `search-replace` patterns, and any `--format=json` filter, and it corrupts multi-word values silently when they happen to contain no shell metacharacters. The server warns at startup when it sees `WP_CLI_CMD` beginning with `ssh`, for exactly this reason.
+
+**The fix is a local shim that re-quotes each argument.** Save it, `chmod +x` it, and point `WP_CLI_CMD` at the shim:
+
+```bash
+#!/bin/bash
+exec ssh -o BatchMode=yes HOST "cd /srv/site && wp $(printf '%q ' "$@")"
+```
+
+`printf '%q '` escapes each argument so the remote shell's re-parse reconstructs the original argv. Verified end to end, including `wp eval` with parentheses and quotes.
+
+**Turn on connection multiplexing.** Without it every wp-cli call opens a fresh ssh session, and a managed host starts refusing them — the first connection succeeds and the next two time out. The server reports that as a spawn failure, which reads like a missing binary. In `~/.ssh/config`:
+
+```
+Host HOST
+  ControlMaster auto
+  ControlPath ~/.ssh/cm-%r@%h:%p
+  ControlPersist 10m
+```
+
+**Raise the timeout.** A cold connection plus a large `search-replace` or `export` runs past the 30-second default. Set `DIVIOPS_WP_CLI_TIMEOUT_MS` (see below) to something like `120000`.
+
+**Keep `WP_PATH` local, or leave it unset.** In `WP_CLI_CMD` mode `WP_PATH` is the working directory the *wrapper* is launched from, on the machine running the MCP server — the remote site path belongs inside the shim (`cd /srv/site && wp …`), not in `WP_PATH`. Setting `WP_PATH` to the remote path makes every command fail before it starts, with `failure_kind: "spawn_failed"` and errno `ENOENT`, because that directory does not exist locally.
+
+The same three points apply to any wrapper that crosses a shell boundary, not only ssh — a `bash -c` wrapper or a remote-exec tool that takes its command as a string has the same problem and the same `printf '%q '` fix.
 
 ### Environment Variables
 
@@ -156,9 +194,10 @@ DiviOps connects via standard WordPress REST API and works with any host that ex
 | `WP_USER` | Yes | WordPress username with Editor or Admin role |
 | `WP_APP_PASSWORD` | Yes | Application Password (spaces stripped) |
 | `WP_PATH` | No | WordPress filesystem path for Local by Flywheel, or wrapper working directory when `WP_CLI_CMD` needs project context |
-| `WP_CLI_CMD` | No | Custom WP-CLI command prefix for containerized environments |
+| `WP_CLI_CMD` | No | Custom WP-CLI command prefix for containerized environments. Arguments are passed to the wrapper individually, with no shell in between — a wrapper that crosses a **shell boundary** (ssh, `bash -c`, any remote-exec tool taking one command string) must re-quote them per argument or every quoted value is destroyed. See [Remote hosts over SSH](#remote-hosts-over-ssh) |
 | `LOCAL_SITE_ID` | No | Override auto-detection of Local by Flywheel site ID |
 | `DIVIOPS_WP_CLI_ALLOW` | No | Comma-separated list of extended WP-CLI commands to enable ([see below](#wp-cli-security)) |
+| `DIVIOPS_WP_CLI_TIMEOUT_MS` | No | Deadline for each WP-CLI child process, in milliseconds. Default `30000`. Raise it for remote wrappers, where a cold connection plus a large `search-replace` or `export` runs past the default. A value that is not a positive integer is ignored with a warning |
 
 ### Common Pitfalls
 
@@ -564,6 +603,9 @@ No clone, no build.
 | 401 Unauthorized | Check `WP_USER` and `WP_APP_PASSWORD` (strip spaces) |
 | 503 Divi unavailable | Activate Divi 5 theme |
 | WP-CLI "not configured" | Set `WP_PATH` (Local by Flywheel) or `WP_CLI_CMD` (containerized) |
+| Remote wp-cli reports `bash: -c: line 0: syntax error` | `WP_CLI_CMD` points straight at `ssh`, which destroys per-argument quoting. Use the [re-quoting shim](#remote-hosts-over-ssh) |
+| `failure_kind: "spawn_failed"` on a remote wrapper, wp-cli installed | The ssh connection failed, not the binary. Enable `ControlMaster auto` / `ControlPersist` — see [Remote hosts over SSH](#remote-hosts-over-ssh) |
+| `failure_kind: "killed"`, "Command timed out" | Raise `DIVIOPS_WP_CLI_TIMEOUT_MS` above the 30000 default, or split the command into smaller batches |
 | Styles not rendering | Hard-refresh browser (Cmd+Shift+R) — CSS cache |
 | VB shows raw `$variable()$` | Dynamic content binding — click the chip to edit |
 | `npx` can't find package | Update Node.js to 22+; verify `npx --version` works; use `npx -y --package @rubicontv/diviops-mcp diviops-mcp`; the explicit package/bin form is required |
