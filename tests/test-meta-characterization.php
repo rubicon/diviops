@@ -875,15 +875,60 @@ $body = diviops_metac_icons( array( 'q' => 'widget', 'limit' => -5 ) );
 assert_same( 5, $body['data']['count'], 'QUIRK: limit=-5 returns FIVE results — absint() takes the absolute value, so a sign error silently becomes a valid limit' );
 
 /*
- * SUSPECTED DEFECT. `strpos( $haystack, '' )` returns int 0 in PHP 8, and 0
- * !== false, so an empty or omitted `q` matches every record and the caller
- * gets an arbitrary first-N slice of the catalog instead of a refusal. Every
- * other input on this handler is validated; this one is not.
+ * SUSPECTED DEFECT, and a version-dependent one. `q` is the only input on this
+ * handler that is never validated, and it reaches `strpos( $search, $query )`
+ * with an empty needle, which PHP changed underneath the plugin:
+ *
+ *   - PHP 8.0+ made an empty needle legal. strpos returns int 0, and 0 !== false,
+ *     so EVERY record matches and the caller silently receives the first N
+ *     records of the catalog instead of a refusal.
+ *   - PHP 7.4 — this plugin's own floor, and a version CI still builds against —
+ *     emits `Warning: strpos(): Empty needle` and returns false, so NOTHING
+ *     matches and the call returns an empty result set plus one warning per
+ *     catalog record.
+ *
+ * Same request, two different answers and two different log volumes across the
+ * supported range. Both are pinned. The 7.4 expectations were read off CI's own
+ * PHP 7.4 job (run 33657974910), not guessed: that job is what surfaced the
+ * split in the first place.
+ *
+ * The warnings are captured rather than printed, so the suite's output stays
+ * clean on 7.4 — and counting them turns the noise into an assertion about how
+ * far the walk got.
  */
+$empty_q_warnings = array();
+set_error_handler(
+	static function ( $errno, $errstr ) use ( &$empty_q_warnings ) {
+		$empty_q_warnings[] = $errstr;
+		return true;
+	}
+);
 $body = diviops_metac_icons( array() );
+restore_error_handler();
+
 assert_same( '', $body['data']['query'], 'an omitted q sanitizes to the empty string' );
-assert_same( 10, $body['data']['count'], 'SUSPECTED DEFECT: an omitted q matches every icon (strpos with an empty needle returns 0, not false) and silently returns the first 10 records rather than refusing' );
-assert_same( 'Arrow Up', $body['data']['results'][0]['name'], 'and those records are simply the head of the catalog, in file order' );
+
+$results   = $body['data']['results'];
+$first_hit = isset( $results[0]['name'] ) ? $results[0]['name'] : null;
+
+if ( PHP_VERSION_ID >= 80000 ) {
+	assert_same( 10, $body['data']['count'], 'SUSPECTED DEFECT (PHP 8+): an omitted q matches every icon — strpos with an empty needle returns 0, not false — and silently returns the first 10 records rather than refusing' );
+	assert_same( 'Arrow Up', $first_hit, 'and those records are simply the head of the catalog, in file order' );
+	assert_same( array(), $empty_q_warnings, 'PHP 8 raises nothing while doing it, so the only sign is the wrong result' );
+} else {
+	assert_same( 0, $body['data']['count'], 'SUSPECTED DEFECT (PHP 7.4): the same omitted q returns NOTHING — strpos refuses an empty needle and returns false — so the handler answers differently on the plugin\'s own PHP floor than on PHP 8' );
+	assert_same( null, $first_hit, 'there is no first result to read on 7.4' );
+	assert_same(
+		count( $icons ) - 1,
+		count( $empty_q_warnings ),
+		'and it raises one "Empty needle" warning per ARRAY record in the catalog (' . ( count( $icons ) - 1 ) . ' of the ' . count( $icons ) . ' fixture entries; the non-array entry is skipped before the strpos) — on Divi\'s real 1,989-record catalog that is a warning flood per call'
+	);
+	assert_same(
+		array(),
+		array_values( array_filter( $empty_q_warnings, static function ( $warning ) { return false === strpos( $warning, 'Empty needle' ); } ) ),
+		'every captured warning is the empty-needle one, so the count above is not padded by an unrelated notice'
+	);
+}
 
 // ══ D. flush_static_cache — refusals and the missing-root contract ════════
 //
