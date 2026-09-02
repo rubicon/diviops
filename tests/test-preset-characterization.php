@@ -431,6 +431,15 @@ assert_same( false, $rows[2]['cleanup_candidate'], 'a live row with a payload is
 // The gate: chunk cleanup is deliberately coupled to an actual timestamp repair
 // (trait-preset.php:44). Asking to clear transients on a registry with nothing
 // repairable must plan — and do — nothing.
+//
+// Note for anyone extending this: the apply-side copy of that same condition at
+// trait-preset.php:100 cannot be observed independently. `$changes` is non-empty
+// only when `$timestamp_change_count > 0` (line 44 is the only other producer,
+// and it carries the same conjunct), and a repair with empty `$changes` returns
+// at the no-op branch on line 76 before line 100 is reached. So the
+// `&& $timestamp_change_count > 0` half of line 100 is unreachable as a decision
+// — deleting it changes no behaviour. The deletion of the transients themselves
+// IS covered, by the applied assertions further down.
 diviops_pc_seed( array( 'module' => array( 'divi/heading' => array( 'default' => '', 'items' => array( 'ok' => array( 'name' => 'A', 'created' => 1735786800000 ) ) ) ) ) );
 $body = diviops_pc_body( 'preset_registry_doctor', array( 'repair' => true, 'dry_run' => true, 'clear_chunk_transients' => true ) );
 assert_same( 0, count( $body['data']['plan']['changes'] ), 'clear_chunk_transients plans nothing when no timestamp repair is available' );
@@ -736,7 +745,26 @@ $dupes = array(
 				'd-default' => array( 'name' => 'Kept Default', 'attrs' => array( 'same' => true ) ),
 				'd-dupe'    => array( 'name' => 'Duplicate', 'attrs' => array( 'same' => true ) ),
 				'd-other'   => array( 'name' => 'Different', 'attrs' => array( 'other' => true ) ),
+				// TWO attr-less presets, deliberately: the hash pass skips a
+				// preset with no attrs before hashing (trait-preset.php:1190),
+				// and with only one such preset that skip is unobservable — a
+				// pair would otherwise hash identically (both to md5 of "null")
+				// and dedupe each other.
 				'd-noattrs' => array( 'name' => 'No Attrs' ),
+				'd-noattrs2' => array( 'name' => 'Also No Attrs' ),
+			),
+		),
+		// A second bucket whose duplicate pair is in the OPPOSITE order: the
+		// first item seen is unprotected and the second is the bucket default.
+		// That is the only way into the dedup pass's swap branch
+		// (trait-preset.php:1214), which removes the already-recorded keeper
+		// instead of the current item. With the pair only in the first order,
+		// that branch is never executed and nothing here observes it.
+		'divi/text' => array(
+			'default' => 'd-swap-keep',
+			'items'   => array(
+				'd-swap-drop' => array( 'name' => 'Seen First', 'attrs' => array( 'twin' => true ) ),
+				'd-swap-keep' => array( 'name' => 'Seen Second', 'attrs' => array( 'twin' => true ) ),
 			),
 		),
 	),
@@ -744,27 +772,36 @@ $dupes = array(
 diviops_pc_seed( $dupes );
 $body   = diviops_pc_body( 'preset_cleanup', array( 'dedup' => true, 'dry_run' => false ) )['data'];
 $stored = diviops_pc_stored();
-assert_same( array( 'd-dupe' ), array_column( $body['deduped'], 'id' ), 'the unprotected member of an identical-attrs pair is deduped' );
+assert_same( array( 'd-dupe', 'd-swap-drop' ), array_column( $body['deduped'], 'id' ), 'the unprotected member of an identical-attrs pair is deduped, whichever order the pair is in' );
 assert_same( 'd-default', $body['deduped'][0]['kept_id'], 'the surviving UUID is reported as kept_id' );
+assert_same( 'd-swap-keep', $body['deduped'][1]['kept_id'], 'in the swap branch the already-recorded keeper is the one removed, and the protected current item becomes kept_id' );
+assert_same( false, isset( $stored['module']['divi/text']['items']['d-swap-drop'] ), 'the unprotected first-seen twin is gone from storage' );
+assert_same( true, isset( $stored['module']['divi/text']['items']['d-swap-keep'] ), 'and the bucket default survives' );
 assert_same( false, isset( $stored['module']['divi/heading']['items']['d-dupe'] ), 'and it is gone from storage' );
 assert_same( true, isset( $stored['module']['divi/heading']['items']['d-default'] ), 'the bucket default survives the dedup' );
 assert_same( true, isset( $stored['module']['divi/heading']['items']['d-noattrs'] ), 'a preset with no attrs is skipped by the hash pass entirely' );
+assert_same( true, isset( $stored['module']['divi/heading']['items']['d-noattrs2'] ), 'and so is a second one, which would otherwise hash identically to the first' );
 
-// Both protected: the pass keeps both rather than picking a winner.
-$both_default = $dupes;
-$both_default['module']['divi/heading']['items'] = array(
-	'd-a' => array( 'name' => 'A', 'attrs' => array( 'same' => true ) ),
-	'd-b' => array( 'name' => 'B', 'attrs' => array( 'same' => true ) ),
-);
-$both_default['module']['divi/heading']['default'] = 'd-a';
-$both_default['group'] = array( 'divi/font' => array( 'default' => '', 'items' => array(
-	'g-a' => array( 'name' => 'GA', 'attrs' => array( 'x' => 1 ), 'groupPresets' => array() ),
-) ) );
-// Make d-b chain-referenced so both members of the pair are protected.
-$both_default['module']['divi/heading']['items']['d-c'] = array(
-	'name'         => 'C',
-	'attrs'        => array( 'zzz' => 1 ),
-	'groupPresets' => array( 'divi/font' => array( 'presetId' => 'd-b' ) ),
+// Both protected: the pass keeps both rather than picking a winner. Built
+// standalone rather than from $dupes, so the swap-branch bucket above cannot
+// leak into this run and turn a "neither" assertion into a partial one.
+$both_default = array(
+	'module' => array(
+		'divi/heading' => array(
+			'default' => 'd-a',
+			'items'   => array(
+				'd-a' => array( 'name' => 'A', 'attrs' => array( 'same' => true ) ),
+				'd-b' => array( 'name' => 'B', 'attrs' => array( 'same' => true ) ),
+				// Chain-references d-b, so both members of the pair are protected:
+				// d-a as the bucket default, d-b by reference.
+				'd-c' => array(
+					'name'         => 'C',
+					'attrs'        => array( 'zzz' => 1 ),
+					'groupPresets' => array( 'divi/font' => array( 'presetId' => 'd-b' ) ),
+				),
+			),
+		),
+	),
 );
 diviops_pc_seed( $both_default );
 $body   = diviops_pc_body( 'preset_cleanup', array( 'dedup' => true, 'dry_run' => false ) )['data'];
@@ -829,6 +866,16 @@ $untouched = diviops_pc_stored()['module']['divi/heading']['items']['mod-clean']
 assert_same( 'Hero Banner', $untouched['name'], 'a field not named in the request is left alone' );
 assert_same( array( 'c' => 3 ), $untouched['attrs'], 'and so are its attrs' );
 assert_same( true, isset( $untouched['updated'] ), 'but the updated stamp is written regardless — a no-field update is not a no-op in storage' );
+
+// The type guards are enforced on the WRITE, not only in the plan: a non-array
+// attrs and a non-numeric priority reach storage as nothing at all rather than
+// as their coerced values.
+diviops_pc_seed( diviops_pc_registry_fixture() );
+assert_same( true, diviops_pc_wrote( 'preset_update', array( 'preset_id' => 'mod-clean', 'attrs' => 'not an array', 'priority' => 'soon' ) ), 'an update carrying ill-typed fields still reaches the write' );
+$ill_typed = diviops_pc_stored()['module']['divi/heading']['items']['mod-clean'];
+assert_same( array( 'c' => 3 ), $ill_typed['attrs'], 'a non-array attrs never reaches storage' );
+assert_same( false, array_key_exists( 'styleAttrs', $ill_typed ), 'and the three-bag mirror does not fire for it' );
+assert_same( false, array_key_exists( 'priority', $ill_typed ), 'a non-numeric priority is not coerced to 0 and written' );
 
 // The walk finds a preset in the group bucket too, not just the module bucket.
 diviops_pc_seed( diviops_pc_registry_fixture() );
@@ -1048,6 +1095,12 @@ $items  = diviops_pc_stored()['module']['divi/heading']['items'];
 $minted = array_values( array_diff( array_keys( $items ), array_keys( diviops_pc_registry_fixture()['module']['divi/heading']['items'] ) ) );
 assert_same( $minted[0], diviops_pc_stored()['module']['divi/heading']['default'], 'make_default points the bucket at the new UUID' );
 assert_same( false, array_key_exists( 'priority', $items[ $minted[0] ] ), 'an omitted priority is left off the record entirely rather than defaulted' );
+
+diviops_pc_seed( diviops_pc_registry_fixture() );
+assert_same( true, diviops_pc_wrote( 'preset_create', array( 'module_name' => 'divi/heading', 'name' => 'Brand New', 'attrs' => array( 'a' => 1 ), 'priority' => 'soon' ) ), 'a create carrying a non-numeric priority still reaches the write' );
+$items  = diviops_pc_stored()['module']['divi/heading']['items'];
+$minted = array_values( array_diff( array_keys( $items ), array_keys( diviops_pc_registry_fixture()['module']['divi/heading']['items'] ) ) );
+assert_same( false, array_key_exists( 'priority', $items[ $minted[0] ] ), 'a non-numeric priority is not coerced to 0 and written' );
 
 // A group preset lands in the group bucket keyed by group_name — NOT by
 // module_name — and carries the group coordinates.
@@ -1298,6 +1351,15 @@ $blocks = array(
 				'attrs'     => array( 'modulePreset' => 'uuid-b' ),
 			),
 			array(
+				// A modulePreset container that yields NO usable UUID. This is the
+				// only shape that distinguishes "ref_count counts containers that
+				// produced a reference" from "ref_count counts containers": every
+				// other block here yields at least one UUID, so without this one
+				// the `if ( $found )` guard is unobservable.
+				'blockName' => 'divi/button',
+				'attrs'     => array( 'modulePreset' => array( 'default', '' ) ),
+			),
+			array(
 				'blockName' => 'divi/text',
 				'attrs'     => array(
 					'groupPreset' => array(
@@ -1320,7 +1382,7 @@ assert_same( 1, $all_uuids['uuid-b'] ?? null, 'a scalar modulePreset is accepted
 assert_same( 1, $all_uuids['uuid-c'] ?? null, 'a groupPreset slot presetId is counted' );
 assert_same( false, isset( $all_uuids['default'] ), "the 'default' sentinel never becomes a reference" );
 assert_same( false, isset( $all_uuids[''] ), 'an empty string never becomes a reference' );
-assert_same( 3, $ref_count, 'ref_count increments once per CONTAINER that yielded at least one UUID, not once per UUID' );
+assert_same( 3, $ref_count, 'ref_count increments once per CONTAINER that yielded at least one UUID — the sentinel-only block above is walked and contributes nothing' );
 assert_same( array( 'uuid-a', 'uuid-a', 'uuid-b', 'uuid-c' ), $page_uuids, 'page_uuids is the raw per-occurrence list, de-duplicated only by the caller' );
 
 // A block with no attrs at all, and a slot map that is a scalar, are both
@@ -1363,7 +1425,14 @@ assert_same( 2, $nested->depth, 'the deep copy clones nested objects rather than
 assert_same( true, is_object( $copy['obj'] ), 'and preserves their object-ness rather than normalising to arrays' );
 
 assert_same( true, diviops_call_static( 'preset_registry_values_equal', array( array( 'a' => 1 ), array( 'a' => 1 ) ) ), 'structurally identical values compare equal' );
-assert_same( false, diviops_call_static( 'preset_registry_values_equal', array( array( 'a' => 1 ), (object) array( 'a' => 1 ) ) ), 'an array and an object with the same contents are NOT equal — the comparison is over serialize()' );
+assert_same( false, diviops_call_static( 'preset_registry_values_equal', array( array( 'a' => 1 ), (object) array( 'a' => 1 ) ) ), 'an array and an object with the same contents are NOT equal' );
+// The comparison is `serialize( $a ) === serialize( $b )`, which is neither
+// `===` nor `==` on the values: two distinct objects with identical contents
+// compare EQUAL (`===` would say no), while an int and its numeric string
+// compare UNEQUAL (`==` would say yes). Both directions are pinned so the
+// implementation cannot quietly become either operator.
+assert_same( true, diviops_call_static( 'preset_registry_values_equal', array( (object) array( 'a' => 1 ), (object) array( 'a' => 1 ) ) ), 'two distinct objects with identical contents compare equal — object identity is not part of the test' );
+assert_same( false, diviops_call_static( 'preset_registry_values_equal', array( array( 'a' => 1 ), array( 'a' => '1' ) ) ), 'an int and its numeric string do NOT compare equal — the test is not loose' );
 
 $target = array( 'module' => array( 'm' => array( 'items' => array( 'u' => array( 'created' => 'iso' ) ) ) ) );
 $args   = array( &$target, array( 'module', 'm', 'items', 'u', 'created' ), 123 );
