@@ -24,6 +24,12 @@ trait DiviOps_Agent_Meta {
 	public static function schema_get_settings( $request ) {
 		$settings = [];
 
+		// Which site is answering (#343). Attached here as well as to the
+		// handshake because this is the endpoint the MCP server's connection
+		// test already fetches, so meta_ping can name the site without a
+		// second round trip.
+		$settings['site_identity'] = self::site_identity();
+
 		// Theme options. Keep this surface intentionally narrow: `et_divi`
 		// can contain admin-only script injection fields and other private
 		// configuration. Dedicated tools expose richer design-system surfaces.
@@ -1673,6 +1679,44 @@ trait DiviOps_Agent_Meta {
 	// ── Handshake ────────────────────────────────────────────────────
 
 	/**
+	 * Which WordPress install is answering (#343).
+	 *
+	 * `home_url` is the field that matters. It is the authoritative identifier,
+	 * and telling two environments apart is the question a preflight has to
+	 * answer before any cross-environment write — `cross_env_header_apply` and
+	 * `cross_env_layout_apply` write layouts across environments, so a
+	 * misidentified source or target is destructive and hard to reverse. Before
+	 * this block, the only way to confirm a repoint had landed was to invent a
+	 * discriminator: query a variable known to exist on one environment and not
+	 * the other.
+	 *
+	 * `environment_type` is ADVISORY and nothing may branch on it. WordPress
+	 * answers `production` whenever `WP_ENVIRONMENT_TYPE` is undefined, and
+	 * undefined is the default: staging.colleyvillelions.com reports
+	 * `production` for exactly that reason. A gate that consulted this field
+	 * would therefore classify that staging site as production, which is the
+	 * mistake the identity block exists to prevent rather than cause. It is
+	 * reported because it is occasionally useful, labelled advisory in both
+	 * tool descriptions, and read by no capability gate, warning, or write
+	 * guard. `home_url` is what an operator compares.
+	 *
+	 * Shared by `/handshake` and `/schema/settings` so the two preflight tools
+	 * report the same block. A trait cannot carry a constant below PHP 8.2 and
+	 * this plugin's floor is 7.4, so the shape lives in a private static method.
+	 *
+	 * @return array<string,mixed>
+	 */
+	private static function site_identity() {
+		return [
+			'home_url'         => home_url(),
+			'site_name'        => get_bloginfo( 'name' ),
+			'environment_type' => wp_get_environment_type(),
+			'is_multisite'     => is_multisite(),
+			'wp_version'       => get_bloginfo( 'version' ),
+		];
+	}
+
+	/**
 	 * Digest of this plugin's own source, for identifying the running build (#215).
 	 *
 	 * A version number answers "which release is this" and nothing more. It
@@ -1826,6 +1870,11 @@ trait DiviOps_Agent_Meta {
 				'login' => wp_get_current_user()->user_login,
 			],
 			'site_url'       => get_site_url(),
+			// Which site this is (#343). `site_url` above is the WordPress
+			// address and predates this block; `site_identity.home_url` is the
+			// front-end address, which is what an operator compares when
+			// confirming a repoint.
+			'site_identity'  => self::site_identity(),
 			'divi'           => [
 				'active'  => $divi_active,
 				'version' => $divi_version,
