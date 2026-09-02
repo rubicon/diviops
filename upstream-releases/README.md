@@ -7,71 +7,77 @@ this directory, so a fresh clone gets the rules and none of the binaries.
 This directory exists in the main clone only. Per-issue worktrees are removed
 when their branch merges, and ignored files inside them go with the worktree.
 
-## The boundary is the artifact name, not the folder
+## The boundary is what leaves this machine, not what you open
 
-Do not reason about this from directory layout. The directories are named to
-agree with the rule, but the rule is what decides:
+Every artifact here is readable. What differs between them is the licence, and
+therefore what may be committed and what may be copied:
 
-| Artifact | Contents | Rule |
-| --- | --- | --- |
-| `diviops-suite-<version>.zip` | Free distribution. MIT. | **Readable.** |
-| `diviops-agent-<version>.zip`, `diviops-design-library-*.zip` | Individual free plugins. MIT. | **Readable.** |
-| `diviops-pro-suite-*` | Pro distribution: everything in Free **plus** the Pro plugin and the deeper skill-knowledge layer. | **Forbidden.** |
-| `diviops-agent-pro*.zip` | The Pro plugin alone. | **Forbidden.** |
+| Artifact | Contents | Licence | Rule |
+| --- | --- | --- | --- |
+| `diviops-suite-<version>.zip` | Free distribution. | MIT / GPL-2.0-or-later | Read, and reuse under its licence. |
+| `diviops-agent-<version>.zip`, `diviops-design-library-*.zip` | Individual free plugins. | MIT / GPL-2.0-or-later | Read, and reuse under its licence. |
+| `diviops-pro-suite-*` | Pro distribution: everything in Free **plus** the Pro plugin and the deeper skill-knowledge layer (`divi-5-builder` Tier 2 + Tier 3). | Commercial, third party | Read. Never commit, never transcribe. |
+| `diviops-agent-pro*.zip` | The Pro plugin alone. | Commercial, third party | Read. Never commit, never transcribe. |
 
-Current layout, which follows from that table rather than defining it:
+Current layout:
 
 ```
 upstream-releases/
   README.md     tracked
-  agent/        readable    — diviops-agent-*.zip, diviops-design-library-*.zip
-  agent-pro/    FORBIDDEN   — diviops-agent-pro-*.zip
-  suite/        readable    — diviops-suite-<version>.zip
-  suite-pro/    FORBIDDEN   — diviops-pro-suite-*.zip
+  agent/        diviops-agent-*.zip, diviops-design-library-*.zip
+  agent-pro/    diviops-agent-pro-*.zip        (commercial)
+  suite/        diviops-suite-<version>.zip
+  suite-pro/    diviops-pro-suite-*.zip        (commercial)
 ```
 
-The `-pro` suffix is the marker, and the guard enforces it as a hyphen-delimited
-word rather than as a filename prefix, so it survives a rename. If you add a
-directory here, `<thing>` is readable and `<thing>-pro` is not.
+## The clean-room rule was rescinded
 
-**Keep zips, never extracted directories.** A zip is opaque — you have to
-deliberately unzip it. An extracted tree is one `grep -r` away from
-contamination, and it is exactly what a code indexer walks; a zip is a binary it
-skips. Storing zips only makes the boundary structural instead of rule-based.
-An extracted Pro bundle is also the one shape that defeated an earlier version of
-the guard: only the directory carried the Pro marker and none of the files under
-it did.
+Until 2026-09-02 the Pro artifacts were unreadable: nothing here could be
+opened, grepped, or allowed to inform anything authored in this repository. The
+owner ended that rule on 2026-09-02:
 
-A Pro-suite bundle is not a free bundle with an extra file bolted on. Its own
-README states that the Pro distribution adds "the deeper skill knowledge layer —
-`divi-5-builder` **Tier 2** + **Tier 3**", and it carries `diviops-agent-pro.zip`
-plus an extracted `plugins/diviops-agent-pro/` at its root. Those are precisely
-the things this project may not derive from.
+> "FYI, the new Pro plugin and new skills archives are in the upstream-releases
+> folder. I'm rescinding the rule about the clean room. Let's take it a
+> different way. Any time we are stepping on the Pro plugin, let me know."
 
-**Do not carve out the MIT parts of a Pro bundle.** It does contain MIT pieces —
-`diviops-agent.zip`, `diviops-design-library.zip`, `diviops-server/` — but every
-one of them is already available from `upstream/main` or from a zip in `agent/`
-or `suite/`. Verified after the rename: all eleven readable zips contain zero
-`agent-pro` or `pro-suite` members. Reaching into a Pro bundle buys nothing and
-puts you one `cd` away from Tier 2 skill files. There is no reason to open one.
+Three rules survive it, and they are the whole policy now.
 
-## What "forbidden" means
+**1. Never commit a Pro artifact, or Pro source, anywhere in this repository.**
+`rubicon/diviops` is public. Committing one publishes a third party's
+proprietary code under our name — a licensing incident, not a tidiness problem.
+A `.gitignore` line is one `git add -f` away from irrelevant and nothing would
+report it, so `tests/test-upstream-releases-untracked.php` fails the suite if
+anything under this directory other than this README is tracked, and fails
+separately if any path segment anywhere in the repository is Pro-named. It
+asserts against git's own index rather than the filesystem, because the question
+is not what is on disk — the archives are supposed to be on disk — but what a
+push would publish. The same reasoning rules out pointing codebase-memory or any
+other index at a Pro artifact: an index is a copy, and it is one that every
+future query can retrieve.
 
-Never open, unzip, `grep`, `cat`, `Read`, open in an editor, feed to a tool, or
-ask an agent to look at a forbidden artifact, and never let its contents inform
-anything authored here. Every attribute map and skill reference this project
-ships must trace to a primary source it is licensed to use.
+**2. Do not transcribe Pro source into this repository.** Reading it to
+understand a behaviour is fine. Pasting or paraphrasing its code is not: this
+fork ships GPL-2.0-or-later plugins and MIT tooling, and neither licence is ours
+to grant over someone else's commercial code. Write from understanding, in this
+codebase's own shapes, and cite a primary source you are licensed to use — Divi's
+own PHP, the free distributions, `upstream/main`, or behaviour observed through
+Pro's REST surface on the dev site.
 
-Exactly one use is legitimate:
+**3. Surface Pro overlap before building, not after.** When work would
+reimplement something Pro already does, say so to Dax and let him decide. That is
+the replacement for the clean-room rule, and it is the reason reading Pro is
+worth anything.
 
-- **Installing the Pro plugin on the development site**, to verify it still
-  attaches through `class_exists( 'DiviOps_Agent' )` and the
-  `diviops_agent_handshake_extensions` filter, and that its capability keys still
-  appear in the handshake.
+**Keep zips, never extracted directories.** Still the convention, for a narrower
+reason than before: an extracted tree is what a bulk indexer walks and what a
+stray `git add -f .` sweeps up, and an extracted Pro bundle is the exact shape
+that defeated an earlier version of the guard — only the directory carried the
+Pro marker and none of the files under it did (#271).
 
-Install it. Do not read it. If you need to know how Pro behaves, observe it
-running through its public REST surface and write down what you observed.
-Behaviour is fair game; source is not.
+Installing the Pro plugin on the development site, to verify it still attaches
+through `class_exists( 'DiviOps_Agent' )` and the
+`diviops_agent_handshake_extensions` filter, remains the routine reason to have
+it on disk.
 
 ## What the free distribution is good for
 
@@ -83,17 +89,8 @@ tracked. Reach for a free zip when the question is about a *published artifact*:
 - Checking a `FORK.md` divergence claim against a real release.
 - Reproducing a reported bug at the exact version a user is running.
 
-## Why the guards exist
-
-`rubicon/diviops` is a **public** repository. A committed Pro artifact would
-publish a third party's proprietary code to the internet under our name.
-A `.gitignore` line alone is one `git add -f` away from that, so
-`tests/test-upstream-releases-untracked.php` fails the suite if anything under
-this directory other than this README is tracked, and fails separately if
-anything Pro-named is tracked anywhere in the repository.
-
 ## Naming
 
 Keep the publisher's own filename. It carries the version and the distribution
 tier, which is the only provenance these files have — and under the table above,
-the name is what decides whether you may open it.
+the name is what decides whether it may be committed or copied from.
