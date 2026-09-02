@@ -21,11 +21,17 @@
  *
  * A characterization test records what the code does TODAY, right or wrong, so a
  * later edit — an upstream adoption in particular — cannot change it silently.
- * Several behaviours pinned below are defects. They are pinned AS defects, each
- * marked `DEFECT` in the comment directly above its assertion and listed in the
- * PR. Do not "fix" one by editing the expectation here; the assertion failing is
- * the signal it exists to produce, and a real fix should land as its own issue
- * that deliberately updates the line.
+ * Where a pinned behaviour is not simply correct, the comment above the assertion
+ * says which kind it is, so the next reader knows what to do with it:
+ *
+ *   DEFECT      — believed wrong, pinned anyway. Do not "fix" it by editing the
+ *                 expectation; the assertion failing is the signal it exists to
+ *                 produce, and a real fix lands as its own issue that
+ *                 deliberately updates the line.
+ *   AMBIGUITY   — behaviour recorded without a verdict, for the owner to judge.
+ *   DELIBERATE  — a recorded decision with a rationale in FORK.md. Pinned so it
+ *                 stays deliberate; "fixing" it would undo the decision.
+ *   FINDING     — an observation about the code that changes nothing.
  *
  * ── What is NOT covered here, and why ────────────────────────────────────
  *
@@ -172,17 +178,28 @@ assert_same( true, diviops_call( 'content_uses_divi', array( $diviops_pgc_divi )
 assert_same( false, diviops_call( 'content_uses_divi', array( $diviops_pgc_plain ) ), 'content_uses_divi is false for core block markup' );
 assert_same( false, diviops_call( 'content_uses_divi', array( 42 ) ), 'a non-string is false rather than a type error' );
 
-// DEFECT, pinned as-is. Both predicates test for the literal namespace prefix
-// `divi/`, so a page assembled purely from third-party Divi modules — the
-// `difl/*` and `d5bgo/*` blocks this fork's own reference page 900390 carries —
-// reports has_divi false, and a page_update_content write of such content skips
-// initialize_divi_page_meta() entirely. tests/test-namespace-agnostic-targeting.php
-// established for the targeting layer that a third-party namespace is a
-// first-class Divi module; this predicate never got the same treatment.
+// DELIBERATE — do not "fix" this. Both predicates test for the literal namespace
+// prefix `divi/`, so third-party Divi module markup on its own does not count as
+// Divi content. FORK.md's "Deliberately unchanged: post_uses_divi() /
+// content_uses_divi()" section is the decision and the rationale: loosening them
+// to accept any namespace would misclassify ordinary Gutenberg pages, because
+// unrelated third-party blocks (`gravityforms/*`, `pdfemb/*`, `tec/*`) are
+// registered alongside the Divi ones. The strictness is also not costing
+// anything in practice — all 108 posts on the reference install carrying
+// `difl/*` or `d5bgo/*` also carry a `<!-- wp:divi/` marker and open with a
+// `divi/` block, because third-party modules nest inside Divi sections rather
+// than replacing them (page 900390 nests its `difl/*` and `d5bgo/*` inside a
+// `divi/global-layout` wrapper, which is itself a `divi/` marker).
+//
+// This is the opposite answer to tests/test-namespace-agnostic-targeting.php's,
+// and both are right: targeting asks "which module is this?", where any
+// namespace is legitimate, while this asks "is the page a Divi page?", where the
+// wrapper is always Divi's. The assertion below exists so the two answers stay
+// distinguishable, not because either needs changing.
 assert_same(
 	false,
 	diviops_call( 'content_uses_divi', array( '<!-- wp:difl/faq /-->' ) ),
-	'DEFECT: content built only from a third-party Divi module namespace is not recognised as Divi'
+	'third-party module markup alone is deliberately not counted as Divi content (see FORK.md)'
 );
 
 // ══ page_get ══════════════════════════════════════════════════════════════
@@ -360,7 +377,11 @@ $GLOBALS['diviops_test_wp_query_unmodelled_ok'] = $diviops_pgc_saved['wp_query_w
 diviops_pgc_post( 7320, $diviops_pgc_divi, 'page', 'Template Target' );
 
 $result = diviops_pgc_call( 'page_set_meta', array( 'id' => 999732, 'template' => 'x.php' ) );
-// DEFECT, pinned as-is. Every sibling handler returns an envelope response here.
+// DEFECT, pinned as-is. Every sibling handler returns an envelope response here,
+// and nothing downstream rescues this one: #357's `rest_post_dispatch` filter
+// (diviops-agent.php, FRAMEWORK_ERROR_ENVELOPE) keys on `rest_*` codes only, and
+// these are the bare slugs `not_found` and `forbidden`, so the raw
+// `{code, message, data:{status}}` body reaches the caller intact.
 assert_same( true, is_wp_error( $result ), 'DEFECT: page_set_meta returns a raw WP_Error, not the not_found envelope' );
 assert_same( 'not_found', $result->get_error_code(), 'the error code is not_found' );
 assert_same( 404, $result->get_error_data()['status'] ?? null, 'carrying a 404 in error data rather than a response status' );
@@ -527,15 +548,16 @@ assert_same( true, $body['data']['old_slug_recorded'] ?? null, 'the outgoing slu
 assert_same( true, $body['data']['old_slug_removed'] ?? null, 'and the reclaimed slug is dropped from the list' );
 assert_same( array( 'new-slug' ), get_post_meta( 7330, '_wp_old_slug', false ), 'leaving only the slug that is now historical' );
 
-// DEFECT, pinned as-is. `preserve_old_slug: false` reads as "do not keep old
-// slugs", but it only suppresses recording THIS rename and deletes the outgoing
-// slug when it happens to already be in the list. Slugs accumulated by earlier
-// renames survive untouched, so a caller using the flag to stop redirecting is
-// still redirecting.
+// AMBIGUITY, pinned as described rather than judged. `preserve_old_slug: false`
+// governs only the CURRENT rename: it suppresses recording the outgoing slug,
+// and deletes that slug when it happens to already be listed. Nothing deletes
+// slugs accumulated by earlier renames, so a page keeps redirecting from them.
+// Whether that is a bug or exactly what the flag is meant to mean is the owner's
+// call; this file records the behaviour so the decision is made deliberately.
 $body = diviops_pgc_call( 'page_update_meta', array( 'id' => 7330, 'slug' => 'third-slug', 'preserve_old_slug' => false ) )->get_data();
 assert_same( false, $body['data']['old_slug_recorded'] ?? null, 'preserve_old_slug=false records nothing' );
 assert_same( false, $body['data']['old_slug_removed'] ?? null, 'and removes nothing here' );
-assert_same( array( 'new-slug' ), get_post_meta( 7330, '_wp_old_slug', false ), 'DEFECT: the accumulated redirect survives preserve_old_slug=false' );
+assert_same( array( 'new-slug' ), get_post_meta( 7330, '_wp_old_slug', false ), 'an accumulated redirect from an earlier rename survives preserve_old_slug=false' );
 
 $body = diviops_pgc_call( 'page_update_meta', array( 'id' => 7330, 'slug' => 'new-slug', 'preserve_old_slug' => false ) )->get_data();
 assert_same( true, $body['data']['old_slug_removed'] ?? null, 'reclaiming a listed slug does drop it, even with preserve_old_slug=false' );
