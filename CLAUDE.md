@@ -69,45 +69,44 @@ fail only from problems-found will pass while inspecting nothing. That exact fai
 happened three times on the predecessor repository. Any gate added here must assert
 that it actually inspected something.
 
-## Forbidden artifacts in `upstream-releases/`
+## DiviOps Agent Pro artifacts in `upstream-releases/`
 
 `upstream-releases/` is a local archive of published DiviOps releases, ignored by
-git except its `README.md`. **The boundary is the artifact name, not the folder** —
-do not reason about it from directory layout:
+git except its `README.md`. The free distributions (`diviops-suite-*`,
+`diviops-agent-*`, `diviops-design-library-*`) are MIT. The Pro distributions
+(`diviops-pro-suite-*`, `diviops-agent-pro*`) are a third party's commercial
+plugin this project neither forks nor licenses.
 
-| Artifact | Rule |
-| --- | --- |
-| `diviops-suite-<version>.zip` (in `suite/`) | Free distribution, MIT. Readable. |
-| `diviops-agent-<version>.zip`, `diviops-design-library-*.zip` (in `agent/`) | Individual free plugins, MIT. Readable. |
-| `diviops-pro-suite-*` (in `suite-pro/`) | **Forbidden.** |
-| `diviops-agent-pro*.zip` (in `agent-pro/`) | **Forbidden.** |
+**Reading a Pro artifact is allowed.** The clean-room rule that forbade it was
+rescinded by the owner on 2026-09-02: "I'm rescinding the rule about the clean
+room. Let's take it a different way. Any time we are stepping on the Pro plugin,
+let me know." Three rules survive it.
 
-The `-pro` suffix is the marker. `<thing>/` is readable, `<thing>-pro/` is not,
-and the guard matches a hyphen-delimited `pro` word in any path segment so it
-survives a rename.
-
-A Pro-suite bundle is not the free bundle plus one extra file. It carries the Pro
-plugin *and* the deeper skill-knowledge layer (`divi-5-builder` Tier 2 + Tier 3) —
-exactly what #50 says our own skill knowledge must never derive from. Its MIT
-pieces are all obtainable from `upstream/main` or a free zip in the same
-directory, so **do not carve out the MIT parts**: there is no reason to open one.
-
-Never open, unzip, `grep`, `cat`, `Read`, index, or feed a forbidden artifact to
-any tool, and never let its contents inform anything authored here. The single
-legitimate use is **installing the Pro plugin on the dev site** to confirm it
-still attaches through `class_exists( 'DiviOps_Agent' )` and
-`diviops_agent_handshake_extensions`. Install it; do not read it. Observing Pro's
-behavior through its REST surface is fair game; reading its source is not.
-
-Do not point codebase-memory, a search index, or any bulk reader at these paths.
-Indexing Pro would make its contents retrievable by every future query, which is
-derivation at scale rather than a one-off slip.
-
-`rubicon/diviops` is a **public** repository, so committing a Pro artifact would
-publish a third party's source under our name.
+**1. Never commit a Pro artifact, or Pro source, anywhere in this repository.**
+`rubicon/diviops` is **public**, so committing one publishes a third party's
+proprietary code under our name — a licensing incident, not a tidiness problem.
 `tests/test-upstream-releases-untracked.php` fails the suite if anything under
-that directory other than `README.md` is tracked, and fails separately if any
-path segment anywhere in the repository is Pro-named.
+`upstream-releases/` other than `README.md` is tracked, and fails separately if
+any path segment anywhere in the repository is Pro-named. Neither assertion was
+ever about reading, and neither is relaxed. The same reasoning rules out pointing
+codebase-memory or any other index at a Pro artifact: an index is a copy.
+
+**2. Do not transcribe Pro source into this repository.** Reading it to
+understand a behaviour is fine; pasting or paraphrasing its code is not. This
+fork ships GPL-2.0-or-later plugins and MIT tooling, and neither license is ours
+to grant over someone else's commercial code. Write from understanding, in this
+codebase's own shapes, and cite a primary source you are licensed to use
+(Divi's own PHP, the free distributions, `upstream/main`, observed REST
+behaviour) when documenting a fact.
+
+**3. Surface Pro overlap before building, not after.** When a task would
+reimplement something Pro already does, say so to Dax first and let him decide.
+That is the replacement for the clean-room rule, and it is the point of being
+allowed to read Pro at all.
+
+Installing the Pro plugin on the dev site to confirm it still attaches through
+`class_exists( 'DiviOps_Agent' )` and `diviops_agent_handshake_extensions`
+remains the routine reason to have it on disk.
 
 ## Development environment
 

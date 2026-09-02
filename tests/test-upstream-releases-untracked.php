@@ -1,14 +1,16 @@
 <?php
 // SPDX-License-Identifier: MIT
 /**
- * Upstream release archive containment guard (#268).
+ * Upstream release archive containment guard (#268, narrowed by #363).
  *
  * `upstream-releases/` is a local archive of published DiviOps releases. Its
- * `suite/` half is the MIT fork base and is readable. Its `pro/` half is DiviOps
- * Agent Pro, a commercial plugin this project neither forks nor licenses, kept
- * only so it can be INSTALLED on the development site to verify the capability
- * handshake still attaches. Nothing in it may be read, and nothing in it may be
- * committed.
+ * free half is the fork base. Its Pro half is DiviOps Agent Pro, a commercial
+ * plugin this project neither forks nor licenses.
+ *
+ * Reading a Pro artifact is allowed -- the clean-room rule that forbade it was
+ * rescinded by the owner on 2026-09-02. What survives is narrower and is what
+ * this gate enforces: nothing Pro may be COMMITTED, because that is the half
+ * with a consequence outside this machine.
  *
  * `rubicon/diviops` is a public repository. Committing a Pro artifact would
  * publish a third party's proprietary source under our name -- a licensing
@@ -125,7 +127,7 @@ assert_same(
 // The two halves carry different licenses and different rules, so the README has
 // to actually say so. A guard that protects the directory while the directory's
 // own documentation omits why is one refactor away from someone "tidying up" the
-// pro/ warning out of existence.
+// commercial-half warning out of existence.
 $readme = (string) file_get_contents( $root . '/upstream-releases/README.md' );
 
 assert_true(
@@ -133,9 +135,19 @@ assert_true(
 	'the archive README has content'
 );
 
-foreach ( array( 'diviops-pro-suite-*', 'diviops-agent-pro*', 'Forbidden', 'Install it. Do not read it.', 'public' ) as $needle ) {
+foreach ( array( 'diviops-pro-suite-*', 'diviops-agent-pro*', 'Never commit', 'Do not transcribe', 'Surface Pro overlap', 'public' ) as $needle ) {
 	assert_true(
 		false !== strpos( $readme, $needle ),
-		sprintf( 'the archive README still names the forbidden artifacts and the install-only rule (missing: %s)', $needle )
+		sprintf( 'the archive README still names the Pro artifacts and all three surviving rules (missing: %s)', $needle )
 	);
 }
+
+// The rescission itself has to stay legible as a DECISION. Without a date and an
+// owner attached, the next reader who finds a permissive rule where a strict one
+// used to be cannot tell a deliberate change from something that got softened by
+// accident, and the safe reading of that ambiguity is to re-impose the old rule
+// and refuse a read the owner explicitly permitted.
+assert_true(
+	false !== strpos( $readme, 'rescinded' ) && false !== strpos( $readme, '2026-09-02' ),
+	'the archive README records that the clean-room rule was rescinded and when, so the change reads as a decision rather than a drift'
+);
