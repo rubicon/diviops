@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.12.2](https://github.com/rubicon/diviops/compare/mcp-server-v1.12.1...mcp-server-v1.12.2) (2026-09-02)
+
+
+### Bug Fixes
+
+* **wp-cli:** make WP_CLI_CMD survive a remote host over ssh ([#346](https://github.com/rubicon/diviops/issues/346)) ([e29534d](https://github.com/rubicon/diviops/commit/e29534d477ec6f3ab124de493e7cec6a98f015c5)), closes [#344](https://github.com/rubicon/diviops/issues/344)
+
 ## [1.12.1](https://github.com/rubicon/diviops/compare/mcp-server-v1.12.0...mcp-server-v1.12.1) (2026-08-31)
 
 

@@ -1,6 +1,6 @@
 {
   "name": "@rubicontv/diviops-mcp",
-  "version": "1.12.1",
+  "version": "1.12.2",
   "description": "MCP server exposing Divi 5 page authoring, design tokens, presets, and Theme Builder templates as typed tools for any MCP client",
   "author": "Dax Davis <dax@daxdavis.com>",
   "publishConfig": {
