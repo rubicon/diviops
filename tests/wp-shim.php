@@ -2840,6 +2840,28 @@ if ( ! function_exists( 'get_object_taxonomies' ) ) {
 	}
 }
 
+if ( ! isset( $GLOBALS['diviops_test_terms'] ) ) {
+	// [term_id] => slug.
+	$GLOBALS['diviops_test_terms'] = array();
+}
+
+if ( ! function_exists( 'diviops_test_register_term' ) ) {
+	/**
+	 * Register a term id's slug, for wp_get_object_terms() to resolve
+	 * `fields => 'slugs'` against (#358).
+	 *
+	 * Deliberately a separate store from $GLOBALS['diviops_test_object_terms'],
+	 * which holds only bare ids: wp_set_object_terms() replaces that store
+	 * wholesale, so a slug kept alongside an object's ids would be erased the
+	 * first time a handler under test wrote its own terms. Core splits them the
+	 * same way and for the same reason -- terms are rows, and object-term
+	 * relationships are just ids pointing at them.
+	 */
+	function diviops_test_register_term( int $term_id, string $slug ) {
+		$GLOBALS['diviops_test_terms'][ $term_id ] = $slug;
+	}
+}
+
 if ( ! isset( $GLOBALS['diviops_test_object_terms'] ) ) {
 	// [object_id][taxonomy] => array of term ids.
 	$GLOBALS['diviops_test_object_terms'] = array();
@@ -2857,13 +2879,62 @@ if ( ! function_exists( 'diviops_test_register_object_terms' ) ) {
 	}
 }
 
+if ( ! function_exists( 'diviops_test_term_slug' ) ) {
+	/**
+	 * Resolve a term id to its registered slug, raising when it has none (#358).
+	 *
+	 * Core reaches a slug through a real term row, so every id in the relationship
+	 * table resolves. An id attached to an object here with no matching
+	 * diviops_test_register_term() call is a fixture gap, and answering it with ''
+	 * would hand back exactly the plausible-wrong shape this function exists to
+	 * stop: an item that HAS a term reported as if it carried none.
+	 *
+	 * @param int $term_id Term id.
+	 * @return string The registered slug.
+	 * @throws RuntimeException When the id has no registered slug.
+	 */
+	function diviops_test_term_slug( int $term_id ): string {
+		if ( ! isset( $GLOBALS['diviops_test_terms'][ $term_id ] ) ) {
+			throw new RuntimeException(
+				sprintf(
+					"wp-shim wp_get_object_terms: term %d is attached to an object but has no registered slug. Register it with diviops_test_register_term( %d, '<slug>' ). Core resolves every attached id to a term row, so an unregistered id is a fixture gap rather than an empty slug.",
+					$term_id,
+					$term_id
+				)
+			);
+		}
+		return $GLOBALS['diviops_test_terms'][ $term_id ];
+	}
+}
+
 if ( ! function_exists( 'wp_get_object_terms' ) ) {
 	/**
-	 * Model WP core's wp_get_object_terms(): term ids (or minimal term
-	 * objects) assigned to the given object id(s) under the given
-	 * taxonomy/taxonomies. Only the 'fields' => 'ids' shape and the plain
-	 * WP_Term-shaped default are modeled — the two shapes this codebase
-	 * actually consumes.
+	 * Model WP core's wp_get_object_terms(): the terms assigned to the given
+	 * object id(s) under the given taxonomy/taxonomies, in the shape the 'fields'
+	 * argument asks for.
+	 *
+	 * Three shapes are modelled, and only two of them have a caller here — grepped
+	 * for every wp_get_object_terms() call site in the repo for #358, with a
+	 * positive and a negative control, so the list is exhaustive rather than one
+	 * shape wider than the last claim:
+	 *
+	 *   'ids'    Consumed by page_duplicate()'s taxonomy copy
+	 *            (trait-page.php:890) and tests/test-page-duplicate.php.
+	 *   'slugs'  Consumed by get_term_slug() (trait-library.php:30), which returns
+	 *            element 0 into the `layout_type` and `scope` fields of
+	 *            library_get() and library_list().
+	 *   default  Consumed by nothing here. Kept because it is what core returns
+	 *            when 'fields' is omitted, and it carries the slug so that reading
+	 *            ->slug off it cannot reproduce the same silent null one branch
+	 *            over.
+	 *
+	 * Any other 'fields' value raises. Recognizing 'ids' alone and falling through
+	 * to the default is how 'slugs' came to be answered with term objects: the stub
+	 * answered a different question than the caller asked and nothing said so,
+	 * which is the standard diviops_test_query_refuse_unmodelled() sets one level
+	 * up (#330).
+	 *
+	 * @throws RuntimeException When 'fields' names a shape this harness does not model.
 	 */
 	function wp_get_object_terms( $object_ids, $taxonomies, $args = array() ) {
 		$object_ids = (array) $object_ids;
@@ -2876,13 +2947,32 @@ if ( ! function_exists( 'wp_get_object_terms' ) ) {
 		}
 		$ids = array_values( array_unique( array_map( 'intval', $ids ) ) );
 
-		if ( isset( $args['fields'] ) && 'ids' === $args['fields'] ) {
+		$fields = isset( $args['fields'] ) ? (string) $args['fields'] : 'all';
+
+		if ( 'ids' === $fields ) {
 			return $ids;
+		}
+
+		if ( 'slugs' === $fields ) {
+			return array_map( 'diviops_test_term_slug', $ids );
+		}
+
+		if ( 'all' !== $fields ) {
+			throw new RuntimeException(
+				sprintf(
+					"wp-shim wp_get_object_terms: 'fields' => '%s' is not modelled. Answering it with the default term-object shape returns something a caller asking for '%s' cannot read, and nothing would say so. Modelled values: 'ids', 'slugs', and the term-object default when 'fields' is omitted.",
+					$fields,
+					$fields
+				)
+			);
 		}
 
 		return array_map(
 			static function ( $id ) {
-				return (object) array( 'term_id' => $id );
+				return (object) array(
+					'term_id' => $id,
+					'slug'    => diviops_test_term_slug( $id ),
+				);
 			},
 			$ids
 		);
