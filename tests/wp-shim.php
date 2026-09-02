@@ -257,6 +257,47 @@ if ( ! function_exists( 'current_user_can' ) ) {
 	}
 }
 
+if ( ! function_exists( 'is_user_logged_in' ) ) {
+	/**
+	 * Fixed-true stub with one seam: `$GLOBALS['diviops_test_anonymous']`.
+	 *
+	 * True is the default because it is the only reading consistent with
+	 * current_user_can() above, whose fixed-true stub models a caller holding
+	 * every capability — which in WordPress is necessarily a logged-in one.
+	 * Setting the seam to true models the opposite caller: no credentials at
+	 * all, so every capability check fails AND the request is anonymous.
+	 * Tests that want that pairing must set `diviops_test_denied_caps` too;
+	 * this stub deliberately does not imply it, because the two answer
+	 * different questions and rest_authorization_required_code() below is the
+	 * only thing that reads both.
+	 *
+	 * Core resolves this through `wp_get_current_user()->exists()`
+	 * (wp-includes/pluggable.php:1262-1266). That is not modeled here: the
+	 * harness's wp_get_current_user() is a fixed stub with no exists() and a
+	 * hardcoded ID of 0, and driving logged-in state through it would make the
+	 * harness default to anonymous while current_user_can() keeps answering
+	 * true — a caller shape that cannot exist on a real site.
+	 */
+	function is_user_logged_in() {
+		return empty( $GLOBALS['diviops_test_anonymous'] );
+	}
+}
+
+if ( ! function_exists( 'rest_authorization_required_code' ) ) {
+	/**
+	 * Verbatim reimplementation of core's
+	 * `rest_authorization_required_code()` (wp-includes/rest-api.php:1438-1440):
+	 * 401 when the caller is not logged in, 403 when it is.
+	 *
+	 * The distinction is the whole point of the function. 401 tells a client to
+	 * authenticate and retry; 403 tells it its credentials were seen and
+	 * rejected, so retrying with the same ones is pointless.
+	 */
+	function rest_authorization_required_code() {
+		return is_user_logged_in() ? 403 : 401;
+	}
+}
+
 if ( ! function_exists( 'get_current_user_id' ) ) {
 	/**
 	 * Fixed-zero stub — the natural "no auth context" value in this CLI
