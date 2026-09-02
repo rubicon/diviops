@@ -85,6 +85,23 @@ $GLOBALS['diviops_test_uneditable_ids']    = array();
 $GLOBALS['diviops_test_term_cache_primed'] = array();
 $GLOBALS['diviops_test_next_id']           = 9000;
 
+/*
+ * The two taxonomies every library handler reads and writes. wp_get_object_terms()
+ * and wp_set_object_terms() both refuse an unregistered taxonomy the way core does
+ * (#366), so without these the fixtures below would be writing into a taxonomy that
+ * does not exist and reading WP_Error back out of every slug lookup.
+ *
+ * The post type is Divi's own: ET_Builder_Post_Type_Layout lists 'layout_type' and
+ * 'scope' among et_pb_layout's taxonomies
+ * (Divi/includes/builder/post/type/Layout.php:83-91 on the reference install), and
+ * the taxonomy names come from ET_Builder_Post_Taxonomy_LayoutType::$name and
+ * ET_Builder_Post_Taxonomy_LayoutScope::$name. Registering is process-global, so
+ * this is repeated in tests/test-wp-shim-object-terms-contract.php rather than
+ * shared -- a filtered run loads either file on its own.
+ */
+diviops_test_register_taxonomy( 'layout_type', array( 'et_pb_layout' ) );
+diviops_test_register_taxonomy( 'scope', array( 'et_pb_layout' ) );
+
 /**
  * Build a request for a library handler.
  *
@@ -210,6 +227,40 @@ $data     = diviops_call( 'library_get', array( diviops_lib_req( array( 'id' => 
 $reported = $data['data']['layout_type'];
 assert_true( is_string( $reported ), 'library_get: an item carrying several layout_type terms reports a single slug, not a list' );
 assert_true( in_array( $reported, array( 'row', 'section' ), true ), 'library_get: the one slug reported is one of the terms actually attached' );
+
+// The OTHER half of get_term_slug()'s guard: `is_wp_error( $terms )`
+// (trait-library.php:31). It was dead in this suite until #366 -- the harness
+// could not produce a WP_Error from wp_get_object_terms() at all, so nothing had
+// ever taken that branch.
+//
+// Post 610 HAS two layout_type terms attached, and that is what separates this
+// from the empty() assertion above: the refusal happens before the id list is
+// touched, and a WP_Error object is not empty(), so '' here can only have come
+// from is_wp_error(). The controls below assert both halves of that rather than
+// leaving it to the reader.
+//
+// Deregistering the taxonomy rather than querying one nobody ever registered
+// keeps the fixture identical on both sides of the comparison.
+$saved_taxonomies = $GLOBALS['diviops_test_taxonomies'];
+unset( $GLOBALS['diviops_test_taxonomies']['layout_type'] );
+
+$refused = wp_get_object_terms( 610, 'layout_type', array( 'fields' => 'slugs' ) );
+assert_true( is_wp_error( $refused ), 'control: with layout_type deregistered, the read get_term_slug() makes returns a WP_Error' );
+assert_true( ! empty( $refused ), "control: that WP_Error is not empty(), so the empty() half of get_term_slug()'s guard cannot be what answers below" );
+assert_same(
+	'',
+	diviops_call_static( 'get_term_slug', array( 610, 'layout_type' ) ),
+	'get_term_slug: a WP_Error from wp_get_object_terms() returns an empty string'
+);
+
+$GLOBALS['diviops_test_taxonomies'] = $saved_taxonomies;
+
+// With the taxonomy back, the same call resolves. Without this the '' above would
+// also be satisfied by a fixture that had quietly lost its terms.
+assert_true(
+	in_array( diviops_call_static( 'get_term_slug', array( 610, 'layout_type' ) ), array( 'row', 'section' ), true ),
+	'control: re-registering layout_type restores the slug, so the empty string above is the refusal and not a lost fixture'
+);
 
 /* =========================================================================
  * library_list()
