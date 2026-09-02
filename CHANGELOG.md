@@ -10,6 +10,14 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.20.3](https://github.com/rubicon/diviops/compare/v1.20.2...v1.20.3) (2026-09-02)
+
+
+### Bug Fixes
+
+* **ci:** pin 1Password references by item UUID instead of title ([#342](https://github.com/rubicon/diviops/issues/342)) ([090194b](https://github.com/rubicon/diviops/commit/090194b2d97e151eb4bf83844baa6fbf67ed5d20)), closes [#341](https://github.com/rubicon/diviops/issues/341)
+* **wp-cli:** make WP_CLI_CMD survive a remote host over ssh ([#346](https://github.com/rubicon/diviops/issues/346)) ([e29534d](https://github.com/rubicon/diviops/commit/e29534d477ec6f3ab124de493e7cec6a98f015c5)), closes [#344](https://github.com/rubicon/diviops/issues/344)
+
 ## [1.20.2](https://github.com/rubicon/diviops/compare/v1.20.1...v1.20.2) (2026-08-31)
 
 
