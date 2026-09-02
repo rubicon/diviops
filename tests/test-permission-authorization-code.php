@@ -22,7 +22,10 @@
  * This file is a characterization net first and a regression net second. It was
  * committed asserting the pre-fix behaviour (403 in both auth states, everywhere)
  * and run green before the gates changed, so the behaviour delta is visible in the
- * suite's own diff rather than inferred from the plugin diff.
+ * suite's own diff rather than inferred from the plugin diff. Exactly four
+ * assertions moved: the anonymous half of each in-scope gate. What it asserts now
+ * is the post-fix contract — 401 to an anonymous caller, 403 to an authenticated
+ * one lacking the capability.
  *
  * **Scope is three sites, not five.** The sibling refusals in the same two
  * functions — `rest_cannot_create` when a post type exposes no `create_posts`
@@ -74,6 +77,7 @@ function diviops_auth_code_caller( array $denied_caps, bool $anonymous ): void {
 }
 
 $forbidden_403 = array( 'code' => 'rest_forbidden', 'status' => 403 );
+$forbidden_401 = array( 'code' => 'rest_forbidden', 'status' => 401 );
 
 // ── (A) fixed_publish_route_permission(), via /canvas/create ──────────────
 
@@ -86,9 +90,9 @@ assert_same(
 
 diviops_auth_code_caller( array( 'edit_pages' ), true );
 assert_same(
-	$forbidden_403,
+	$forbidden_401,
 	diviops_auth_code_refusal( DiviOps_Agent::check_canvas_create_permission() ),
-	'(A) canvas create, anonymous: rest_forbidden 403'
+	'(A) canvas create, anonymous: rest_forbidden 401'
 );
 
 // ── (B) the same helper reached through a different base capability ───────
@@ -105,9 +109,9 @@ assert_same(
 
 diviops_auth_code_caller( array( 'manage_options' ), true );
 assert_same(
-	$forbidden_403,
+	$forbidden_401,
 	diviops_auth_code_refusal( DiviOps_Agent::check_library_save_permission() ),
-	'(B) library save, anonymous: rest_forbidden 403'
+	'(B) library save, anonymous: rest_forbidden 401'
 );
 
 // ── (C) page_create_permission_result(), via /page/create ─────────────────
@@ -127,9 +131,9 @@ assert_same(
 
 diviops_auth_code_caller( array( 'edit_pages' ), true );
 assert_same(
-	$forbidden_403,
+	$forbidden_401,
 	diviops_auth_code_refusal( DiviOps_Agent::check_page_create_permission( $create_request ) ),
-	'(C) page create, anonymous: rest_forbidden 403'
+	'(C) page create, anonymous: rest_forbidden 401'
 );
 
 // ── (D) page_update_status_permission_result(), via /page/update-status ───
@@ -145,9 +149,9 @@ assert_same(
 
 diviops_auth_code_caller( array( 'edit_pages' ), true );
 assert_same(
-	$forbidden_403,
+	$forbidden_401,
 	diviops_auth_code_refusal( DiviOps_Agent::check_page_update_status_permission( $status_request ) ),
-	'(D) page update-status, anonymous: rest_forbidden 403'
+	'(D) page update-status, anonymous: rest_forbidden 401'
 );
 
 // ── (E) out of scope: a refusal about the content, not the caller ─────────
@@ -192,9 +196,9 @@ assert_same(
  * match against a comment. Counting the array-value form cannot.
  */
 assert_same(
-	0,
+	3,
 	substr_count( $plugin_source, "'status' => rest_authorization_required_code()" ),
-	'(F) characterization: no gate consults core\'s helper yet'
+	'(F) all three, and only those three, consult core\'s helper'
 );
 
 // ── Restore the harness default for the files that run after this one ─────
