@@ -3017,6 +3017,10 @@ if ( ! class_exists( 'WP_REST_Request' ) ) {
 			return $this->params[ $key ] ?? null;
 		}
 
+		public function get_route() {
+			return $this->route;
+		}
+
 		public function offsetExists( $offset ): bool {
 			return isset( $this->params[ $offset ] );
 		}

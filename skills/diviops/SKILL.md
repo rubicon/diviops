@@ -33,10 +33,12 @@ invalid_input        400  Schema violation, malformed args
 validation_failed    400  validate_blocks-detected shape error
 conflict             409  Uniqueness collision (delete-with-references, default-preset delete, name collision, …)
 capability_missing   412  Connected plugin does not advertise the required capability
-forbidden            403  Row-level WordPress permission denied
+forbidden            403  WordPress permission denied (route-level gate or row-level check)
 wp_error             500  Underlying WordPress error
 divi_error           500  Divi-specific error (block parser, validator, …)
 ```
+
+Errors WordPress raises before dispatch reaches a handler are converted to this same vocabulary on `/diviops/v1/*`, with the originating WordPress slug preserved at `error.data.wp_error_code`: `rest_invalid_param` and `rest_missing_callback_param` become `invalid_input`, `rest_no_route` becomes `not_found`, and the four permission codes (`rest_forbidden`, `rest_cannot_create`, `rest_cannot_publish`, `rest_cannot_edit`) become `forbidden`. The HTTP status arrives verbatim rather than normalized to the number tabled above, so a `forbidden` refusal to an unauthenticated caller carries 401 rather than 403 — WordPress answers 401 when nobody is signed in. Branch on `error.code`; read `error.data.wp_error_code` only when the granular distinction matters.
 
 `capability_missing` is the handshake-layer signal — the plugin on this site doesn't carry the capability flag the tool requires. MCP server and WordPress plugin versions are independent; install a compatible plugin component from the same DiviOps suite release or a newer supported component, then reconnect or restart the MCP session to refresh the handshake. Distinct from `forbidden` (the WP user lacks the capability on this row). Do not infer an exact required plugin version unless authoritative release-manifest evidence is actually supplied.
 

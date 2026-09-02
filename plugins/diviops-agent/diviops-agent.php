@@ -250,11 +250,61 @@ class DiviOps_Agent {
 	}
 
 	/**
-	 * Wrap WordPress REST schema-validation errors in the DiviOps envelope.
+	 * Framework error codes this filter converts, and what each becomes.
 	 *
-	 * Route arg validation runs before endpoint callbacks, so typed args and
-	 * enums can otherwise leak raw WP REST errors on `/diviops/v1/*` routes.
-	 * Keep route schemas intact and normalize only framework validation errors.
+	 * Each entry is `[ envelope code, status fallback ]`. The fallback applies only
+	 * when the WP_Error carried no `data.status`, which is rare; the status a code
+	 * actually arrives with is preserved verbatim. That matters for `rest_forbidden`
+	 * above all: `rest_authorization_required_code()` answers 401 for an anonymous
+	 * caller and 403 for an authenticated one, and rewriting the 401 to a 403 would
+	 * tell a caller its credentials were rejected when it never sent any.
+	 *
+	 * Route arg validation and the permission callback both run before the endpoint
+	 * callback, so neither is reachable from inside a handler. Converting them here
+	 * covers every route on the namespace from one place. Upstream instead repeated
+	 * the capability check inside each handler; rejected in PR #351, because that
+	 * copy never runs and duplicates the capability policy somewhere it can drift.
+	 *
+	 * `rest_forbidden` is the widest entry by far. WordPress synthesizes it itself
+	 * whenever a `permission_callback` returns false, which is what this plugin's
+	 * five generic gates do, so it covers every registration rather than the handful
+	 * of gates that build a WP_Error by hand.
+	 *
+	 * @var array<string, array{0: string, 1: int}>
+	 */
+	private const FRAMEWORK_ERROR_ENVELOPE = [
+		'rest_invalid_param'          => [ 'invalid_input', 400 ],
+		'rest_missing_callback_param' => [ 'invalid_input', 400 ],
+		'rest_forbidden'              => [ 'forbidden', 403 ],
+		'rest_cannot_create'          => [ 'forbidden', 403 ],
+		'rest_cannot_publish'         => [ 'forbidden', 403 ],
+		'rest_cannot_edit'            => [ 'forbidden', 403 ],
+		'rest_no_route'               => [ 'not_found', 404 ],
+	];
+
+	/**
+	 * Hint per envelope code, so the four permission codes do not repeat one string.
+	 *
+	 * @var array<string, string>
+	 */
+	private const FRAMEWORK_ERROR_HINTS = [
+		'invalid_input' => 'Fix the request parameters named in error.data, then retry.',
+		'forbidden'     => 'Authenticate as a user holding the capability this route requires, then retry.',
+		'not_found'     => 'Check the path and HTTP method against the routes this plugin registers under /diviops/v1.',
+	];
+
+	/**
+	 * Wrap WordPress REST framework errors in the DiviOps envelope.
+	 *
+	 * Errors WordPress raises before dispatch reaches a handler would otherwise leak
+	 * the raw `{code, message, data:{status}}` body on `/diviops/v1/*` while every
+	 * refusal a handler emits returns `{ok:false, error:{...}}` — two response shapes
+	 * for the same class of failure on one namespace. Keep route schemas and
+	 * permission callbacks intact and normalize only the response (#357).
+	 *
+	 * The originating slug is preserved at `error.data.wp_error_code` rather than
+	 * surfaced as `error.code`, so callers keep branching on the documented
+	 * vocabulary while the granular WordPress code stays available.
 	 *
 	 * @param WP_REST_Response $response REST response after dispatch.
 	 * @param WP_REST_Server   $server   REST server instance.
@@ -282,12 +332,14 @@ class DiviOps_Agent {
 		}
 
 		$wp_error_code = (string) $body['code'];
-		if ( ! in_array( $wp_error_code, [ 'rest_invalid_param', 'rest_missing_callback_param' ], true ) ) {
+		if ( ! isset( self::FRAMEWORK_ERROR_ENVELOPE[ $wp_error_code ] ) ) {
 			return $response;
 		}
 
+		list( $envelope_code, $status_fallback ) = self::FRAMEWORK_ERROR_ENVELOPE[ $wp_error_code ];
+
 		$wp_error_data = isset( $body['data'] ) && is_array( $body['data'] ) ? $body['data'] : [];
-		$http_status   = isset( $wp_error_data['status'] ) ? (int) $wp_error_data['status'] : 400;
+		$http_status   = isset( $wp_error_data['status'] ) ? (int) $wp_error_data['status'] : $status_fallback;
 		$error_data    = [
 			'wp_error_code' => $wp_error_code,
 		];
@@ -300,9 +352,9 @@ class DiviOps_Agent {
 		}
 
 		return self::envelope_error(
-			'invalid_input',
+			$envelope_code,
 			(string) $body['message'],
-			'Fix the request parameters named in error.data, then retry.',
+			self::FRAMEWORK_ERROR_HINTS[ $envelope_code ],
 			$http_status,
 			$error_data
 		);
