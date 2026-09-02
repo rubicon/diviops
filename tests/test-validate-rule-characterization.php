@@ -267,6 +267,29 @@ function diviops_char_fixture(): array {
 		// index 17: a divi block genuinely absent from the registry, so the #288
 		// exemption stays provably a list rather than a switch.
 		diviops_char_block( 'divi/not-a-real-module', $bv ),
+
+		// index 18: the legacy divi/link shapes adopted from upstream in #328 —
+		// a `link` element bucket the module does not have, and the Divi 4 field
+		// names url/target under the bucket it does. Two breakpoints, because the
+		// field-name rule reports once per breakpoint that carries either key.
+		diviops_char_block(
+			'divi/link',
+			$bv + array(
+				'link'    => array( 'innerContent' => array( 'desktop' => array( 'value' => array( 'text' => 'Home' ) ) ) ),
+				'content' => array(
+					'innerContent' => array(
+						'desktop' => array(
+							'value' => array(
+								'text'   => 'Home',
+								'url'    => '/',
+								'target' => 'off',
+							),
+						),
+						'tablet'  => array( 'value' => array( 'url' => '/mobile' ) ),
+					),
+				),
+			)
+		),
 	);
 }
 
@@ -319,7 +342,7 @@ $found = diviops_char_findings();
 // ── Block accounting ────────────────────────────────────────────────────────
 
 assert_same(
-	17,
+	18,
 	$found['total_blocks'],
 	'the walk consumes one index per named block and none for the freeform one — reported positions must keep matching the read path'
 );
@@ -353,6 +376,10 @@ assert_same(
 		array( 16, 'divi/image', 'unknown_block_type' ),
 		array( 16, 'divi/image', 'missing_builder_version' ),
 		array( 17, 'divi/not-a-real-module', 'unknown_block_type' ),
+		array( 18, 'divi/link', 'unknown_block_type' ),
+		array( 18, 'divi/link', 'link_legacy_inner_content_path' ),
+		array( 18, 'divi/link', 'link_legacy_field_names' ),
+		array( 18, 'divi/link', 'link_legacy_field_names' ),
 	),
 	$found['errors'],
 	'every error rule fires on the block and index it fires on today'
