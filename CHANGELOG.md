@@ -10,6 +10,19 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.21.0](https://github.com/rubicon/diviops/compare/v1.20.3...v1.21.0) (2026-09-02)
+
+
+### Features
+
+* **meta:** report which site answered in meta_ping and meta_info ([4021ec7](https://github.com/rubicon/diviops/commit/4021ec7cc4b58a800f19b70c2c074d86b1707b9a)), closes [#343](https://github.com/rubicon/diviops/issues/343)
+* **validate:** flag the two legacy divi/link attribute shapes ([3a14e4a](https://github.com/rubicon/diviops/commit/3a14e4a489afd1f2edc017a2810dbe86cec96f59))
+
+
+### Bug Fixes
+
+* **rest:** envelope permission refusals and unknown routes on /diviops/v1 ([#360](https://github.com/rubicon/diviops/issues/360)) ([bfa886d](https://github.com/rubicon/diviops/commit/bfa886d91ef7a3e3fe0f48ca536b55826b95e109)), closes [#357](https://github.com/rubicon/diviops/issues/357)
+
 ## [1.20.3](https://github.com/rubicon/diviops/compare/v1.20.2...v1.20.3) (2026-09-02)
 
 
