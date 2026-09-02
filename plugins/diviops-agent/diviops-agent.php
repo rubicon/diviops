@@ -527,7 +527,7 @@ class DiviOps_Agent {
 
 	private static function fixed_publish_route_permission( string $base_capability, array $post_types ) {
 		if ( ! current_user_can( $base_capability ) ) {
-			return new WP_Error( 'rest_forbidden', 'Sorry, you are not allowed to perform this operation.', [ 'status' => 403 ] );
+			return new WP_Error( 'rest_forbidden', 'Sorry, you are not allowed to perform this operation.', [ 'status' => rest_authorization_required_code() ] );
 		}
 		return self::published_post_types_permission_result( $post_types );
 	}
@@ -569,7 +569,7 @@ class DiviOps_Agent {
 	 */
 	private static function page_create_permission_result( $request ) {
 		if ( ! current_user_can( 'edit_pages' ) ) {
-			return new WP_Error( 'rest_forbidden', 'Sorry, you are not allowed to perform this operation.', [ 'status' => 403 ] );
+			return new WP_Error( 'rest_forbidden', 'Sorry, you are not allowed to perform this operation.', [ 'status' => rest_authorization_required_code() ] );
 		}
 
 		$status = sanitize_key( (string) ( $request->get_param( 'status' ) ?? 'draft' ) );
@@ -652,7 +652,7 @@ class DiviOps_Agent {
 	 */
 	private static function page_update_status_permission_result( $request ) {
 		if ( ! current_user_can( 'edit_pages' ) ) {
-			return new WP_Error( 'rest_forbidden', 'Sorry, you are not allowed to perform this operation.', [ 'status' => 403 ] );
+			return new WP_Error( 'rest_forbidden', 'Sorry, you are not allowed to perform this operation.', [ 'status' => rest_authorization_required_code() ] );
 		}
 
 		$post_id = absint( $request['id'] ?? 0 );
