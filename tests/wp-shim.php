@@ -544,6 +544,36 @@ if ( ! function_exists( 'wp_rand' ) ) {
 	}
 }
 
+if ( ! function_exists( 'wp_generate_uuid4' ) ) {
+	/**
+	 * Deterministic stand-in for wp_generate_uuid4(), in the same spirit as the
+	 * wp_rand() stub above. Core's contract to its callers is a v4-shaped string
+	 * that differs on every call; the canvas, preset, global-color and global-font
+	 * handlers use it only as opaque identity, so shape and per-call uniqueness are
+	 * the whole of what they depend on. Counting rather than randomising keeps the
+	 * value assertable: a test can pin the exact id a handler stored instead of
+	 * matching a pattern and hoping.
+	 */
+	function wp_generate_uuid4() {
+		static $counter = 0;
+		++$counter;
+		return sprintf( '00000000-0000-4000-8000-%012d', $counter );
+	}
+}
+
+if ( ! function_exists( 'update_meta_cache' ) ) {
+	/**
+	 * No-op, for the same reason update_post_caches() below is one: core primes
+	 * the meta cache here, and this harness reads meta straight out of
+	 * $GLOBALS['diviops_test_post_meta'], so there is nothing to prime. Callers
+	 * that batch-prime before a read loop (canvas_list(), canvas_orphan_audit())
+	 * call it unconditionally, so it has to exist.
+	 */
+	function update_meta_cache( $meta_type, $object_ids ) {
+		return array();
+	}
+}
+
 if ( ! function_exists( 'metadata_exists' ) ) {
 	/**
 	 * Model WP core's metadata_exists(): whether the key is present at all,
@@ -1601,20 +1631,27 @@ if ( ! function_exists( 'wp_insert_post' ) ) {
 	 * assert what the handler asked WordPress to create (e.g. the post_type it
 	 * resolved). Returns the new id. This records HANDLER input, it does not fake
 	 * handler behavior.
+	 *
+	 * post_name and post_modified are derived rather than left unset because core
+	 * always assigns both on insert, and a handler that reads one back off the
+	 * freshly created post (canvas_duplicate() returns the new slug) would
+	 * otherwise emit an "Undefined property" warning into the run.
 	 */
 	function wp_insert_post( $postarr, $wp_error = false ) {
 		$GLOBALS['diviops_test_last_insert'] = $postarr;
 		$id = ( $GLOBALS['diviops_test_next_id'] ?? 9000 );
 		$GLOBALS['diviops_test_next_id'] = $id + 1;
 		$GLOBALS['diviops_test_posts'][ $id ] = (object) array(
-			'ID'           => $id,
-			'post_content' => $postarr['post_content'] ?? '',
-			'post_type'    => $postarr['post_type'] ?? 'post',
-			'post_title'   => $postarr['post_title'] ?? '',
-			'post_status'  => $postarr['post_status'] ?? 'draft',
-			'post_excerpt' => $postarr['post_excerpt'] ?? '',
-			'post_parent'  => (int) ( $postarr['post_parent'] ?? 0 ),
-			'menu_order'   => (int) ( $postarr['menu_order'] ?? 0 ),
+			'ID'            => $id,
+			'post_content'  => $postarr['post_content'] ?? '',
+			'post_type'     => $postarr['post_type'] ?? 'post',
+			'post_title'    => $postarr['post_title'] ?? '',
+			'post_name'     => (string) ( $postarr['post_name'] ?? sanitize_title( (string) ( $postarr['post_title'] ?? '' ) ) ),
+			'post_status'   => $postarr['post_status'] ?? 'draft',
+			'post_excerpt'  => $postarr['post_excerpt'] ?? '',
+			'post_parent'   => (int) ( $postarr['post_parent'] ?? 0 ),
+			'menu_order'    => (int) ( $postarr['menu_order'] ?? 0 ),
+			'post_modified' => (string) ( $postarr['post_modified'] ?? current_time( 'mysql' ) ),
 		);
 		return $id;
 	}
