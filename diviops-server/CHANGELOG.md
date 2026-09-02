@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.12.2...mcp-server-v1.13.0) (2026-09-02)
+
+
+### Features
+
+* **meta:** report which site answered in meta_ping and meta_info ([4021ec7](https://github.com/rubicon/diviops/commit/4021ec7cc4b58a800f19b70c2c074d86b1707b9a)), closes [#343](https://github.com/rubicon/diviops/issues/343)
+
 ## [1.12.2](https://github.com/rubicon/diviops/compare/mcp-server-v1.12.1...mcp-server-v1.12.2) (2026-09-02)
 
 
