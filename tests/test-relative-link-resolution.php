@@ -25,13 +25,27 @@
  * case where the escape needs reporting.
  *
  * External URLs are deliberately out of scope. Network-dependent CI is flaky and this
- * defect class is entirely local relative paths.
+ * defect class is entirely local relative paths. An absolute URL into this repository's
+ * own tree is not external, though (#348): a `.../blob/main/SETUP.md#wp-cli-security`
+ * target names a file in this checkout and dangles exactly the same way when that
+ * heading is renamed, so it is resolved here rather than skipped. Without that,
+ * rewriting a link to absolute form is a way to opt out of the fragment checking added
+ * in #336 -- which is precisely what #346 had to do to publish working npm links.
+ *
+ * Two roots, not one. A README that npm publishes is read from inside the tarball,
+ * whose root is the package directory rather than the repository, so a link can resolve
+ * here and 404 there. `diviops-server/README.md` linked `../SETUP.md` nine times: valid
+ * in this tree, dead on npmjs.com for all nine, because `..` leaves the package and
+ * `SETUP.md` is not in the tarball (#348, found by hand while fixing #344). Every
+ * relative link in such a README is therefore resolved a second time, against its own
+ * package root, with the same lexical resolver.
  *
  * Non-vacuity, per CLAUDE.md: a gate that reports what it inspected but derives
  * pass/fail only from problems-found will pass while inspecting nothing, and that
- * failure happened three times on the predecessor repository. Three guards here --
- * a non-empty file corpus, a non-zero link count, and synthetic cases that exercise
- * the escape branch even when every real link is clean -- plus a printed count so a
+ * failure happened three times on the predecessor repository. Five guards here --
+ * a non-empty file corpus, a non-zero count for each of the three link classes
+ * (repo-relative, absolute in-repo, packaged-README), and synthetic cases that exercise
+ * the escape branch even when every real link is clean -- plus printed counts so a
  * silently shrinking corpus is visible in the CI log.
  *
  * @package DiviOps
@@ -40,17 +54,18 @@
 require_once __DIR__ . '/wp-shim.php';
 
 /**
- * List every Markdown file git tracks, repository-relative.
+ * List every file git tracks under a pathspec, repository-relative.
  *
  * Asks git rather than walking the filesystem so the corpus is exactly what a push
  * would publish: no `node_modules/`, no build output, and -- importantly -- nothing
  * inside `upstream-releases/`, whose Pro artifacts must never be opened by any tool.
  *
- * @param string $root Repository root.
- * @return array<int, string> Tracked Markdown paths, repository-relative.
+ * @param string $root     Repository root.
+ * @param string $pathspec Git pathspec, e.g. `*.md`.
+ * @return array<int, string> Tracked paths, repository-relative.
  */
-function diviops_link_tracked_markdown( string $root ): array {
-	$command = sprintf( 'git -C %s ls-files -z -- %s', escapeshellarg( $root ), escapeshellarg( '*.md' ) );
+function diviops_link_tracked_files( string $root, string $pathspec ): array {
+	$command = sprintf( 'git -C %s ls-files -z -- %s', escapeshellarg( $root ), escapeshellarg( $pathspec ) );
 	$output  = shell_exec( $command );
 	if ( ! is_string( $output ) || '' === $output ) {
 		return array();
@@ -58,6 +73,44 @@ function diviops_link_tracked_markdown( string $root ): array {
 	$paths = array_values( array_filter( explode( "\0", $output ), 'strlen' ) );
 	sort( $paths );
 	return $paths;
+}
+
+/**
+ * Every README an npm package in this repository actually publishes.
+ *
+ * Keyed on a literal `README.md` entry in the manifest's `files` array, which is the
+ * declaration this gate is checking against: a README the package ships is read by
+ * someone who has only the tarball, and the tarball's root is the package directory.
+ *
+ * @param string $root Repository root.
+ * @return array<int, array{manifest: string, root: string, readme: string}> One entry
+ *         per publishing package: its manifest, its package root, and its README, all
+ *         repository-relative. The package root is the empty string at the repository
+ *         root itself.
+ */
+function diviops_link_packaged_readmes( string $root ): array {
+	$packages = array();
+	foreach ( diviops_link_tracked_files( $root, '*package.json' ) as $manifest ) {
+		// The pathspec above is a suffix match, so it also matches `my-package.json`.
+		if ( 'package.json' !== basename( $manifest ) ) {
+			continue;
+		}
+		$decoded = json_decode( (string) file_get_contents( $root . '/' . $manifest ), true );
+		if ( ! is_array( $decoded ) || ! isset( $decoded['files'] ) || ! is_array( $decoded['files'] ) ) {
+			continue;
+		}
+		if ( ! in_array( 'README.md', $decoded['files'], true ) ) {
+			continue;
+		}
+		$dir        = dirname( $manifest );
+		$dir        = '.' === $dir ? '' : $dir;
+		$packages[] = array(
+			'manifest' => $manifest,
+			'root'     => $dir,
+			'readme'   => '' === $dir ? 'README.md' : $dir . '/README.md',
+		);
+	}
+	return $packages;
 }
 
 /**
@@ -323,6 +376,49 @@ function diviops_link_assert_fragment( string $root, string $source, string $tar
 }
 
 /**
+ * Prefix of an absolute URL that addresses a file in this repository's working tree.
+ *
+ * Pinned to `blob/main/` on purpose. A blob URL carrying a commit SHA or a tag names a
+ * frozen snapshot, and resolving that against the current checkout would report a
+ * heading rename as a broken link when the pinned link is doing exactly its job.
+ */
+const DIVIOPS_LINK_BLOB_PREFIX = 'https://github.com/rubicon/diviops/blob/main/';
+
+/**
+ * Assert that a resolved link target exists, and that any fragment names a heading there.
+ *
+ * Shared by the two paths that reach a real file: a repo-relative target resolved
+ * against its own document's directory, and an absolute in-repo target resolved against
+ * the repository root. The checks are identical once the path is resolved, and keeping
+ * one copy is what stops a later correction from landing on only one of them.
+ *
+ * @param string $root          Repository root.
+ * @param string $source        Document the link was written in.
+ * @param string $target        Raw link target, for the message.
+ * @param string $resolved_path Repository-relative path the target resolved to.
+ * @param string $fragment      Fragment, without the leading `#`, or the empty string.
+ * @return int 1 when a fragment was resolved against headings, 0 otherwise.
+ */
+function diviops_link_assert_target( string $root, string $source, string $target, string $resolved_path, string $fragment ): int {
+	$exists = file_exists( $root . '/' . $resolved_path );
+
+	assert_true(
+		$exists,
+		sprintf( '%s: link target "%s" resolves to %s on disk', $source, $target, $resolved_path )
+	);
+
+	// A heading anchor is a property of a rendered Markdown document, so a fragment
+	// on anything else -- an image, a PHP file -- is left alone rather than reported
+	// against headings that do not exist there.
+	if ( ! $exists || '' === $fragment || 1 !== preg_match( '/\.md$/i', $resolved_path ) ) {
+		return 0;
+	}
+
+	diviops_link_assert_fragment( $root, $source, $resolved_path, $target, $fragment );
+	return 1;
+}
+
+/**
  * Run the relative-link gate.
  *
  * Everything lives inside a function so no top-level `$file`/`$files` of this test can
@@ -353,6 +449,9 @@ function diviops_link_gate_run(): void {
 		array( 'docs/superpowers/plans/../../../README.md', 'README.md', false ),
 		array( 'docs/superpowers/plans/../../../../README.md', 'README.md', true ),
 		array( 'docs/./plans/../plans/a.md', 'docs/plans/a.md', false ),
+		// The package-boundary shape: a README at a package root linking one level up.
+		// Harmless against the repository root, fatal against the tarball root.
+		array( '../SETUP.md', 'SETUP.md', true ),
 	);
 	foreach ( $resolution_cases as $case ) {
 		$resolved = diviops_link_resolve( $case[0] );
@@ -423,7 +522,7 @@ function diviops_link_gate_run(): void {
 		'heading anchors are collected at every level, deduplicated GitHub-style, and never read out of a code fence'
 	);
 
-	$files = diviops_link_tracked_markdown( $root );
+	$files = diviops_link_tracked_files( $root, '*.md' );
 
 	// A corpus that silently went empty -- a bad pathspec, git missing from PATH --
 	// must fail here rather than reporting a clean run over nothing.
@@ -434,14 +533,40 @@ function diviops_link_gate_run(): void {
 
 	$checked   = 0;
 	$fragments = 0;
+	$absolute  = 0;
 	foreach ( $files as $relative ) {
 		$content = (string) file_get_contents( $root . '/' . $relative );
 		$dir     = dirname( $relative );
 		$dir     = '.' === $dir ? '' : $dir;
 
 		foreach ( diviops_link_targets( $content ) as $target ) {
-			// Scheme-qualified and protocol-relative targets are out of scope: this
-			// gate never touches the network.
+			// An absolute URL into this repository's own tree is a repo-relative link
+			// wearing a hostname: it names a file in this checkout, and its fragment
+			// dangles the same way when a heading is renamed. Resolving it here is what
+			// stops "rewrite the link as absolute" from being a way to opt out of the
+			// fragment checking added in #336. Resolution is against the repository
+			// root, not the linking document's directory.
+			if ( 0 === strpos( $target, DIVIOPS_LINK_BLOB_PREFIX ) ) {
+				$in_repo   = substr( $target, strlen( DIVIOPS_LINK_BLOB_PREFIX ) );
+				$hash      = strpos( $in_repo, '#' );
+				$path_only = false === $hash ? $in_repo : substr( $in_repo, 0, $hash );
+				$fragment  = false === $hash ? '' : substr( $in_repo, $hash + 1 );
+
+				if ( '' !== $path_only ) {
+					++$absolute;
+					$fragments += diviops_link_assert_target(
+						$root,
+						$relative,
+						$target,
+						diviops_link_resolve( $path_only )['path'],
+						$fragment
+					);
+				}
+				continue;
+			}
+
+			// Every other scheme-qualified or protocol-relative target is out of scope:
+			// this gate never touches the network.
 			if ( preg_match( '~^([a-z][a-z0-9+.-]*:|//)~i', $target ) ) {
 				continue;
 			}
@@ -487,20 +612,58 @@ function diviops_link_gate_run(): void {
 				continue;
 			}
 
-			$exists = file_exists( $root . '/' . $resolved['path'] );
+			$fragments += diviops_link_assert_target( $root, $relative, $target, $resolved['path'], $fragment );
+		}
+	}
 
-			assert_true(
-				$exists,
-				sprintf( '%s: link target "%s" resolves to %s on disk', $relative, $target, $resolved['path'] )
-			);
+	/*
+	 * Second root. Everything above resolved against the repository, which is the tree
+	 * a contributor reads. A README that npm publishes is also read from inside the
+	 * tarball, whose root is the package directory -- so `../SETUP.md` written in
+	 * `diviops-server/README.md` resolves here and 404s there, which is how nine dead
+	 * links shipped to npmjs.com under a green suite (#348).
+	 */
+	$packages       = diviops_link_packaged_readmes( $root );
+	$packaged_links = 0;
 
-			// A heading anchor is a property of a rendered Markdown document, so a
-			// fragment on anything else -- an image, a PHP file -- is left alone
-			// rather than reported against headings that do not exist there.
-			if ( $exists && '' !== $fragment && 1 === preg_match( '/\.md$/i', $resolved['path'] ) ) {
-				diviops_link_assert_fragment( $root, $relative, $resolved['path'], $target, $fragment );
-				++$fragments;
+	foreach ( $packages as $package ) {
+		assert_true(
+			is_file( $root . '/' . $package['readme'] ),
+			sprintf( '%s lists README.md in "files", so %s exists to be published', $package['manifest'], $package['readme'] )
+		);
+
+		$package_label = '' === $package['root'] ? 'the repository root' : $package['root'] . '/';
+
+		foreach ( diviops_link_targets( (string) file_get_contents( $root . '/' . $package['readme'] ) ) as $target ) {
+			// An absolute URL is the fix for this defect class, not an instance of it:
+			// it resolves identically in the repository and in the tarball. It is still
+			// checked, by the loop above, which reads the same file as tracked Markdown.
+			if ( preg_match( '~^([a-z][a-z0-9+.-]*:|//)~i', $target ) ) {
+				continue;
 			}
+
+			$hash      = strpos( $target, '#' );
+			$path_only = false === $hash ? $target : substr( $target, 0, $hash );
+
+			// A bare `#fragment` addresses the README itself, so it travels with it.
+			if ( '' === $path_only ) {
+				continue;
+			}
+
+			++$packaged_links;
+
+			// The README sits at its package root, so the raw target is already the
+			// path to resolve against that root -- the same lexical walk the repository
+			// check uses, given a different starting point.
+			assert_true(
+				false === diviops_link_resolve( $path_only )['escapes'],
+				sprintf(
+					'%s: link target "%s" stays inside the published package root (%s), which is where npm roots the tarball -- a target above it is dead on npmjs.com however well it resolves in this checkout',
+					$package['readme'],
+					$target,
+					$package_label
+				)
+			);
 		}
 	}
 
@@ -508,16 +671,28 @@ function diviops_link_gate_run(): void {
 	// none means the extractor stopped matching. That is a blind gate, not a pass.
 	assert_true( $checked > 0, 'the gate found relative links to check across the tracked Markdown corpus' );
 
+	// Same guard for each narrower rule. Both scope the corpus down -- one to absolute
+	// URLs into this tree, one to the READMEs npm publishes -- and a rule whose corpus
+	// silently went empty passes every run without inspecting anything.
+	assert_true( $absolute > 0, 'the gate found absolute in-repo links to resolve against the working tree' );
+	assert_true(
+		count( $packages ) > 0,
+		'at least one package.json ships a README.md, so the package-boundary rule inspected a real package'
+	);
+
 	// Same guard one level down. The fragment half is checked by a second, narrower
 	// path -- Markdown targets only -- and a change that made that path unreachable
 	// would leave the link count healthy while every anchor went uninspected.
 	assert_true( $fragments > 0, 'the gate found link fragments to resolve against target headings' );
 
 	printf(
-		'relative-link-resolution: checked %d relative link(s) and %d anchor fragment(s) across %d tracked Markdown file(s)%s',
+		'relative-link-resolution: checked %d relative link(s), %d absolute in-repo link(s) and %d anchor fragment(s) across %d tracked Markdown file(s), plus %d link(s) against %d packaged README root(s)%s',
 		$checked,
+		$absolute,
 		$fragments,
 		count( $files ),
+		$packaged_links,
+		count( $packages ),
 		PHP_EOL
 	);
 }
