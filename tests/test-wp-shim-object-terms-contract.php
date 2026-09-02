@@ -36,10 +36,31 @@
  * controls, which exist so a later regression that empties the fixture set shows
  * up as a control failure rather than as a filter that looks clean.
  *
+ * The closing section covers a second gap in the same pair of functions (#366):
+ * neither refused an UNREGISTERED taxonomy, where core refuses on both surfaces.
+ * The write side is the half that mattered most -- it minted a term under a
+ * taxonomy that does not exist, so a typo'd taxonomy was written successfully and
+ * failed only on the way back out, one call away from its cause.
+ *
  * @package DiviOps
  */
 
 require_once __DIR__ . '/wp-shim.php';
+
+/*
+ * Both surfaces refuse an unregistered taxonomy the way core does (#366), so the
+ * taxonomies this file queries have to exist before any of it means anything.
+ *
+ * The post type is Divi's own: ET_Builder_Post_Type_Layout lists 'layout_type' and
+ * 'scope' among et_pb_layout's taxonomies
+ * (Divi/includes/builder/post/type/Layout.php:83-91 on the reference install), and
+ * the taxonomy names come from ET_Builder_Post_Taxonomy_LayoutType::$name and
+ * ET_Builder_Post_Taxonomy_LayoutScope::$name. Registering is process-global, so
+ * this is repeated in tests/test-library-characterization.php rather than shared --
+ * a filtered run loads either file on its own.
+ */
+diviops_test_register_taxonomy( 'layout_type', array( 'et_pb_layout' ) );
+diviops_test_register_taxonomy( 'scope', array( 'et_pb_layout' ) );
 
 /**
  * Register a fixed term/object-term fixture set and run one wp_get_object_terms()
@@ -275,3 +296,83 @@ assert_same(
 	),
 	'slugs survive a handler writing the object its own terms through wp_set_object_terms()'
 );
+
+/* =========================================================================
+ * An unregistered taxonomy. Core refuses on BOTH surfaces; this stub refused on
+ * neither, so a test could write into a typo'd taxonomy and read a plausible
+ * answer back out of it (#366).
+ * ====================================================================== */
+
+// The predicate both surfaces read. Core is
+// `is_string( $taxonomy ) && isset( $wp_taxonomies[ $taxonomy ] )`
+// (wp-includes/taxonomy.php:376-380 on the reference install).
+assert_true( taxonomy_exists( 'category' ), 'taxonomy_exists() is true for a taxonomy the shim bootstrap seeds' );
+assert_true( taxonomy_exists( 'layout_type' ), 'taxonomy_exists() is true for a taxonomy a test registered' );
+assert_same( false, taxonomy_exists( 'no_such_taxonomy' ), 'taxonomy_exists() is false for a name nobody registered' );
+assert_same(
+	false,
+	taxonomy_exists( array( 'layout_type' ) ),
+	"taxonomy_exists() is false for a non-string, which is core's own is_string() guard rather than an array-key cast"
+);
+
+// Read side. wp-includes/taxonomy.php:2303-2307.
+$unregistered_read = wp_get_object_terms( 987901, 'no_such_taxonomy', array( 'fields' => 'slugs' ) );
+assert_true( is_wp_error( $unregistered_read ), 'wp_get_object_terms() refuses an unregistered taxonomy rather than reporting no terms' );
+assert_same(
+	'invalid_taxonomy',
+	is_wp_error( $unregistered_read ) ? $unregistered_read->get_error_code() : '',
+	"the read-side refusal carries core's 'invalid_taxonomy' code"
+);
+assert_same(
+	'Invalid taxonomy.',
+	is_wp_error( $unregistered_read ) ? $unregistered_read->get_error_message() : '',
+	"the read-side refusal carries core's message"
+);
+
+// Core's loop returns on the FIRST unregistered name, so one bad taxonomy refuses
+// the whole call rather than being skipped out of the list.
+assert_true(
+	is_wp_error( wp_get_object_terms( 987901, array( 'layout_type', 'no_such_taxonomy' ) ) ),
+	'one unregistered taxonomy among several refuses the whole call'
+);
+
+// Core checks emptiness BEFORE the taxonomy (wp-includes/taxonomy.php:2295-2307),
+// so these answer array() rather than refusing. Checking in the other order would
+// refuse a call core answers.
+assert_same( array(), wp_get_object_terms( array(), 'no_such_taxonomy' ), 'an empty object-id list is array() even alongside an unregistered taxonomy' );
+assert_same( array(), wp_get_object_terms( 987901, array() ), 'an empty taxonomy list is array(), never a refusal' );
+
+// Write side. wp-includes/taxonomy.php:2856-2858 -- core's first act after the id
+// cast, so nothing is created before the refusal.
+$saved_terms        = $GLOBALS['diviops_test_terms'];
+$saved_object_terms = $GLOBALS['diviops_test_object_terms'];
+
+$unregistered_write = wp_set_object_terms( 987951, 'section', 'no_such_taxonomy' );
+assert_true( is_wp_error( $unregistered_write ), 'wp_set_object_terms() refuses an unregistered taxonomy rather than writing into it' );
+assert_same(
+	'invalid_taxonomy',
+	is_wp_error( $unregistered_write ) ? $unregistered_write->get_error_code() : '',
+	"the write-side refusal carries core's 'invalid_taxonomy' code"
+);
+assert_same(
+	'Invalid taxonomy.',
+	is_wp_error( $unregistered_write ) ? $unregistered_write->get_error_message() : '',
+	"the write-side refusal carries core's message"
+);
+
+// The two things the refusal has to prevent. Before this, the call above returned
+// a term id list, having minted a term under a taxonomy that does not exist -- the
+// write succeeded and only the read back failed, one call away from the cause.
+assert_same(
+	false,
+	isset( $GLOBALS['diviops_test_object_terms'][987951]['no_such_taxonomy'] ),
+	'a refused write attaches nothing to the object'
+);
+assert_same(
+	false,
+	in_array( 'section', $GLOBALS['diviops_test_terms'], true ),
+	'a refused write mints no term either, where before it created one under a taxonomy that does not exist'
+);
+
+$GLOBALS['diviops_test_terms']        = $saved_terms;
+$GLOBALS['diviops_test_object_terms'] = $saved_object_terms;

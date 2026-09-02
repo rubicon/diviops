@@ -2864,6 +2864,26 @@ if ( ! function_exists( 'diviops_test_register_taxonomy' ) ) {
 	}
 }
 
+if ( ! function_exists( 'taxonomy_exists' ) ) {
+	/**
+	 * Model WP core's taxonomy_exists(): whether a taxonomy name is registered.
+	 *
+	 * Core is `is_string( $taxonomy ) && isset( $wp_taxonomies[ $taxonomy ] )`
+	 * (wp-includes/taxonomy.php:376-380 on the reference install). The registry
+	 * here is the same one diviops_test_register_taxonomy() writes and
+	 * get_object_taxonomies() reads, so the same isset() answers it.
+	 *
+	 * The is_string() half is core's own, not a defensive addition: core returns
+	 * false for a non-string rather than letting PHP cast it to an array key.
+	 *
+	 * @param mixed $taxonomy Taxonomy name.
+	 * @return bool Whether the taxonomy is registered.
+	 */
+	function taxonomy_exists( $taxonomy ) {
+		return is_string( $taxonomy ) && isset( $GLOBALS['diviops_test_taxonomies'][ $taxonomy ] );
+	}
+}
+
 if ( ! function_exists( 'get_object_taxonomies' ) ) {
 	/**
 	 * Model WP core's get_object_taxonomies(): the taxonomy names registered
@@ -3055,9 +3075,27 @@ if ( ! function_exists( 'wp_get_object_terms' ) ) {
 	 * @throws RuntimeException When 'fields' names a shape this harness does not model.
 	 */
 	function wp_get_object_terms( $object_ids, $taxonomies, $args = array() ) {
+		/*
+		 * Core's own order, and the order matters: the empty check runs BEFORE the
+		 * taxonomy check (wp-includes/taxonomy.php:2295-2307 on the reference
+		 * install), so an empty object-id or taxonomy list is array() even when the
+		 * taxonomy named alongside it does not exist. Checking the taxonomy first
+		 * would refuse a call core answers.
+		 */
+		if ( empty( $object_ids ) || empty( $taxonomies ) ) {
+			return array();
+		}
+
 		$object_ids = (array) $object_ids;
 		$taxonomies = (array) $taxonomies;
-		$ids        = array();
+
+		foreach ( $taxonomies as $taxonomy ) {
+			if ( ! taxonomy_exists( $taxonomy ) ) {
+				return new WP_Error( 'invalid_taxonomy', 'Invalid taxonomy.' );
+			}
+		}
+
+		$ids = array();
 		foreach ( $object_ids as $object_id ) {
 			foreach ( $taxonomies as $taxonomy ) {
 				$ids = array_merge( $ids, $GLOBALS['diviops_test_object_terms'][ (int) $object_id ][ $taxonomy ] ?? array() );
@@ -3124,6 +3162,17 @@ if ( ! function_exists( 'wp_set_object_terms' ) ) {
 	 */
 	function wp_set_object_terms( $object_id, $terms, $taxonomy, $append = false ) {
 		$object_id = (int) $object_id;
+
+		/*
+		 * Core's first act after the id cast (wp-includes/taxonomy.php:2856-2858 on
+		 * the reference install), and it refuses before creating anything. Without
+		 * it this function happily minted a term under a taxonomy that does not
+		 * exist, so a typo'd taxonomy was written successfully and only failed to
+		 * read back -- one call away from its cause.
+		 */
+		if ( ! taxonomy_exists( $taxonomy ) ) {
+			return new WP_Error( 'invalid_taxonomy', 'Invalid taxonomy.' );
+		}
 
 		$resolved = array();
 		foreach ( (array) $terms as $term ) {
