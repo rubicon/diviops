@@ -14,8 +14,8 @@
  * explicitly. WordPress synthesizes `rest_forbidden` on its own whenever a
  * `permission_callback` returns false (`WP_REST_Server::dispatch()`, verified in
  * core 7.1 at `class-wp-rest-server.php:1259-1271`), and this plugin's five generic
- * gates all return bools — so the raw shape reached callers of all 110
- * `permission_callback` registrations, not four of them. That premise is asserted
+ * gates all return bools — so the raw shape reached callers of all 108
+ * `permission_callback` registrations on the namespace, not four of them. That premise is asserted
  * below rather than assumed, so it cannot rot silently if a gate's return type
  * changes.
  *
@@ -193,9 +193,34 @@ foreach ( array( 'check_read_permission', 'check_write_permission', 'check_admin
 
 /* Every `rest_*` code the plugin raises from a WP_Error is covered by the map. A
  * new gate emitting, say, `rest_cannot_delete` would otherwise reintroduce the raw
- * shape on one route with nothing to report it. */
-$source = file_get_contents( dirname( __DIR__ ) . '/plugins/diviops-agent/diviops-agent.php' );
-assert_true( is_string( $source ) && '' !== $source, 'the plugin main file is readable for the code scan' );
+ * shape on one route with nothing to report it.
+ *
+ * The scan reads EVERY PHP file in the plugin, not just the main one. The traits
+ * under includes/ are roughly 29,000 of the plugin's 32,000 lines and hold every
+ * REST capability domain, so a new gate lands there far more often than in
+ * diviops-agent.php. Scanning one file would report what it inspected while
+ * deriving pass/fail from problems-found in 1/21st of the code — the exact blind
+ * gate CLAUDE.md names as having bitten this repository three times. */
+$plugin_root = dirname( __DIR__ ) . '/plugins/diviops-agent';
+$scanned     = [];
+$source      = '';
+foreach (
+	new RecursiveIteratorIterator( new RecursiveDirectoryIterator( $plugin_root, FilesystemIterator::SKIP_DOTS ) )
+	as $file
+) {
+	if ( 'php' !== strtolower( $file->getExtension() ) ) {
+		continue;
+	}
+	$contents = file_get_contents( $file->getPathname() );
+	assert_true( is_string( $contents ) && '' !== $contents, sprintf( '%s is readable for the code scan', $file->getFilename() ) );
+	$scanned[] = $file->getFilename();
+	$source   .= $contents;
+}
+
+/* A floor, not a census: it has to fail if the walk silently narrows back to one
+ * file, without breaking every time a trait is added or removed. */
+assert_true( count( $scanned ) >= 15, sprintf( 'the scan walked the whole plugin, not one file (opened %d)', count( $scanned ) ) );
+assert_true( in_array( 'diviops-agent.php', $scanned, true ), 'the scan includes the main plugin file' );
 
 preg_match_all( "/new WP_Error\(\s*\n?\s*'(rest_[a-z_]+)'/", $source, $matches );
 $raised = array_values( array_unique( $matches[1] ) );
