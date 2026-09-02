@@ -2871,6 +2871,39 @@ if ( ! function_exists( 'wp_set_object_terms' ) ) {
 	}
 }
 
+if ( ! isset( $GLOBALS['diviops_test_term_cache_primed'] ) ) {
+	$GLOBALS['diviops_test_term_cache_primed'] = array();
+}
+
+if ( ! function_exists( 'update_object_term_cache' ) ) {
+	/**
+	 * Model WP core's update_object_term_cache(): warm the object-term cache for
+	 * a batch of ids ahead of the per-object term reads that follow.
+	 *
+	 * The observable effect here is none. wp_get_object_terms() above answers
+	 * from $GLOBALS['diviops_test_object_terms'] directly and consults no cache,
+	 * so there is no cache for this to fill and a stub that pretended to fill one
+	 * would be modelling storage this harness does not have. What it does instead
+	 * is RECORD the call, because the fact worth asserting is that a list handler
+	 * primes the ids it is about to read one at a time — library_list() calls this
+	 * with its page slice before reading each row's layout_type and scope, and
+	 * dropping that call is a real N+1 regression no other assertion would catch.
+	 *
+	 * Test seam: $GLOBALS['diviops_test_term_cache_primed'] is a list of calls,
+	 * each `array( 'ids' => int[], 'object_type' => string )`.
+	 *
+	 * @param int[]|int $object_ids  Object ids to prime.
+	 * @param string    $object_type Object type ('post' for post-backed lists).
+	 * @return void
+	 */
+	function update_object_term_cache( $object_ids, $object_type ) {
+		$GLOBALS['diviops_test_term_cache_primed'][] = array(
+			'ids'         => array_map( 'intval', (array) $object_ids ),
+			'object_type' => (string) $object_type,
+		);
+	}
+}
+
 // ── media_set_featured_image() harness: thumbnail store + internal-request shim ──
 
 if ( ! isset( $GLOBALS['diviops_test_thumbnails'] ) ) {
