@@ -70,8 +70,12 @@ op item create --category="API Credential" --title="ColleyvilleLions.local divio
   --vault=Automation username="$DIVIOPS_LIVE_USER" credential="<paste the value from step 3>"
 
 # 5. Export it for the runner (read back from 1Password rather than pasted
-#    inline, once step 4 is done):
-export DIVIOPS_LIVE_APP_PASSWORD="$(op read 'op://Automation/ColleyvilleLions.local diviops-agent Application Password/credential')"
+#    inline, once step 4 is done). Address the item by UUID, not by title: a
+#    title is a mutable label, and a renamed item breaks the reference
+#    silently while `op` still authenticates. Read your item's UUID once with
+#      op item get "<your title>" --vault Automation --format json | jq -r '.id'
+#    The reference site's item is 4hcr4kanvq7vtwbv4j6rm47dca.
+export DIVIOPS_LIVE_APP_PASSWORD="$(op read 'op://Automation/4hcr4kanvq7vtwbv4j6rm47dca/credential')"
 ```
 
 `DIVIOPS_LIVE_WP_CLI_BIN` is also overridable (defaults to

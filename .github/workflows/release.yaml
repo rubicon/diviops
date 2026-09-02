@@ -35,8 +35,8 @@ jobs:
           export-env: false
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          RP_APP_ID: "op://Automation/rubicon_release_please_private_key/app id"
-          RP_PRIVATE_KEY: "op://Automation/rubicon_release_please_private_key/private key"
+          RP_APP_ID: "op://Automation/lnacky4l2tmlihrockbutkub7y/app id"
+          RP_PRIVATE_KEY: "op://Automation/lnacky4l2tmlihrockbutkub7y/private key"
 
       - name: Mint a GitHub App token (verified release commits)
         id: app-token
