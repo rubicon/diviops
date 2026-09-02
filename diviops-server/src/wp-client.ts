@@ -6,7 +6,12 @@
  * Generate one at: WP Admin → Users → Your Profile → Application Passwords.
  */
 
-import { type ClientRuntime, type HandshakeResult } from './compatibility.js';
+import {
+  type ClientRuntime,
+  type HandshakeResult,
+  type SiteIdentity,
+  normalizeSiteIdentity,
+} from './compatibility.js';
 import {
   type DiviopsResponse,
   describeError,
@@ -446,23 +451,36 @@ export class WPClient {
    * `result.builder.version` against that shape (the pre-pilot pattern)
    * silently regresses meta_ping to "Connected to Divi unknown" on
    * healthy sites.
+   *
+   * `site` answers which install replied (#343). It rides on this endpoint
+   * rather than on a second request because a connection test that costs two
+   * round trips is one people skip, and the settings body already carries the
+   * plugin's identity block. `null` means the connected plugin predates it.
    */
   async testConnection(
     signal?: AbortSignal,
-  ): Promise<{ ok: boolean; message: string; hint?: string }> {
+  ): Promise<{
+    ok: boolean;
+    message: string;
+    hint?: string;
+    site: SiteIdentity | null;
+  }> {
     try {
       const response = await this.requestEnveloped<{
         builder?: { version?: string };
+        site_identity?: unknown;
       }>('/schema/settings', { signal });
       if (!response.ok) {
         return {
           ok: false,
           message: `Connection failed: [${response.error.code}] ${response.error.message}`,
+          site: null,
         };
       }
       return {
         ok: true,
         message: `Connected to Divi ${response.data.builder?.version ?? 'unknown'}`,
+        site: normalizeSiteIdentity(response.data.site_identity),
       };
     } catch (error) {
       // A cancelled call must surface as a cancellation rather than as a
@@ -475,6 +493,7 @@ export class WPClient {
         ok: false,
         message: `Connection failed: ${describeError(error)}`,
         ...(hint ? { hint } : {}),
+        site: null,
       };
     }
   }
@@ -550,6 +569,10 @@ export class WPClient {
     ) {
       result.plugins = {};
     }
+
+    // Which site answered (#343). Absent on plugins that predate the block,
+    // which normalizes to null rather than to an invented identity.
+    result.site_identity = normalizeSiteIdentity(result.site_identity);
 
     return result;
   }

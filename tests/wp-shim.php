@@ -292,6 +292,100 @@ if ( ! function_exists( 'get_site_url' ) ) {
 	}
 }
 
+if ( ! function_exists( 'home_url' ) ) {
+	/**
+	 * The site's front-end address, which is what tells two environments apart
+	 * (#343). Deliberately a different default from get_site_url() above: the
+	 * two genuinely differ on installs where WordPress lives in a subdirectory,
+	 * and a harness where they returned the same string could not prove which
+	 * of them the identity block actually reads.
+	 *
+	 * Overridable via $GLOBALS['diviops_test_home_url'].
+	 */
+	function home_url( $path = '' ) {
+		$base = isset( $GLOBALS['diviops_test_home_url'] )
+			? (string) $GLOBALS['diviops_test_home_url']
+			: 'http://home.example.test';
+		return '' === (string) $path
+			? $base
+			: rtrim( $base, '/' ) . '/' . ltrim( (string) $path, '/' );
+	}
+}
+
+if ( ! function_exists( 'wp_get_environment_type' ) ) {
+	/**
+	 * Model WP core's wp_get_environment_type(): the configured environment when
+	 * it is one of core's four recognised values, and 'production' otherwise.
+	 *
+	 * The fallback is the whole point, not a shortcut. Core answers 'production'
+	 * whenever WP_ENVIRONMENT_TYPE is undefined, which is why a staging site
+	 * reports itself as production — measured on staging.colleyvillelions.com,
+	 * where the constant is not defined and core answers `production` (#343).
+	 * Tests set $GLOBALS['diviops_test_environment_type'] to vary it.
+	 */
+	function wp_get_environment_type() {
+		$type = isset( $GLOBALS['diviops_test_environment_type'] )
+			? (string) $GLOBALS['diviops_test_environment_type']
+			: 'production';
+		return in_array( $type, array( 'local', 'development', 'staging', 'production' ), true )
+			? $type
+			: 'production';
+	}
+}
+
+if ( ! function_exists( 'is_multisite' ) ) {
+	/**
+	 * Single-site by default, which is what this harness models everywhere else.
+	 * Overridable via $GLOBALS['diviops_test_is_multisite'].
+	 */
+	function is_multisite() {
+		return isset( $GLOBALS['diviops_test_is_multisite'] )
+			? (bool) $GLOBALS['diviops_test_is_multisite']
+			: false;
+	}
+}
+
+if ( ! function_exists( 'get_locale' ) ) {
+	/**
+	 * Fixed placeholder stub. No test asserts on this value; it exists so
+	 * schema_get_settings() (trait-meta.php) can run without a fatal.
+	 */
+	function get_locale() {
+		return 'en_US';
+	}
+}
+
+if ( ! function_exists( 'get_bloginfo' ) ) {
+	/**
+	 * The handful of `$show` keys this plugin actually asks for. Anything else
+	 * returns '' rather than guessing: a shim that invents a plausible value for
+	 * an unmodelled key teaches a test that the plugin reads something it does
+	 * not.
+	 */
+	function get_bloginfo( $show = '', $filter = 'raw' ) {
+		switch ( (string) $show ) {
+			case 'name':
+				return isset( $GLOBALS['diviops_test_blogname'] )
+					? (string) $GLOBALS['diviops_test_blogname']
+					: 'DiviOps Test Site';
+			case 'description':
+				return isset( $GLOBALS['diviops_test_blogdescription'] )
+					? (string) $GLOBALS['diviops_test_blogdescription']
+					: '';
+			case 'version':
+				return isset( $GLOBALS['diviops_test_wp_version'] )
+					? (string) $GLOBALS['diviops_test_wp_version']
+					: '6.5';
+			case 'url':
+				return home_url();
+			case 'language':
+				return get_locale();
+			default:
+				return '';
+		}
+	}
+}
+
 if ( ! isset( $GLOBALS['diviops_test_options'] ) ) {
 	$GLOBALS['diviops_test_options'] = array();
 }

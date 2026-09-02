@@ -158,6 +158,11 @@ export interface HandshakeResult {
   authenticated_user?: { id: number; login: string };
   /** Observed WordPress site URL; normalized and pinned by launcher mode. */
   site_url?: string;
+  /**
+   * Which site answered (#343). Normalized by `wp-client.ts` to a
+   * `SiteIdentity` or to `null` for a plugin that predates the block.
+   */
+  site_identity?: SiteIdentity | null;
 }
 
 export function proToolGatesSatisfied(
@@ -237,6 +242,60 @@ export function capabilityUpgradeHint(
     "reconnect or restart the MCP session to refresh the capability handshake." +
     fallback
   );
+}
+
+// ── Site identity (#343) ─────────────────────────────────────────────
+
+/**
+ * Which WordPress install answered.
+ *
+ * The sibling of the live-vs-spawn-time question below: that one asks *when*
+ * the plugin's report was true, this one asks *whose* report it is. Both exist
+ * because a preflight that answers confidently about something adjacent to the
+ * question is worse than one that admits it cannot answer.
+ *
+ * `home_url` is the field that matters — the authoritative identifier, and the
+ * one an operator compares to confirm which environment is connected.
+ *
+ * `environment_type` is ADVISORY. WordPress answers `production` whenever
+ * `WP_ENVIRONMENT_TYPE` is undefined, and undefined is the default, so a
+ * staging site reports itself as production; that was measured on a real
+ * staging host, not inferred. Nothing here or downstream branches on it: no
+ * capability gate, no warning, no write guard. It is reported because it is
+ * occasionally useful and labelled advisory in both tool descriptions.
+ */
+export interface SiteIdentity {
+  home_url: string;
+  site_name: string;
+  /** Advisory only. See the note above before reading this field for anything. */
+  environment_type: string | null;
+  is_multisite: boolean;
+  wp_version: string | null;
+}
+
+/**
+ * Read an identity block off the wire, or answer that there is none.
+ *
+ * Absent `home_url` there is no identity: a block naming everything except the
+ * site's address reads as an answer while leaving unanswered the one field the
+ * operator is comparing. A plugin predating this block sends nothing at all,
+ * and that has to be reported as "unknown" rather than filled in.
+ */
+export function normalizeSiteIdentity(raw: unknown): SiteIdentity | null {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+
+  const homeUrl = typeof record.home_url === "string" ? record.home_url.trim() : "";
+  if (!homeUrl) return null;
+
+  return {
+    home_url: homeUrl,
+    site_name: typeof record.site_name === "string" ? record.site_name : "",
+    environment_type:
+      typeof record.environment_type === "string" ? record.environment_type : null,
+    is_multisite: record.is_multisite === true,
+    wp_version: typeof record.wp_version === "string" ? record.wp_version : null,
+  };
 }
 
 // ── Live plugin state (#215) ─────────────────────────────────────────

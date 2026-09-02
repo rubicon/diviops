@@ -214,8 +214,8 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 | `diviops_menu_location_unassign` | plugin | `location`, `dry_run?` | true | Clear a registered theme location's WordPress nav menu assignment (the mirror of diviops_menu_location_assign). … |
 | `diviops_meta_find_icon` | plugin | `query`, `type?`, `limit?` | true | Search for icons by keyword. … |
 | `diviops_meta_flush_cache` | plugin | `post_id?`, `all?`, `after?`, `dry_run?`, `cleanup_dynamic_assets?`, `cleanup_canvas_refs?` | true | Flush Divi's compiled static CSS cache under wp-content/et-cache/. … |
-| `diviops_meta_info` | server-local | _(none)_ | true | Returns DiviOps MCP server identity, server_version, license type, numeric tool_count, registered tool catalog summary, active plugin version summary, WP-CLI allowlist, and plugin handshake/slice state including Pro and FluentCart target readiness. … |
-| `diviops_meta_ping` | server-local | _(none)_ | true | Test the connection to the WordPress site and verify the Divi MCP plugin is active. … |
+| `diviops_meta_info` | server-local | _(none)_ | true | Returns DiviOps MCP server identity, server_version, license type, numeric tool_count, registered tool catalog summary, active plugin version summary, WP-CLI allowlist, connected-site identity, and plugin handshake/slice state including Pro and FluentCart target readiness. … |
+| `diviops_meta_ping` | server-local | _(none)_ | true | Test the connection to the WordPress site, verify the Divi MCP plugin is active, and report WHICH site answered. … |
 | `diviops_meta_wp_cli` | server-local | `command` | conditional | Run a WP-CLI command on the WordPress site. … |
 | `diviops_module_clone` | plugin | `page_id`, `label?`, `match_text?`, `auto_index?`, `occurrence?`, `position?`, `dry_run?`, `backup?` | false | Clone a module by deep-copying its block JSON and inserting it next to the source within the same parent container. … |
 | `diviops_module_get` | plugin | `page_id`, `label?`, `match_text?`, `auto_index?`, `occurrence?`, `full?` | true | Get one targeted Divi module/block from a page, post, or Theme Builder layout by auto_index (e.g. … |

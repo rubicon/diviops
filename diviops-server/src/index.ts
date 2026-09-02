@@ -24,6 +24,7 @@ import {
   MissingCapabilityError,
   observedVersion,
   proToolGatesSatisfied,
+  type SiteIdentity,
 } from "./compatibility.js";
 import {
   missingCapabilityEnvelope,
@@ -174,6 +175,10 @@ export type HandshakeState =
       // when the connected plugin predates the field — meta_info then reports
       // same-version drift as undetectable rather than as absent.
       codeFingerprint?: string | null;
+      // Which site the gates were negotiated against (#343). Optional for the
+      // same reason as codeFingerprint above: a plugin that predates the block
+      // sends none, and meta_info reports that as unknown rather than guessing.
+      siteIdentity?: SiteIdentity | null;
       proVersion?: string;
       // ADR-003 / ADR-007 Pro-extension fields — present on `ok` only.
       // Free-only sites populate these as `false` / `{}` via wp-client
@@ -354,20 +359,30 @@ function buildPluginVersionSummary(live: LiveHandshakeReport) {
  * reach for when the site is misbehaving, so it has to answer when the site
  * is unreachable.
  */
-async function refreshPluginState(): Promise<LiveHandshake> {
+async function refreshPluginState(): Promise<{
+  live: LiveHandshake;
+  site: SiteIdentity | null;
+}> {
   try {
     const hs = await wp.handshake(SERVER_VERSION, { wp_cli: wpCli !== null });
     return {
-      ok: true,
-      pluginVersion: observedVersion(hs.plugin_version),
-      codeFingerprint: observedVersion(hs.code_fingerprint),
+      live: {
+        ok: true,
+        pluginVersion: observedVersion(hs.plugin_version),
+        codeFingerprint: observedVersion(hs.code_fingerprint),
+      },
+      // Reported beside the staleness signals rather than inside them: which
+      // site answered is a different question from when the answer was true,
+      // and folding it in would make `stale` mean two things (#343).
+      site: hs.site_identity ?? null,
     };
   } catch (error) {
-    return { ok: false, message: describeError(error) };
+    return { live: { ok: false, message: describeError(error) }, site: null };
   }
 }
 
 async function buildMetaInfo() {
+  const refreshed = await refreshPluginState();
   // Spawn-time values stay under `handshake` — they are the honest record of
   // what the gates were negotiated against — and the live re-read lands in
   // `live` next to them, with the comparison already performed.
@@ -380,8 +395,14 @@ async function buildMetaInfo() {
           ? handshakeState.codeFingerprint ?? null
           : null,
     },
-    await refreshPluginState(),
+    refreshed.live,
   );
+  // Which site this is (#343). The live reading answers for now; the
+  // spawn-time one is the fallback when the re-check could not be made, since
+  // a stale identity is still better than none when the site is unreachable.
+  const site =
+    refreshed.site ??
+    (handshakeState.kind === "ok" ? handshakeState.siteIdentity ?? null : null);
   const fluentCartCapabilityKeys = enabledCapabilityKeys("fluentcart_");
   const crossEnvCapabilityKeys = enabledCapabilityKeys("cross_env_");
   const managedRecoveryCapabilityKeys = enabledCapabilityKeys("managed_recovery_");
@@ -428,6 +449,7 @@ async function buildMetaInfo() {
     server_version: SERVER_VERSION,
     version: SERVER_VERSION,
     license: "MIT",
+    site,
     capabilities,
     tool_count: tools.registered_total,
     tools,
@@ -5091,7 +5113,9 @@ registerLocalTool(
       if (!ping.ok) {
         withCode(ErrorCodes.WP_ERROR, ping.message, ping.hint);
       }
-      return { connected: true, message: ping.message };
+      // `site` is what makes this a preflight rather than a liveness check:
+      // "a Divi install answered" is not the question anyone was asking (#343).
+      return { connected: true, message: ping.message, site: ping.site };
     });
     return {
       content: [
@@ -8125,6 +8149,7 @@ async function main() {
       capabilities: hs.capabilities,
       pluginVersion: observedVersion(hs.plugin_version),
       codeFingerprint: observedVersion(hs.code_fingerprint),
+      siteIdentity: hs.site_identity ?? null,
       proVersion: hs.pro_version,
       proActive: hs.pro_active === true,
       availableTargets: hs.available_targets ?? {},
