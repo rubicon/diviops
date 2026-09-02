@@ -199,11 +199,17 @@ assert_same( 'non_global', $data['data']['scope'], 'library_get: a classified it
 
 // get_term_slug() returns element 0 and discards the rest. Divi's own UI assigns
 // one layout_type, but nothing in the schema enforces it, and a second term is
-// silently invisible rather than reported or refused. Pinned because it is the
-// handler's behaviour, not because it is obviously the right one.
+// silently invisible rather than reported or refused. What is pinned is that
+// exactly one slug survives, NOT which one: core orders terms by name ASC
+// (WP_Term_Query's default orderby, wp-includes/class-wp-term-query.php:200)
+// while this harness returns them in attachment order, so asserting the winner
+// would pin the harness rather than the handler. wp_get_object_terms() here now
+// refuses an explicit `orderby` for the same reason.
 diviops_test_register_object_terms( 610, 'layout_type', array( 73, 71 ) );
-$data = diviops_call( 'library_get', array( diviops_lib_req( array( 'id' => 610 ) ) ) )->get_data();
-assert_same( 'row', $data['data']['layout_type'], 'library_get: an item carrying several layout_type terms reports only the first' );
+$data     = diviops_call( 'library_get', array( diviops_lib_req( array( 'id' => 610 ) ) ) )->get_data();
+$reported = $data['data']['layout_type'];
+assert_true( is_string( $reported ), 'library_get: an item carrying several layout_type terms reports a single slug, not a list' );
+assert_true( in_array( $reported, array( 'row', 'section' ), true ), 'library_get: the one slug reported is one of the terms actually attached' );
 
 /* =========================================================================
  * library_list()
@@ -421,6 +427,21 @@ assert_same(
 	array_keys( $GLOBALS['diviops_test_object_terms'][9000] ),
 	'library_save: both taxonomies are written, layout_type first'
 );
+
+// The round trip, end to end: what library_save() WROTE is what library_get()
+// reads back. The assertion above inspects only the KEYS of the object-term
+// store, which is how this went unnoticed -- library_save() passes the slug
+// STRINGS 'section' and 'non_global' to wp_set_object_terms()
+// (trait-library.php:260-261), and the harness ran array_map( 'intval', ... )
+// over them, storing term id 0 under both taxonomies. The keys looked right and
+// the values were a term core cannot produce. Reading the slugs back raised, so
+// this pair could not be asserted at all until the shim resolved a slug the way
+// core does (#358).
+$saved = diviops_call( 'library_get', array( diviops_lib_req( array( 'id' => 9000 ) ) ) )->get_data();
+assert_true( true === $saved['ok'], 'library_save: the item it created is readable back through library_get' );
+assert_same( 'section', $saved['data']['layout_type'], 'library_save: the layout_type it wrote reads back as that slug, not as term id 0' );
+assert_same( 'non_global', $saved['data']['scope'], 'library_save: the scope it wrote reads back as that slug' );
+assert_same( 'Fresh Hero', $saved['data']['title'], 'library_save: the round trip reads back the item that was just saved, not a leftover fixture' );
 
 // ── title uniqueness ─────────────────────────────────────────────────────
 //
