@@ -1152,8 +1152,29 @@ trait DiviOps_Agent_ThemeBuilder {
 	}
 
 	private static function cross_env_attachment_candidates( array $asset_hints, array $source_ids ): array {
-		$candidates = [];
+		$candidates      = [];
+		$fallback_hints  = [];
+		$exact_basenames = [];
 		foreach ( $asset_hints as $hint ) {
+			if ( empty( $hint['upload_path'] ) ) {
+				$fallback_hints[] = $hint;
+				continue;
+			}
+			$posts = self::cross_env_query_attachments_for_hint( $hint );
+			foreach ( $posts as $post ) {
+				$row = self::cross_env_attachment_candidate_payload( $post, $hint, $source_ids );
+				if ( null === $row ) {
+					continue;
+				}
+				$candidates[ (string) $row['id'] . '|' . (string) ( $row['path'] ?? '' ) ] = $row;
+				$exact_basenames[ $hint['basename'] ] = true;
+			}
+		}
+
+		foreach ( $fallback_hints as $hint ) {
+			if ( isset( $exact_basenames[ $hint['basename'] ] ) ) {
+				continue;
+			}
 			$posts = self::cross_env_query_attachments_for_hint( $hint );
 			foreach ( $posts as $post ) {
 				$row = self::cross_env_attachment_candidate_payload( $post, $hint, $source_ids );

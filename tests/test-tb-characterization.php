@@ -17,10 +17,14 @@
  *
  * This file characterizes those five. A characterization test records what the
  * code does today, right or wrong, so that a later edit — an upstream adoption in
- * particular — cannot change it silently. Two of the behaviours pinned below are
- * defects, and they are pinned AS defects, with the defect named in the comment
- * above the assertion. Do not "fix" one by editing the expectation here: the
- * assertion failing is the signal it exists to produce.
+ * particular — cannot change it silently. Two of the behaviours pinned here were
+ * defects, and they were pinned AS defects so that repairing them had to be a
+ * decision. Both were repaired in #356 by adopting upstream's two-pass narrowing
+ * in `cross_env_attachment_candidates()`, and the four expectations that moved
+ * were updated in that same change. That is the only way an expectation here may
+ * move: a maintainer changing the behaviour, in a change that says so. An
+ * assertion going red on its own is the signal this file exists to produce — do
+ * not settle it by editing the expectation.
  *
  * Two handlers cannot be driven end to end past their permission gates in this
  * harness, and both stop for reasons this suite has settled before:
@@ -249,16 +253,15 @@ assert_same(
 );
 assert_same( 77, $candidates[0]['source_attachment_id'] ?? null, 'a single source id is attributed onto the candidate' );
 
-// DEFECT, pinned as-is. The candidate is proven by an exact upload-path match,
-// but the bare-filename hint is queried afterwards, resolves the same
-// attachment, and overwrites the row under the same `id|path` key — so the
-// evidence label degrades to the weaker `target_basename_exact`. Because
-// sourceHintsFromPayload() always sends a filename alongside the path, the
-// stronger proof is never reported in practice.
+// The exact upload-path hint is resolved in the first pass, which records the
+// basename it proved; the bare-filename hint sourceHintsFromPayload() always
+// sends alongside the path is then skipped in the second, so it can no longer
+// re-resolve the same attachment and overwrite the row under the same `id|path`
+// key with the weaker `target_basename_exact` (#356).
 assert_same(
-	'target_basename_exact',
+	'target_upload_path_exact',
 	$candidates[0]['proof'] ?? null,
-	'DEFECT: a later basename hint overwrites the exact-upload-path proof'
+	'an exact upload-path proof survives the basename hint that follows it'
 );
 
 $path_only = diviops_call_static(
@@ -277,23 +280,23 @@ assert_same(
 
 $remaps = diviops_call_static( 'cross_env_attachment_remaps', array( $candidates, $hints['source_ids'] ) );
 assert_same(
-	array( '77' => array( 'target_id' => 5402, 'proof' => 'target_basename_exact' ) ),
+	array( '77' => array( 'target_id' => 5402, 'proof' => 'target_upload_path_exact' ) ),
 	$remaps,
 	'a unique candidate plus a single source id emits one remap carrying the candidate proof'
 );
 
-// DEFECT, pinned as-is. A second attachment sharing the basename in a different
-// month is reachable only through the bare-filename hint, but it still lands in
-// the candidate set even though the exact upload-path hint already identified
-// exactly one attachment. Two target ids then suppress the remap entirely, and
-// the preflight reports missing_remap for an asset it could have proven.
+// A second attachment sharing the basename in a different month is reachable
+// only through the bare-filename hint, and that hint is skipped once the exact
+// upload-path hint has proved this basename — so the duplicate never enters the
+// candidate set. One target id survives, and the remap the exact upload path
+// proved reaches the preflight instead of vanishing into missing_remap (#356).
 diviops_tbc_attachment( 5404, '2023/01/hero.jpg' );
 $dup_candidates = diviops_call_static( 'cross_env_attachment_candidates', array( $hints['assets'], $hints['source_ids'] ) );
-assert_same( 2, count( $dup_candidates ), 'DEFECT: a duplicate basename in another folder joins the candidate set' );
+assert_same( 1, count( $dup_candidates ), 'a duplicate basename in another folder stays out of the candidate set' );
 assert_same(
-	array(),
+	array( '77' => array( 'target_id' => 5402, 'proof' => 'target_upload_path_exact' ) ),
 	diviops_call_static( 'cross_env_attachment_remaps', array( $dup_candidates, $hints['source_ids'] ) ),
-	'DEFECT: the extra candidate suppresses a remap the exact upload path had already proven'
+	'the remap the exact upload path proved survives a duplicate basename elsewhere'
 );
 
 // ══ tb_layout_update ══════════════════════════════════════════════════════
