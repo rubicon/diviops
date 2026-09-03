@@ -424,15 +424,18 @@ Once #387 merges, Phase 2 is:
    actually shipped, once #387's own wording of that row is final.
 5. The installed-theme JSON (§3) stays out of scope.
 
-One caution carried forward, **reported to this evaluation rather than measured by it.**
-#387's source comment at `regen-module-formats.mjs:103-105` reasons that
+One caution carried forward, **reproduced by mutation before this spec was finalized.**
+#387's source comment at `regen-module-formats.mjs:103-105` reasoned that
 `lib: ['lib.es5.d.ts']` is what stops the decoration lists resolving silently empty.
-Review of #387 reports that mutation-testing disproves it: removing the line or setting
-`lib: []` leaves the suite green because TypeScript falls back to its default lib, and
-only `noLib: true` reproduces the failure. **Not independently reproduced here** — doing
-so would mean mutating a file another open PR owns. Recorded so Phase 2 does not inherit
-the reasoning by citation: whatever `ts` program options Phase 2 needs should be pinned
-by a mutation that actually fails. Verification and any fix belong to #387.
+Three mutations against #387's own branch settle it: removing the line leaves 55/55
+green, `lib: []` leaves 55/55 green — TypeScript falls back to its default lib in both
+cases, which already supplies `Pick` — and only `noLib: true` reproduces the failure,
+at which point two named `buildTypesIndex` cases fail. So the option is insulation
+against a future default-lib change, not the guard; the guard is those two cases.
+#387 has since corrected both its source comment and its `FORK.md` row. Recorded here so
+Phase 2 does not inherit the original reasoning by citation: whatever `ts` program
+options Phase 2 needs must be pinned by a mutation that actually fails, and a mutation
+that merely restores a library default proves nothing.
 
 Owner decisions this evaluation surfaces:
 
