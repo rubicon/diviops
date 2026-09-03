@@ -62,6 +62,60 @@ test("a module outside the artifact's coverage is not_found, not an empty answer
   );
 });
 
+test("an inherited Object.prototype key is not_found, not bare provenance", () => {
+  resetModuleMapCache();
+  // `map.modules` is a plain object, so a bare `map.modules[name]` returns a truthy
+  // inherited member for every one of these and spreads it to nothing — ok:true with
+  // provenance and no module data, which is exactly the empty answer the tool's
+  // description promises never to give. Mutation check: reverting the lookup in
+  // module-map.ts to `map.modules[module]` must fail this test.
+  for (const name of [
+    "__proto__",
+    "constructor",
+    "toString",
+    "valueOf",
+    "hasOwnProperty",
+    "isPrototypeOf",
+  ]) {
+    assert.throws(
+      () => moduleMapAnswer(name),
+      (e: unknown) => e instanceof DiviopsError && e.code === "not_found",
+      `${name} must be refused like any other uncovered name`,
+    );
+  }
+});
+
+test("an empty module name is a name that is not covered, not an omitted argument", () => {
+  resetModuleMapCache();
+  // `if (!module)` treats "" as "no argument" and hands back the whole index, so a
+  // caller that passed a variable holding an empty string gets a plausible ok:true
+  // answer about a module it never named. Only `undefined` means "omitted".
+  assert.throws(
+    () => moduleMapAnswer(""),
+    (e: unknown) => e instanceof DiviopsError && e.code === "not_found",
+  );
+});
+
+test("a covered module keeps every field the artifact records for it", () => {
+  resetModuleMapCache();
+  // The earlier covered-module test reads paths/invalidates/elements only, so dropping
+  // class, file, wipes_base, inert or disagreements from the response survives it.
+  const entry = moduleMapAnswer("divi/button") as Record<string, unknown>;
+  for (const field of [
+    "class",
+    "file",
+    "inert",
+    "wipes_base",
+    "paths",
+    "invalidates",
+    "elements",
+    "disagreements",
+  ]) {
+    assert.ok(field in entry, `the response drops "${field}"`);
+  }
+  assert.equal(entry.module, "divi/button", "the response names the module it answers for");
+});
+
 test("the artifact is declared in package.json files, or npm would ship a tool with no data", () => {
   const pkg = JSON.parse(
     readFileSync(join(packageRoot, "package.json"), "utf8"),

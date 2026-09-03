@@ -114,7 +114,7 @@ export function moduleMapAnswer(
     sources: map.sources,
   };
 
-  if (!module) {
+  if (module === undefined) {
     return {
       ...provenance,
       notes: map.notes,
@@ -126,7 +126,14 @@ export function moduleMapAnswer(
     };
   }
 
-  const entry = map.modules[module];
+  // Own-property lookup, never a bare index: `map.modules` is a plain object from
+  // JSON.parse, so `map.modules.toString` (and every other Object.prototype member)
+  // is a truthy inherited value that would sail past the `!entry` guard below and
+  // spread to nothing, answering ok:true with bare provenance. The tool's own
+  // description promises an unknown name is not_found, never an empty result.
+  const entry = Object.prototype.hasOwnProperty.call(map.modules, module)
+    ? map.modules[module]
+    : undefined;
 
   if (!entry) {
     throw new DiviopsError(
