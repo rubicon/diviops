@@ -25,7 +25,7 @@ Read the right file for the task at hand — don't load everything.
 | Using MCP tools & targeting | [tools.md](references/tools.md) |
 | Creating/editing pages | [design-guide.md](references/design-guide.md) → [module-formats.md](references/module-formats.md) |
 | Copy-paste minimum-valid block snippets | [minimal-snippets.md](references/minimal-snippets.md) (Heading, Text, Button, Blurb, Icon, Image) |
-| Module attribute paths | [module-formats.md](references/module-formats.md) (Tier 1 free — Tier 2 patterns + Tier 3 per-module are Pro) |
+| Module attribute paths | [module-formats.md](references/module-formats.md) (Tier 1 free; Tier 3 per-module element maps free for all 111 modules `@divi/types` declares — Tier 2 patterns are Pro) |
 | Advanced decoration attributes (shadows, filters, transform, sticky, transition, scroll, animation) | [advanced-attributes.md](references/advanced-attributes.md) |
 | `$variable()$` bindings — token grammar, and the five namespaces sharing it (dynamic content, global colors, design tokens, gradients, images/shortcodes) | [variable-bindings.md](references/variable-bindings.md) |
 | Adding CSS classes to modules | [design-effects.md](references/design-effects.md) — uses `module.decoration.attributes`, NOT `className` |
@@ -204,7 +204,7 @@ Write `.claude/instructions/design-system.md` with brand-specific guidance: aest
 
 ## Module Gotchas (Silent Failures)
 
-Full attribute paths in [module-formats.md](references/module-formats.md) Tier 3 (Pro). **Copy-paste minimum-valid snippets** for each content module: [minimal-snippets.md](references/minimal-snippets.md). Run [`diviops_validate_blocks`](references/tools.md) to catch known silent-failure patterns before write — each one below maps to a validator rule.
+Full attribute paths in [module-formats.md](references/module-formats.md) Tier 3. **Copy-paste minimum-valid snippets** for each content module: [minimal-snippets.md](references/minimal-snippets.md). Run [`diviops_validate_blocks`](references/tools.md) to catch known silent-failure patterns before write — each one below maps to a validator rule.
 
 **Content-shape traps** (block renders but with wrong/missing content):
 

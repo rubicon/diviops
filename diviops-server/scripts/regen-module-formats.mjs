@@ -101,7 +101,12 @@ const TYPES_COMPILER_OPTIONS = {
   module: ts.ModuleKind.ESNext,
   moduleResolution: ts.ModuleResolutionKind.Bundler,
   // `PickedAttributes<K>` is `Pick<Attributes, K>`, and `Pick` is declared in
-  // the standard library — without a lib every decoration list resolves empty.
+  // the standard library: under `noLib: true` every decoration list resolves
+  // silently empty. TypeScript's default lib already supplies `Pick`, so this
+  // line is insulation, not the guard — removing it, or setting `lib: []`,
+  // leaves the suite green. The guard is the pair of `buildTypesIndex` cases
+  // that `noLib: true` fails. Pin it anyway, so a future change to the default
+  // lib cannot move the answer without a test noticing.
   lib: ['lib.es5.d.ts'],
   skipLibCheck: true,
   strict: false,
