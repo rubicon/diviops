@@ -2,13 +2,26 @@
 
 Date: 2026-09-03
 Issue: [#386](https://github.com/rubicon/diviops/issues/386)
-Status: Phase 1 complete (licence + package evaluation) — vendoring blocked on #384
+Status: Phase 1 complete (licence + package evaluation). Phase 2 waits on
+[#387](https://github.com/rubicon/diviops/pull/387) merging, not on a decision.
 
 ## Revision history
 
 - 2026-09-03, initial evaluation. Licence re-confirmed against four independent
   sources. Four candidate packages measured rather than assumed. Recommendation:
   vendor **two** of the four, drop one outright, defer two.
+- 2026-09-03, revised after #384 opened [#387](https://github.com/rubicon/diviops/pull/387)
+  and settled the mechanism. Two corrections and one adoption:
+  - **Module count corrected, 112 → 111.** The original figure counted every directory
+    under `src/module/library` holding an `index.ts`, minus the library root. That still
+    includes `internal/`, which is not a module. Re-derived independently before
+    accepting the correction; §2.3's derived figures move with it (union 120 → 119,
+    `types \ ai-agent` 20 → 19). **No conclusion changes** — the eight names
+    `@divi/ai-agent` adds, including all four structural wrappers, are unaffected.
+  - §3 reframed. It was written while the mechanism was open; it is not an alternative
+    to #387's and is now reconciled with it.
+  - §4 and §5 rewritten against #387's actual mechanism, read from its diff rather than
+    from a description of it.
 
 ## Summary
 
@@ -223,10 +236,13 @@ name sources we have:
 
 | Source | Module names |
 | ------ | -----------: |
-| `@divi/types` (dirs containing an `index.ts`) | 112 |
+| `@divi/types` (module dirs, excluding the library root and `internal/`) | 111 |
 | `@divi/ai-agent` (`get-child-modules` union) | 100 |
 | Divi 5.11.1 theme (`module.json` `name`) | 89 |
-| **union of all three** | **120** |
+| **union of all three** | **119** |
+
+111 is the same figure #387 generates against, arrived at independently here rather
+than taken from it.
 
 `@divi/ai-agent` carries **8 names `@divi/types` does not**, and four of them are the
 structural wrappers:
@@ -248,7 +264,7 @@ it has that `@divi/types` lacks are the same four.
 **So `@divi/ai-agent` is the only npm source for the structural vocabulary this fork's
 tree-walking code actually reasons about.** That is worth 194 KB.
 
-Its 101-member `get-child-modules` union also runs the other way — it is missing 20
+Its `get-child-modules` union also runs the other way — it is missing 19
 modules `@divi/types` has (`divi/lottie`, `divi/timeline`, `divi/group-carousel`,
 `divi/before-after-image`, `divi/icon-list`, `divi/svg`, `divi/dropdown` and others),
 so the two are complementary and **neither is a complete module list on its own**. Any
@@ -281,10 +297,12 @@ styling lands.
 `@divi/field-library@1.0.12` (526 KB, 6 unique unions) is declined on the same reasoning
 #386 already gives: we do not render settings UI.
 
-## 3. A third mechanism option #386 does not list
+## 3. A fourth GPL source, and how it sits under #387's mechanism
 
-Not a recommendation — the mechanism is #384's call — but the decision should be made
-knowing this exists.
+**Not an alternative mechanism.** #387 settled that question and this evaluation adopts
+it (§5). What follows is a fourth *input* that already exists on disk, recorded because
+it is unmined and because §2.3 uses it as the independent check on the module-name
+comparison — not because it should displace anything.
 
 The installed Divi theme ships **508 JSON data files** under
 `themes/Divi/includes/builder-5/visual-builder/packages/`, all GPL, already on disk,
@@ -312,39 +330,109 @@ npm packages:
   full surface is implicit in the `settings` tree — which is #119/#385's problem exactly.
 - **It tracks the installed site, not a pinned version.** The reference install is Divi
   5.11.1 while staging is on 5.12.0, and its WooCommerce modules are absent because
-  WooCommerce is not installed there (27 of the 112 `@divi/types` modules are missing
+  WooCommerce is not installed there (26 of the 111 `@divi/types` modules are missing
   from it for that reason alone).
 
-Best read as a **cross-check** on whatever the npm route generates, not a substitute:
-the regen script already talks to a live site, and a disagreement between the pinned
-types and the installed theme is itself worth reporting — the same argument #384 makes
-for keeping the live schema dump alongside the types.
+So it is a **cross-check**, not a substitute — and #387's own design already says how a
+cross-check is carried: it renders every path where `@divi/types` and the recorded schema
+dump disagree (28 of 30 comparable modules disagree somewhere) rather than preferring one
+input. A theme-JSON lane would be a third column in that same comparison.
 
-## 4. Draft `FORK.md` divergence row
+If it is ever wired in, it inherits #387's constraint unchanged and for the identical
+reason. CI reaches neither npm nor a WordPress install, so #387 fetches `@divi/types` at
+regen time, throws the package away, and commits only a distilled
+`__fixtures__/divi-types.json`. The theme JSON is behind the same wall — it lives on a
+developer's Local install, not in CI — so it would need its own recorded fixture
+alongside `dump-all.json` and `divi-types.json`, captured by `__fixtures__/capture.mjs`
+under the existing rule that fixture and doc come from the same install in the same
+sitting. Reading it directly from a theme path at generation time would work on a
+maintainer's machine and fail in CI, which is the failure mode that pattern exists to
+prevent. Out of scope for #386 either way.
 
-Not committed. The row names the packages actually vendored, and that list is only final
-once #384 fixes the mechanism. Proposed text for the fork-owned-files table:
+## 4. `FORK.md` provenance text — an amendment, not a new row
 
-> | Skill content derived from `@divi/*` (no single file — a provenance note) | Fork-owned Divi reference content is derived in part from Elegant Themes' published `@divi/*` npm packages, **GPL-2.0-or-later**, the same licence the plugins in this repo ship under. Packages used: `@divi/types` (per-module attribute maps and the `StyleLibrary` decoration-group → CSS-property namespace), `@divi/module-utils` (the `GetAttrMode` attribute-resolution vocabulary, `mergeAttrs` layering precedence, grid-module and scope enumerations), and `@divi/ai-agent` (the structural taxonomy and the four container names `@divi/types` omits — `divi/root`, `divi/global-layout`, `divi/row-inner`, `divi/column-inner`). The exact version consumed is recorded in the generated header of each artifact that derives from it, so provenance is auditable per #50. The licence was confirmed independently before anything derived shipped (#386): declared `GPL-2.0-or-later` in `package.json` on the registry and in every tarball, restated in a `## License` section in seven of the eight packages' READMEs, and matching the `LICENSE.md` of the Divi theme these packages describe, which grants GPL "version 2 of the License, or (at your option) any later version". No `LICENSE` file ships inside the tarballs themselves, and `dev.elegantthemes.com` states no licence for the JS API packages — neither contradicts the declaration, and both are recorded in `docs/superpowers/specs/2026-09-03-divi-npm-scope-evaluation-design.md`. This is a licence we may derive from and is unrelated to the DiviOps Agent Pro rule in `CLAUDE.md`, which concerns a different third party's commercial code | #384, #385, #386 |
+#386 asked for a divergence *row*. #387 has since established that `@divi/*` provenance
+does not live in one: it recorded `@divi/types` by **extending two existing rows**
+(`regen-module-formats.mjs …` and `skills/divi-5-builder/references/module-formats.md`)
+rather than adding a third, on the reasoning that the rows already covered every path
+touched. Adding a standalone `@divi/*` row on top would split the same provenance across
+three places and put this evaluation in conflict with a sibling PR for no gain.
+
+So the proposal is an **amendment to the `regen-module-formats.mjs` row #387 already
+edits**, appended after its `DIVI_TYPES_VERSION` / `DIVI_TYPES_DIR` sentence, and to be
+written only once #387 is merged and its final wording is fixed:
+
+> Extended again (#386) to two further `@divi/*` packages on the same terms and through
+> the same fetch-and-discard path: **`@divi/module-utils`**, which supplies the
+> `GetAttrMode` attribute-resolution vocabulary (`get` | `getAndInheritAll` |
+> `getAndInheritClosest` | `getOrInheritAll` | `getOrInheritClosest` | `inheritAll` |
+> `inheritClosest`), the `defaultAttrs` → `presetAttrs` → `attrs` layering precedence,
+> and the grid-module and scope enumerations; and **`@divi/ai-agent`**, which is the only
+> published source for the four structural container names `@divi/types` omits —
+> `divi/root`, `divi/global-layout`, `divi/row-inner`, `divi/column-inner` — the same
+> `divi/global-layout` wrapper behind the index divergence fixed in #13/#14 and the write
+> guard in #11. Both are GPL-2.0-or-later, pinned by version in the generated header and
+> distilled into `__fixtures__/`, exactly as `@divi/types` is; neither package's source
+> tree is committed. `@divi/style-library` and `@divi/module-library` were evaluated and
+> **declined** — style-library re-exports its decoration-group → CSS-property map from
+> `@divi/types` (half its exported aliases are bare re-exports, and only 5 of 29 groups
+> enumerate anything themselves), and module-library's 1.09 MB per-module element lists
+> are style-render keys rather than the attribute paths this project writes. The licence
+> was re-confirmed independently for the whole scope before anything derived shipped
+> (#386): declared `GPL-2.0-or-later` in `package.json` on the registry and in every
+> tarball, restated in a `## License` section in seven of the eight packages' READMEs,
+> and matching the `LICENSE.md` of the Divi theme these packages describe, which grants
+> GPL "version 2 of the License, or (at your option) any later version". No `LICENSE`
+> file ships inside the tarballs, and `dev.elegantthemes.com` states no licence for the
+> JS API packages; neither contradicts the declaration, and both are recorded in
+> `docs/superpowers/specs/2026-09-03-divi-npm-scope-evaluation-design.md`. This licence
+> is unrelated to the DiviOps Agent Pro rule in `CLAUDE.md`, which concerns a different
+> third party's commercial code.
 
 ## 5. What Phase 2 needs
 
-Phase 2 was not started. #384 is open with no branch and no PR; `grep` for `divi/types`
-across `skills/` and `diviops-server/scripts/` returns nothing (control: the same grep
-finds `divi/button` in three skill files). There is no mechanism to adopt yet, and #386's
-first scope item forbids inventing a second one.
+Phase 2 is **not blocked on a decision any more — only on a merge.** #387 is open, not
+merged; `main` at `e96c377` has no `@divi/types` wiring (`grep` for `divi/types` across
+`skills/` and `diviops-server/scripts/` returns nothing, with a control proving the same
+grep finds `divi/button` in three skill files). Building Phase 2 now would mean branching
+off an unmerged branch and coupling two open PRs, which is worse than waiting.
 
-When #384 lands, Phase 2 is:
+The mechanism is settled and this evaluation adopts it as-is. Read from #387's diff:
 
-1. Adopt #384's mechanism verbatim — fetch-at-generation or pinned snapshot, whichever it
-   chose. Do not add a second.
-2. Extend it to `@divi/module-utils@1.0.13` and `@divi/ai-agent@1.0.11`. Do **not** add
-   `@divi/style-library` (§2.2) or `@divi/module-library` (§2.4).
-3. Record package name + exact version in the generated header of each artifact that
-   consumes them, per #386 scope item 2 and #50.
-4. Commit the §4 `FORK.md` row with the package list trimmed to what actually shipped.
-5. Decide separately whether the installed-theme JSON (§3) becomes a cross-check lane.
-   Out of scope for #386.
+- `@divi/types` is **fetched at regen time and discarded** — no third-party source tree
+  is committed.
+- Only a **distilled** `diviops-server/scripts/__fixtures__/divi-types.json` is
+  committed, mirroring the existing `dump-all.json` pattern, because CI reaches neither
+  npm nor a WordPress install.
+- `DIVI_TYPES_VERSION` / `DIVI_TYPES_DIR` pin or bypass the fetch.
+- Resolution goes through `ts.createProgram` + `getTypeChecker`, not a text scanner,
+  because the declarations reach their group lists through `Pick<>`, generic arguments,
+  intersections and aliases.
+- Output lands in **one** sentinel-bounded region (`GENERATED:types-index`), not
+  per-module sentinel pairs.
+
+Once #387 merges, Phase 2 is:
+
+1. Rebase on `main` and extend #387's fetch-and-distil path to
+   `@divi/module-utils@1.0.13` and `@divi/ai-agent@1.0.11`. Same shape, same
+   fetch-and-discard, same distilled-fixture rule, same env-var escape hatches. **No
+   second mechanism.**
+2. Do **not** add `@divi/style-library` (§2.2) or `@divi/module-library` (§2.4).
+3. Record each package name + exact version in the generated header, per #386 scope
+   item 2 and #50 — #387 already does this for `@divi/types`; extend the same header.
+4. Append the §4 amendment to the `regen-module-formats.mjs` row, trimmed to what
+   actually shipped, once #387's own wording of that row is final.
+5. The installed-theme JSON (§3) stays out of scope.
+
+One caution carried forward, **reported to this evaluation rather than measured by it.**
+#387's source comment at `regen-module-formats.mjs:103-105` reasons that
+`lib: ['lib.es5.d.ts']` is what stops the decoration lists resolving silently empty.
+Review of #387 reports that mutation-testing disproves it: removing the line or setting
+`lib: []` leaves the suite green because TypeScript falls back to its default lib, and
+only `noLib: true` reproduces the failure. **Not independently reproduced here** — doing
+so would mean mutating a file another open PR owns. Recorded so Phase 2 does not inherit
+the reasoning by citation: whatever `ts` program options Phase 2 needs should be pinned
+by a mutation that actually fails. Verification and any fix belong to #387.
 
 Owner decisions this evaluation surfaces:
 
@@ -370,3 +458,12 @@ scratchpad/divi386/scan-html-386.py   # dev.elegantthemes.com licence scan
 
 Each script that reports a negative asserts a known-positive control first, because an
 empty result from a pattern that could not have matched is not a finding.
+
+Two figures were corrected mid-evaluation and both are recorded rather than quietly
+fixed, because the correction is the evidence that the measurement was checked:
+
+- `@divi/types` module count 112 → **111**. `internal/` holds an `index.ts` but is not a
+  module. Re-derived here before the correction was accepted.
+- An earlier pass reported 88 modules, undercounting because the WooCommerce modules nest
+  one level deep under `woocommerce/`. That pass would have concluded `@divi/ai-agent`
+  adds 31 names it does not add. The corrected figure is 8.
