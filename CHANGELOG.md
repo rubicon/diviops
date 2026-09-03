@@ -10,6 +10,13 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.21.1](https://github.com/rubicon/diviops/compare/v1.21.0...v1.21.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **permission:** answer 401 to an anonymous caller on the three rest_forbidden gates ([7e99fd2](https://github.com/rubicon/diviops/commit/7e99fd2d3cbf0b5d81f5ef86980b01d1a7170257))
+
 ## [1.21.0](https://github.com/rubicon/diviops/compare/v1.20.3...v1.21.0) (2026-09-02)
 
 
