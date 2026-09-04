@@ -56,6 +56,7 @@ import {
   loadSourcePayloadRef,
   type SourcePayloadRef,
 } from "./cross-env-preflight/source-payload-ref.js";
+import { moduleMapAnswer } from "./module-map.js";
 import { optimizeSchema } from "./schema-optimizer.js";
 import { schemaModuleRoute } from "./schema-route.js";
 import { SEO_CHANGES, SEO_PROVIDER } from "./seo-schema.js";
@@ -5096,6 +5097,35 @@ registerLocalTool(
 );
 
 // ── Connection ──────────────────────────────────────────────────────
+
+registerLocalTool(
+  "diviops_schema_get_module_map",
+  {
+    description:
+      "Get the committed per-module attribute map for one Divi module: the merge-aware leaf preset-attribute paths it really declares, the keys its own PresetAttrsMap is proven to strip, and its element map with the decoration groups each element picks. Server-local — reads a committed artifact, needs no WordPress site and no credentials, and is the same answer offline as online. Two sources, joined: Divi's per-module `PresetAttrsMap.php` supplies `paths` and `invalidates`, `@divi/types` (GPL-2.0-or-later) supplies `elements`. Where they contradict each other the contradiction is reported in `disagreements` and NOT resolved — neither source is treated as the winner. `paths` are what the module contributes on top of the shared decoration base (base empty), so the shared `module.decoration.*` vocabulary is deliberately not repeated per module; `invalidates` are keys a text scan of the same file would wrongly document as valid. Call with no `module` to get the covered names, the provenance stamps and the counts. Coverage is `divi/*` modules that declare a per-module preset map (66 of them); `difl/*` and `d5bgo/*` are absent from both sources and are not covered — use `diviops_schema_get_module` against a live site for those. A module named in `modules_without_types` may still be covered by `@divi/types` behind a re-export this generator does not follow. This says what is SETTABLE, never what is currently set: it does not remove the need to read back after a write. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; an unknown module name is 'not_found', never an empty result.",
+    inputSchema: {
+      module: z
+        .string()
+        .optional()
+        .describe(
+          "Block name, e.g. 'divi/button'. Omit to list every covered module name plus provenance and counts.",
+        ),
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ module }: { module?: string }) => {
+    const response = await wrapResponse(async () => moduleMapAnswer(module));
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: serializeEnvelope(response, "diviops_schema_get_module_map"),
+        },
+      ],
+    };
+  },
+);
 
 registerLocalTool(
   "diviops_meta_ping",

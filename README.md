@@ -142,7 +142,7 @@ The skill enforces the Divi block format, the design system, and the response co
 
 ## Tools at a glance
 
-The suite exposes **115 always-on tools** across the categories below, plus a further 30 conditionally-registered Pro tools that only appear on sites with the Pro plugin and a supported target plugin active (see [Free vs Pro](#free-vs-pro)). Per-tool descriptions, request shapes, and response payloads live in the server [README](diviops-server/README.md).
+The suite exposes **116 always-on tools** across the categories below, plus a further 30 conditionally-registered Pro tools that only appear on sites with the Pro plugin and a supported target plugin active (see [Free vs Pro](#free-vs-pro)). Per-tool descriptions, request shapes, and response payloads live in the server [README](diviops-server/README.md).
 
 | Category | Use case | Tool prefixes |
 |---|---|---|

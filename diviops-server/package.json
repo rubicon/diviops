@@ -17,6 +17,7 @@
     "dist/**/*",
     "!dist/**/__tests__/**",
     "templates",
+    "data/module-map.json",
     "data/verified-attrs.json",
     "LICENSE",
     "README.md"

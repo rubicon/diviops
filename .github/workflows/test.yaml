@@ -286,3 +286,11 @@ jobs:
       # just for this test file instead of the whole suite (#167).
       - name: Run SCF field-group JSON-parse test (#167)
         run: node --test dist/__tests__/scf-field-group-get-json-parse.test.js
+
+      # The PHP suite owns diviops-server/data/module-map.json's own correctness.
+      # This is the half only Node can prove: that the committed artifact is
+      # reachable from the BUILT layout the npm package publishes, and that it is
+      # declared in package.json's "files" -- otherwise npm ships a tool whose data
+      # file is absent and the failure surfaces only at a user's first call (#385).
+      - name: Run module-map artifact + tool data-path test (#385)
+        run: node --test dist/__tests__/module-map.test.js

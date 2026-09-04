@@ -84,7 +84,7 @@ The skill enforces the Divi block format, the design system, and the response co
 
 ## Tools at a glance
 
-The server exposes **115 always-on tools** across the categories below. Each category names representative tool prefixes; for one row per tool, with inputs and idempotency, see the [Per-tool reference](#per-tool-reference).
+The server exposes **116 always-on tools** across the categories below. Each category names representative tool prefixes; for one row per tool, with inputs and idempotency, see the [Per-tool reference](#per-tool-reference).
 
 | Category | Use case | Tool prefixes |
 |----------|----------|---------------|
@@ -159,7 +159,7 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 
 > Generated mechanically by `diviops-server/scripts/regen-tool-reference.mjs` from the tool-registration call sites in `diviops-server/src/index.ts`. Everything between the `BEGIN GENERATED:tool-reference:*` / `END GENERATED:tool-reference:*` HTML-comment sentinels is rewritten on regen (see `diviops-server/CONTRIBUTING.md`). Do **not** edit between sentinels — edits are clobbered.
 
-115 always-on tools (104 plugin-backed, 11 server-local) and 30 conditionally-registered Pro tools.
+116 always-on tools (104 plugin-backed, 12 server-local) and 30 conditionally-registered Pro tools.
 
 **Inputs** lists each tool's top-level input fields in schema order; a trailing `?` marks a field the schema makes optional or gives a default, and `_(none)_` marks a tool that takes no arguments. **Idempotent** is the tool's own `_meta.idempotent` marker ([what the values mean](#_metaidempotent-markers)). **Summary** is the first sentence of the tool's MCP `description`, which is the full reference for its response payload and error codes; a trailing `…` marks a description that continues, and an `…` inside the text marks a value the server fills in at handshake time. Every tool returns the [standardized envelope](#response-contract).
 
@@ -260,6 +260,7 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 | `diviops_scf_status` | server-local | `type?`, `detailed?` | true | Show SCF (Secure Custom Fields) sync status — how many field groups, post types, taxonomies, and options pages have JSON-on-disk newer than the database (or absent from DB). … |
 | `diviops_scf_sync` | server-local | `type?`, `key?`, `dry_run?` | true | Apply pending JSON-on-disk SCF changes to the database. … |
 | `diviops_schema_get_module` | plugin | `mode?`, `module_name?`, `raw?` | true | Get the attribute schema for a Divi module. … |
+| `diviops_schema_get_module_map` | server-local | `module?` | true | Get the committed per-module attribute map for one Divi module: the merge-aware leaf preset-attribute paths it really declares, the keys its own PresetAttrsMap is proven to strip, and its element map with the decoration groups each element picks. … |
 | `diviops_schema_get_settings` | plugin | _(none)_ | true | Get Divi site settings including site info, builder version, and a narrow public allowlist of non-sensitive Divi theme options (fonts, colors, sizes). … |
 | `diviops_schema_list_modules` | plugin | _(none)_ | true | List all available Divi modules (block types) with their names, titles, and categories. … |
 | `diviops_section_append` | plugin | `page_id`, `content`, `position?`, `dry_run?`, `backup?` | false | Append a Divi section to an existing page without overwriting other content. … |
