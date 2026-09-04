@@ -8,23 +8,60 @@ project's overall contribution process (issues, branches, PRs), see the
 
 `skills/divi-5-builder/references/module-formats.md` documents Divi 5's module
 attribute paths in three tiers: Tier 1 (universal `module.decoration.*`,
-hand-written), Tier 2 (shared pattern families, hand-written), and a
-per-module "Generated path index" — the free tier's Tier-3-equivalent: which
-`{element}.decoration.{group}` paths each module actually declares. That last
-section is mechanically maintained by
+hand-written), Tier 2 (shared pattern families, hand-written), Tier 3
+(per-module element maps for every module Divi ships), and a per-module
+"Generated path index": which `{element}.decoration.{group}` paths each
+curated module actually declares on a running install. Tier 3 and the path
+index are both mechanically maintained by
 `diviops-server/scripts/regen-module-formats.mjs` — this document is the
 "full convention" its own header comment points to.
 
+### Two inputs, neither subordinate
+
+The script reads **two** sources and reports where they disagree rather than
+preferring one (#384):
+
+- **A live site's `GET /diviops/v1/schema/module/dump-all`** — what a running
+  install's registered module schema actually exposes. Drives the per-module
+  "Generated path index" blocks.
+- **`@divi/types`** (npm, GPL-2.0-or-later) — Divi's own published TypeScript
+  definitions for the Visual Builder, one
+  `src/module/library/<slug>/index.ts` per module. Drives Tier 3. The package
+  is fetched at regen time and thrown away; only the distilled index it
+  produces is committed, as `scripts/__fixtures__/divi-types.json`. Vendoring
+  679 files of a third party's source to generate one markdown section would
+  put a source tree in this repo that it neither builds nor tests.
+
+The types are read through the TypeScript compiler's own type checker
+(`ts.createProgram` + `getTypeChecker`), not by matching the text. The
+declarations reach their group lists through `Pick<>`, generic type
+arguments, intersections and aliases into `src/module/element/types/`; a
+scanner that reads the source as text has to re-implement all four to get the
+same answer, and gets a plausible wrong one when it doesn't. `Pick` is a
+standard-library type, so the program is created with `lib: ['lib.es5.d.ts']`
+— without a lib, every decoration list resolves silently empty.
+
+The disagreement report covers exactly the modules the *dump* carries, which
+is the curated set. That keeps it deterministic: a live run and a
+fixture-replay run compare the same modules and produce the same bytes.
+
 ### The sentinel convention
 
-Two kinds of HTML-comment sentinel pairs bound regen-owned regions. Content
+Three kinds of HTML-comment sentinel pairs bound regen-owned regions. Content
 between a BEGIN/END pair is replaced wholesale on every run; content outside
 them (the Tier 1/2 prose, the "Exceptions Quick Reference" table, footnotes)
 is never touched by the script and is safe to hand-edit.
 
+- `<!-- BEGIN GENERATED:types-index --> ... <!-- END GENERATED:types-index -->`
+  — the whole of Tier 3: its provenance prose, one `- **`divi/<slug>`** — …`
+  bullet per module `@divi/types` declares, and the disagreement table
+  against the schema dump. **One region for all modules**, not one pair per
+  module: membership here is not an editorial call, it is whatever the
+  package declares, so there is nothing to curate and nothing to hand-add.
 - `<!-- BEGIN GENERATED:header --> ... <!-- END GENERATED:header -->` — the
   "Generated path index" heading, its explanatory prose, and the
-  `` > Generated against Divi `X`, schema `Y…`. `` provenance line.
+  `` > Generated against Divi `X`, schema `Y…`; Tier 3 above against `@divi/types` `Z`. ``
+  provenance line, which pins both inputs.
 - `<!-- BEGIN GENERATED:module:divi/<slug> --> ... <!-- END GENERATED:module:divi/<slug> -->`
   — one pair per module, wrapping a `<!-- TIER: free -->` marker, the
   `` #### `divi/<slug>` `` heading, and one bullet per indexable element.
@@ -39,7 +76,10 @@ moment regen ran again after this script was written.
 
 The script's only mode refreshes every module block **that already exists**
 as a sentinel pair. It does not discover and add every module the live
-site's schema knows about.
+site's schema knows about. That rule is unchanged by the `@divi/types`
+input: Tier 3 is one region rather than per-module pairs precisely so that
+adding a module there stays a package fact rather than a curation decision,
+and the path index's curated membership stays a hand-edit.
 
 This is deliberate, not an oversight. Verified directly against a live
 reference install: Divi ships 84 native module-library components, and the
@@ -63,6 +103,11 @@ WP_URL=http://your-site.local \
   WP_APP_PASSWORD="xxxx xxxx xxxx xxxx xxxx xxxx" \
   node scripts/regen-module-formats.mjs
 ```
+
+Two optional variables control the second input: `DIVI_TYPES_VERSION` (the
+npm version to `npm pack`, default `latest`) and `DIVI_TYPES_DIR` (an
+already-unpacked package directory, skipping the fetch entirely). Pin the
+version when you want the doc and the fixture to agree with an earlier run.
 
 Same three env vars the MCP server itself uses (see
 [README.md#environment-variables](README.md#environment-variables)) — an
@@ -130,6 +175,27 @@ the schema — Divi's own module schema carries no free/pro distinction (this
 fork's dump-all response has no such field), and this file only ever
 documents this fork's free-tier reference.
 
+### The Tier 3 algorithm
+
+Per module type file, every property of the exported `*Attrs` type except
+`css` and every key the package's own `InternalAttrs` declares (read from the
+package, not restated here, so a new universal key needs no code change):
+
+- `{element}.decoration`'s resolved property names are the group list, with
+  `(none)` when the element declares none.
+- `+innerContent` when the element type has that property; `+advanced: a, b`
+  listing the `advanced` sub-keys, which is depth the schema dump's bare
+  `_(+advanced)_` marker does not carry.
+
+The module name comes from the directory path — `library/woocommerce/product-price`
+is `divi/woocommerce-product-price`, matching the block names Divi registers.
+
+**A listed group means the type permits the path, not that the option is
+meaningful there.** Six of ~675 elements are typed as the unrestricted
+`Element.Decoration.Attributes` instead of a `Pick<>` of it, so they render
+with the complete group set. That is what the declaration says; the doc says
+so too rather than guessing a narrower set.
+
 ### Tests
 
 `scripts/regen-module-formats.test.mjs` (`npm run test:regen-skill`) covers
@@ -140,14 +206,25 @@ module shapes but not copied from Divi's own `module.json` (which carries
 Divi's own labels and descriptions), matching the
 `tests/fixtures/divi-module-library/` convention on the PHP side.
 
-**The committed output**, against `scripts/__fixtures__/dump-all.json`, a
-recorded dump-all trimmed to the curated modules. This regenerates
-`module-formats.md` from that recording and compares byte for byte, so a
+**The committed output**, against `scripts/__fixtures__/dump-all.json` and
+`scripts/__fixtures__/divi-types.json` — a recorded dump-all trimmed to the
+curated modules, and the distilled `@divi/types` index. This regenerates
+`module-formats.md` from those recordings and compares byte for byte, so a
 hand-edit between sentinels fails CI rather than surviving until someone
 notices unexplained drift on the next regen (#276). It also asserts the
-sample size — a deleted sentinel pair is invisible to a byte comparison,
-because the generator only regenerates the pairs it finds, so the count
-check is what catches a module silently dropped from the index.
+sample size on both — a deleted sentinel pair is invisible to a byte
+comparison, because the generator only regenerates the pairs it finds, so the
+count check is what catches a module silently dropped from the index — and
+that the committed header pins the same `@divi/types` version the fixture
+records.
+
+The `@divi/types` extraction is covered against a synthetic package written
+to a temp directory: a two-module library with an `InternalAttrs`, a
+`PickedAttributes` decoration group, and an element aliased into
+`element/types/`, modelled on the real shapes but not copied from the
+package. Its failure modes are covered too — a module with no exported
+`*Attrs`, a library with no modules at all, and a missing `InternalAttrs` all
+throw rather than yielding a thinner index.
 
 The network orchestration (`fetchDumpAll`, `main`) has no unit-testable
 logic of its own; it's verified by running the script against a live

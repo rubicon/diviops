@@ -1,6 +1,7 @@
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
@@ -10,6 +11,10 @@ import {
   parseModuleNames,
   regenerateContent,
   fetchDumpAll,
+  buildTypesIndex,
+  renderModuleTypeLine,
+  compareTypesToDump,
+  renderTypesIndexRegion,
   TARGET_FILE,
 } from './regen-module-formats.mjs';
 
@@ -129,10 +134,11 @@ describe('renderModuleBlock', () => {
 });
 
 describe('renderHeader', () => {
-  it('renders the sentinel-wrapped header with divi_version and a 12-char schema_version fingerprint', () => {
+  it('renders the sentinel-wrapped header with divi_version, a 12-char schema_version fingerprint, and the @divi/types pin', () => {
     const header = renderHeader({
       diviVersion: '5.9.0',
       schemaVersion: 'af7c9d795e77deadbeef1234567890fedcba098',
+      typesVersion: '1.0.12',
     });
     assert.equal(
       header,
@@ -143,12 +149,19 @@ describe('renderHeader', () => {
         '',
         '> Generated mechanically by `diviops-server/scripts/regen-module-formats.mjs` from `diviops_schema_get_module` dump-all output. Each module block lives between `BEGIN GENERATED:module:divi/<slug>` / `END GENERATED:module:divi/<slug>` HTML-comment sentinels (see `diviops-server/CONTRIBUTING.md` for the full convention). Do **not** edit between sentinels — edits are clobbered on regen.',
         '',
-        '> Generated against Divi `5.9.0`, schema `af7c9d795e77…`.',
+        '> Generated against Divi `5.9.0`, schema `af7c9d795e77…`; Tier 3 above against `@divi/types` `1.0.12`.',
         '',
         'Per CLAUDE.md "Suite architecture coherence": schema dump is the canonical index; VB-verified prose above is the canonical interpretation. The two sections are complementary, not competing — prose explains surprises, this index enumerates paths exhaustively. On conflicts, the prose above wins (per `feedback_vb_first_verification`).',
         '',
         '<!-- END GENERATED:header -->',
       ].join('\n')
+    );
+  });
+
+  it('refuses to render a header that cannot state both provenances', () => {
+    assert.throws(
+      () => renderHeader({ diviVersion: '5.9.0', schemaVersion: 'abcdef123456', typesVersion: '' }),
+      /@divi\/types/
     );
   });
 });
@@ -196,8 +209,20 @@ describe('regenerateContent', () => {
     },
   };
 
+  const typesIndex = {
+    version: '1.0.12',
+    modules: {
+      'divi/fixture-one': { module: { decoration: ['background'], innerContent: false, advanced: null } },
+      'divi/fixture-two': { module: { decoration: ['border'], innerContent: false, advanced: null } },
+    },
+  };
+
   const originalContent = [
     'prefix prose stays untouched',
+    '',
+    '<!-- BEGIN GENERATED:types-index -->',
+    'old stale tier 3',
+    '<!-- END GENERATED:types-index -->',
     '',
     '<!-- BEGIN GENERATED:header -->',
     'old stale header',
@@ -214,13 +239,19 @@ describe('regenerateContent', () => {
     'trailing prose stays untouched',
   ].join('\n');
 
-  it('replaces the header and every existing module block with freshly rendered content, leaving surrounding prose untouched', () => {
-    const result = regenerateContent(originalContent, dumpAllData);
+  it('replaces the Tier 3 types region, the header and every existing module block, leaving surrounding prose untouched', () => {
+    const result = regenerateContent(originalContent, dumpAllData, typesIndex);
 
     const expected = [
       'prefix prose stays untouched',
       '',
-      renderHeader({ diviVersion: '5.9.0', schemaVersion: dumpAllData.schema_version }),
+      renderTypesIndexRegion(typesIndex, dumpAllData),
+      '',
+      renderHeader({
+        diviVersion: '5.9.0',
+        schemaVersion: dumpAllData.schema_version,
+        typesVersion: '1.0.12',
+      }),
       '',
       renderModuleBlock('divi/fixture-one', dumpAllData.modules['divi/fixture-one']),
       '',
@@ -234,7 +265,7 @@ describe('regenerateContent', () => {
 
   it('throws when the file has no existing module sentinel blocks to regenerate', () => {
     const content = ['<!-- BEGIN GENERATED:header -->', 'x', '<!-- END GENERATED:header -->'].join('\n');
-    assert.throws(() => regenerateContent(content, dumpAllData), /no module sentinel blocks/);
+    assert.throws(() => regenerateContent(content, dumpAllData, typesIndex), /no module sentinel blocks/);
   });
 
   it('throws naming the module when an existing sentinel has no matching entry in the fresh dump', () => {
@@ -246,7 +277,7 @@ describe('regenerateContent', () => {
       'x',
       '<!-- END GENERATED:module:divi/does-not-exist -->',
     ].join('\n');
-    assert.throws(() => regenerateContent(content, dumpAllData), /divi\/does-not-exist/);
+    assert.throws(() => regenerateContent(content, dumpAllData, typesIndex), /divi\/does-not-exist/);
   });
 
   it('throws when a module sentinel exists but the header sentinel region is missing', () => {
@@ -255,7 +286,12 @@ describe('regenerateContent', () => {
       'x',
       '<!-- END GENERATED:module:divi/fixture-one -->',
     ].join('\n');
-    assert.throws(() => regenerateContent(content, dumpAllData), /header/);
+    assert.throws(() => regenerateContent(content, dumpAllData, typesIndex), /header/);
+  });
+
+  it('throws when the Tier 3 types-index sentinel region is missing', () => {
+    const content = originalContent.replace('types-index', 'types-index-typo');
+    assert.throws(() => regenerateContent(content, dumpAllData, typesIndex), /types-index/);
   });
 });
 
@@ -328,6 +364,317 @@ describe('fetchDumpAll', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// The @divi/types second input (#384).
+//
+// Synthetic TypeScript modelled on the shapes `@divi/types` actually uses
+// (`Element.Decoration.PickedAttributes<'a' | 'b'>`, an element whose whole
+// attribute type is an alias into `element/types/`), written for the test
+// rather than copied out of the package — the same convention the schema-dump
+// fixtures above follow.
+
+const SYNTHETIC_PACKAGE = {
+  'module/library/internal/index.ts': `
+    export interface InternalAttrs {
+      builderVersion?: string;
+      modulePreset?: string;
+    }
+  `,
+  'module/element/decoration/index.ts': `
+    export namespace Decoration {
+      export interface Attributes {
+        alpha?: string;
+        beta?: string;
+        gamma?: string;
+      }
+      export type PickedAttributes<TNames extends keyof Attributes> = Pick<Attributes, TNames>;
+    }
+  `,
+  'module/element/types/widget/index.ts': `
+    import { Decoration as ElementDecoration } from '../../decoration';
+    export namespace Widget {
+      export namespace Decoration {
+        export type Attributes = ElementDecoration.PickedAttributes<'alpha' | 'gamma'>;
+      }
+      export interface Attributes {
+        innerContent?: string;
+        decoration?: Decoration.Attributes;
+      }
+    }
+  `,
+  'module/library/fixture-one/index.ts': `
+    import { Decoration } from '../../element/decoration';
+    import { Widget } from '../../element/types/widget';
+    import { type InternalAttrs } from '../internal';
+
+    export interface FixtureOneAttrs extends InternalAttrs {
+      css?: { desktop?: string };
+      module?: {
+        advanced?: { link?: string; loop?: string };
+        decoration?: Decoration.PickedAttributes<'beta' | 'alpha'>;
+      };
+      widget?: Widget.Attributes;
+      bare?: { meta?: string };
+    }
+  `,
+  'module/library/nested/thing/index.ts': `
+    import { Decoration } from '../../../element/decoration';
+    import { type InternalAttrs } from '../../internal';
+
+    export interface NestedThingAttrs extends InternalAttrs {
+      module?: { decoration?: Decoration.PickedAttributes<'gamma'> };
+    }
+  `,
+};
+
+function writeSyntheticPackage(files) {
+  const root = mkdtempSync(path.join(tmpdir(), 'divi-types-384-'));
+  for (const [rel, source] of Object.entries(files)) {
+    const full = path.join(root, 'src', rel);
+    mkdirSync(path.dirname(full), { recursive: true });
+    writeFileSync(full, source);
+  }
+  return root;
+}
+
+describe('buildTypesIndex', () => {
+  const roots = [];
+  afterEach(() => {
+    while (roots.length) rmSync(roots.pop(), { recursive: true, force: true });
+  });
+  const build = (files, version = '1.0.12') => {
+    const root = writeSyntheticPackage(files);
+    roots.push(root);
+    return buildTypesIndex({ packageDir: root, version });
+  };
+
+  it('records the package version it was built from', () => {
+    assert.equal(build(SYNTHETIC_PACKAGE, '9.9.9').version, '9.9.9');
+  });
+
+  it('names modules divi/<slug> from the library directory path, joining nested segments with a hyphen', () => {
+    assert.deepEqual(Object.keys(build(SYNTHETIC_PACKAGE).modules).sort(), [
+      'divi/fixture-one',
+      'divi/nested-thing',
+    ]);
+  });
+
+  it('resolves PickedAttributes through the type checker and sorts the group names', () => {
+    const { modules } = build(SYNTHETIC_PACKAGE);
+    assert.deepEqual(modules['divi/fixture-one'].module.decoration, ['alpha', 'beta']);
+  });
+
+  it('resolves an element whose whole attribute type is an alias into element/types', () => {
+    const { modules } = build(SYNTHETIC_PACKAGE);
+    assert.deepEqual(modules['divi/fixture-one'].widget, {
+      decoration: ['alpha', 'gamma'],
+      innerContent: true,
+      advanced: null,
+    });
+  });
+
+  it('records advanced sub-keys rather than only that advanced exists', () => {
+    const { modules } = build(SYNTHETIC_PACKAGE);
+    assert.deepEqual(modules['divi/fixture-one'].module.advanced, ['link', 'loop']);
+  });
+
+  it('keeps an element that declares no decoration groups at all', () => {
+    const { modules } = build(SYNTHETIC_PACKAGE);
+    assert.deepEqual(modules['divi/fixture-one'].bare, {
+      decoration: [],
+      innerContent: false,
+      advanced: null,
+    });
+  });
+
+  it('excludes css and every key the package own InternalAttrs declares', () => {
+    const { modules } = build(SYNTHETIC_PACKAGE);
+    const keys = Object.keys(modules['divi/fixture-one']);
+    for (const excluded of ['css', 'builderVersion', 'modulePreset']) {
+      assert.ok(!keys.includes(excluded), `${excluded} is a universal key and must not be indexed`);
+    }
+  });
+
+  it('throws naming the file when a module declares no exported *Attrs type', () => {
+    const files = { ...SYNTHETIC_PACKAGE, 'module/library/fixture-one/index.ts': 'export const x = 1;' };
+    assert.throws(() => build(files), /fixture-one/);
+  });
+
+  it('throws rather than returning an empty index when the library directory holds no modules', () => {
+    const files = {
+      'module/library/internal/index.ts': SYNTHETIC_PACKAGE['module/library/internal/index.ts'],
+      'module/element/decoration/index.ts': SYNTHETIC_PACKAGE['module/element/decoration/index.ts'],
+    };
+    assert.throws(() => build(files), /no module/i);
+  });
+
+  it('throws when the InternalAttrs declaration the exclusion set derives from is missing', () => {
+    const files = { ...SYNTHETIC_PACKAGE };
+    delete files['module/library/internal/index.ts'];
+    assert.throws(() => build(files), /InternalAttrs/);
+  });
+});
+
+describe('renderModuleTypeLine', () => {
+  it('renders one bullet per module, elements alphabetical, groups comma-joined', () => {
+    const line = renderModuleTypeLine('divi/fixture', {
+      module: { decoration: ['background', 'animation'], innerContent: false, advanced: null },
+      content: { decoration: ['bodyFont'], innerContent: false, advanced: null },
+    });
+    assert.equal(
+      line,
+      '- **`divi/fixture`** — `content`: bodyFont · `module`: animation, background'
+    );
+  });
+
+  it('renders (none) for an element that declares no decoration groups', () => {
+    const line = renderModuleTypeLine('divi/fixture', {
+      chart: { decoration: [], innerContent: false, advanced: null },
+    });
+    assert.equal(line, '- **`divi/fixture`** — `chart`: (none)');
+  });
+
+  it('marks innerContent and lists the advanced sub-keys, innerContent first', () => {
+    const line = renderModuleTypeLine('divi/fixture', {
+      module: { decoration: ['spacing'], innerContent: true, advanced: ['link', 'loop'] },
+    });
+    assert.equal(
+      line,
+      '- **`divi/fixture`** — `module`: spacing (+innerContent; +advanced: link, loop)'
+    );
+  });
+
+  it('marks an advanced group that declares no sub-keys without an empty list', () => {
+    const line = renderModuleTypeLine('divi/fixture', {
+      module: { decoration: ['spacing'], innerContent: false, advanced: [] },
+    });
+    assert.equal(line, '- **`divi/fixture`** — `module`: spacing (+advanced)');
+  });
+
+  it('throws rather than rendering a module with no elements at all', () => {
+    assert.throws(() => renderModuleTypeLine('divi/empty', {}), /divi\/empty/);
+  });
+});
+
+describe('compareTypesToDump', () => {
+  const typesIndex = {
+    version: '1.0.12',
+    modules: {
+      'divi/fixture-one': {
+        module: { decoration: ['animation', 'button'], innerContent: false, advanced: ['link'] },
+        title: { decoration: ['font'], innerContent: true, advanced: null },
+        caption: { decoration: ['font'], innerContent: false, advanced: null },
+      },
+    },
+  };
+  const dumpAllData = {
+    divi_version: '5.9.0',
+    schema_version: 'a'.repeat(40),
+    modules: {
+      'divi/fixture-one': {
+        attributes: {
+          module: { settings: { decoration: { animation: {}, order: {} }, advanced: {} } },
+          title: { settings: { decoration: { font: {} } } },
+          extra: { settings: { decoration: { sizing: {} } } },
+          metadata: { settings: {} },
+        },
+      },
+      'divi/fixture-absent': { attributes: { module: { settings: {} } } },
+    },
+  };
+
+  it('reports a decoration group only the types declare and one only the dump exposes', () => {
+    const { rows } = compareTypesToDump(typesIndex, dumpAllData);
+    const row = rows.find((r) => r.module === 'divi/fixture-one');
+    assert.ok(row.typesOnly.includes('module.decoration.button'), 'button is types-only');
+    assert.ok(row.dumpOnly.includes('module.decoration.order'), 'order is dump-only');
+  });
+
+  it('reports a whole element present on only one side, marked with a .* suffix, in both directions', () => {
+    const { rows } = compareTypesToDump(typesIndex, dumpAllData);
+    const row = rows.find((r) => r.module === 'divi/fixture-one');
+    assert.ok(row.dumpOnly.includes('extra.*'), 'the extra element is dump-only');
+    assert.ok(row.typesOnly.includes('caption.*'), 'the caption element is types-only');
+  });
+
+  it('reports an innerContent marker present on only one side', () => {
+    const { rows } = compareTypesToDump(typesIndex, dumpAllData);
+    const row = rows.find((r) => r.module === 'divi/fixture-one');
+    assert.ok(row.typesOnly.includes('title.innerContent'), 'title innerContent is types-only');
+  });
+
+  it('lists a dump module @divi/types does not carry instead of silently skipping it', () => {
+    const { missingFromTypes } = compareTypesToDump(typesIndex, dumpAllData);
+    assert.deepEqual(missingFromTypes, ['divi/fixture-absent']);
+  });
+
+  it('compares only the modules the dump carries, and says how many that was', () => {
+    const { comparedCount } = compareTypesToDump(typesIndex, dumpAllData);
+    assert.equal(comparedCount, 1);
+  });
+
+  it('reports no disagreement for a module the two sources agree on', () => {
+    const agreed = {
+      version: '1.0.12',
+      modules: { 'divi/same': { module: { decoration: ['animation'], innerContent: false, advanced: null } } },
+    };
+    const dump = {
+      divi_version: '5.9.0',
+      schema_version: 'b'.repeat(40),
+      modules: { 'divi/same': { attributes: { module: { settings: { decoration: { animation: {} } } } } } },
+    };
+    const { rows } = compareTypesToDump(agreed, dump);
+    assert.deepEqual(rows, [{ module: 'divi/same', typesOnly: [], dumpOnly: [] }]);
+  });
+});
+
+describe('renderTypesIndexRegion', () => {
+  const typesIndex = {
+    version: '1.0.12',
+    modules: {
+      'divi/fixture-one': { module: { decoration: ['animation'], innerContent: false, advanced: null } },
+      'divi/fixture-two': { module: { decoration: ['border'], innerContent: false, advanced: null } },
+    },
+  };
+  const dumpAllData = {
+    divi_version: '5.9.0',
+    schema_version: 'c'.repeat(40),
+    modules: {
+      'divi/fixture-one': {
+        attributes: { module: { settings: { decoration: { animation: {}, order: {} } } } },
+      },
+    },
+  };
+
+  it('wraps everything it renders in the types-index sentinel pair', () => {
+    const region = renderTypesIndexRegion(typesIndex, dumpAllData);
+    assert.ok(region.startsWith('<!-- BEGIN GENERATED:types-index -->'));
+    assert.ok(region.endsWith('<!-- END GENERATED:types-index -->'));
+  });
+
+  it('pins the @divi/types version and its licence in the region prose', () => {
+    const region = renderTypesIndexRegion(typesIndex, dumpAllData);
+    assert.match(region, /`@divi\/types` `1\.0\.12`/);
+    assert.match(region, /GPL-2\.0-or-later/);
+  });
+
+  it('states how many modules it covers and renders a bullet for each', () => {
+    const region = renderTypesIndexRegion(typesIndex, dumpAllData);
+    assert.match(region, /2 modules/);
+    assert.ok(region.includes(renderModuleTypeLine('divi/fixture-one', typesIndex.modules['divi/fixture-one'])));
+    assert.ok(region.includes(renderModuleTypeLine('divi/fixture-two', typesIndex.modules['divi/fixture-two'])));
+  });
+
+  it('renders the disagreements against the schema dump rather than dropping them', () => {
+    const region = renderTypesIndexRegion(typesIndex, dumpAllData);
+    assert.match(region, /module\.decoration\.order/);
+  });
+
+  it('throws rather than emitting an empty index', () => {
+    assert.throws(() => renderTypesIndexRegion({ version: '1.0.12', modules: {} }, dumpAllData), /no module/i);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // The committed-output guard (#276).
 //
 // Everything above exercises the transform functions against synthetic input,
@@ -345,10 +692,34 @@ const FIXTURE_FILE = path.resolve(
   '__fixtures__/dump-all.json'
 );
 
+// The @divi/types half of the same problem: the package is fetched from npm at
+// regen time, which CI cannot do either, so the distilled index it produces is
+// recorded the same way. See __fixtures__/README.md.
+const TYPES_FIXTURE_FILE = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '__fixtures__/divi-types.json'
+);
+
 describe('the committed module-formats.md matches the recorded schema dump', () => {
   const committed = readFileSync(TARGET_FILE, 'utf8');
   const fixture = JSON.parse(readFileSync(FIXTURE_FILE, 'utf8'));
+  const typesFixture = JSON.parse(readFileSync(TYPES_FIXTURE_FILE, 'utf8'));
   const curated = parseModuleNames(committed);
+
+  it('inspects a non-zero number of modules from @divi/types', () => {
+    assert.ok(
+      Object.keys(typesFixture.modules).length > 0,
+      'the recorded @divi/types index carries at least one module'
+    );
+    assert.match(typesFixture.version, /^\d+\.\d+\.\d+$/, 'the fixture pins an npm version');
+  });
+
+  it('pins the same @divi/types version in the committed header', () => {
+    assert.ok(
+      committed.includes('`@divi/types` `' + typesFixture.version + '`'),
+      'committed header should pin @divi/types ' + typesFixture.version
+    );
+  });
 
   // A gate that derives pass/fail only from problems-found will pass while
   // inspecting nothing. Assert the sample size before trusting the comparison.
@@ -377,6 +748,6 @@ describe('the committed module-formats.md matches the recorded schema dump', () 
   });
 
   it('regenerates module-formats.md byte-identically (run `npm run regen:skill` if this fails)', () => {
-    assert.equal(regenerateContent(committed, fixture), committed);
+    assert.equal(regenerateContent(committed, fixture, typesFixture), committed);
   });
 });
