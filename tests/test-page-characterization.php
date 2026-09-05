@@ -369,52 +369,63 @@ $GLOBALS['diviops_test_wp_query_unmodelled_ok'] = $diviops_pgc_saved['wp_query_w
 
 // ══ page_set_meta ═════════════════════════════════════════════════════════
 //
-// The one public handler in this trait that never adopted the response envelope:
-// it returns a bare WP_Error on refusal and a bare array on success, so a client
-// written against `{ ok, data }` / `{ ok, error }` cannot read it at all. Pinned
-// as the current shape, defect and all.
+// This handler was the one public handler in the trait that never adopted the
+// response envelope, and its write guard was a truthiness test that dropped the
+// string '0' while still reporting success. Both were pinned here as DEFECTs by
+// #374 and fixed by #376; the assertions below now pin the fixed behaviour, so
+// a regression to either shape fails here.
 
 diviops_pgc_post( 7320, $diviops_pgc_divi, 'page', 'Template Target' );
 
-$result = diviops_pgc_call( 'page_set_meta', array( 'id' => 999732, 'template' => 'x.php' ) );
-// DEFECT, pinned as-is. Every sibling handler returns an envelope response here,
-// and nothing downstream rescues this one: #357's `rest_post_dispatch` filter
-// (diviops-agent.php, FRAMEWORK_ERROR_ENVELOPE) keys on `rest_*` codes only, and
-// these are the bare slugs `not_found` and `forbidden`, so the raw
-// `{code, message, data:{status}}` body reaches the caller intact.
-assert_same( true, is_wp_error( $result ), 'DEFECT: page_set_meta returns a raw WP_Error, not the not_found envelope' );
-assert_same( 'not_found', $result->get_error_code(), 'the error code is not_found' );
-assert_same( 404, $result->get_error_data()['status'] ?? null, 'carrying a 404 in error data rather than a response status' );
+// Fixed by #376. This used to return a bare `WP_Error`, and nothing downstream
+// rescued it: #357's `rest_post_dispatch` filter (diviops-agent.php,
+// FRAMEWORK_ERROR_ENVELOPE) keys on `rest_*` codes only, and these are the bare
+// slugs `not_found` and `forbidden`, so the raw `{code, message, data:{status}}`
+// body reached the caller intact.
+$response = diviops_pgc_call( 'page_set_meta', array( 'id' => 999732, 'template' => 'x.php' ) );
+assert_same( false, is_wp_error( $response ), 'page_set_meta no longer returns a raw WP_Error for an unknown id' );
+$body = $response->get_data();
+assert_same( false, $body['ok'] ?? null, 'an unknown id is an error envelope' );
+assert_same( 'not_found', $body['error']['code'] ?? null, 'with the not_found code' );
+assert_same( 404, $response->get_status(), 'and a 404 response status, not a status buried in error data' );
+assert_same( 999732, $body['error']['data']['page_id'] ?? null, 'naming the page it could not find' );
 
 $GLOBALS['diviops_test_denied_caps'] = array( 'edit_post' );
-$result = diviops_pgc_call( 'page_set_meta', array( 'id' => 7320, 'template' => 'blocked.php' ) );
-assert_same( true, is_wp_error( $result ), 'the capability refusal is also a raw WP_Error' );
-assert_same( 'forbidden', $result->get_error_code(), 'the refusal code is forbidden' );
-assert_same( 403, $result->get_error_data()['status'] ?? null, 'with a 403 in error data' );
+$response = diviops_pgc_call( 'page_set_meta', array( 'id' => 7320, 'template' => 'blocked.php' ) );
+assert_same( false, is_wp_error( $response ), 'the capability refusal is an envelope too' );
+$body = $response->get_data();
+assert_same( 'forbidden', $body['error']['code'] ?? null, 'the refusal code is forbidden' );
+assert_same( 403, $response->get_status(), 'with a 403 response status' );
+assert_same( 7320, $body['error']['data']['page_id'] ?? null, 'naming the page it refused' );
 assert_same( '', get_post_meta( 7320, '_wp_page_template', true ), 'the refusal wrote no template meta' );
 $GLOBALS['diviops_test_denied_caps'] = array();
 
 $response = diviops_pgc_call( 'page_set_meta', array( 'id' => 7320, 'template' => 'page-template-blank.php' ) );
 $body     = $response->get_data();
-assert_same( false, array_key_exists( 'ok', $body ), 'the success shape is bare — no ok/data envelope' );
-assert_same( true, $body['success'] ?? null, 'it reports success under its own key' );
-assert_same( 7320, $body['page_id'] ?? null, 'names the page' );
-assert_same( 'page-template-blank.php', $body['template'] ?? null, 'and reads the template back from meta' );
+assert_same( true, $body['ok'] ?? null, 'success is the standard ok/data envelope' );
+assert_same( false, array_key_exists( 'success', $body['data'] ?? array() ), 'the bespoke `success` key that existed nowhere else in the API is gone' );
+assert_same( 7320, $body['data']['page_id'] ?? null, 'the payload names the page' );
+assert_same( 'page-template-blank.php', $body['data']['template'] ?? null, 'and reads the template back from meta' );
 assert_same( 'page-template-blank.php', get_post_meta( 7320, '_wp_page_template', true ), 'the template was stored' );
 
-// The write is guarded by `if ( $template )` (trait-page.php:160), a truthiness
-// test rather than a null/'' test, so an omitted template is a no-op read-back.
+// The write guard is now a presence check (`null !== $template`), so an omitted
+// template is still a no-op read-back — but a supplied one is always written.
 $body = diviops_pgc_call( 'page_set_meta', array( 'id' => 7320 ) )->get_data();
-assert_same( 'page-template-blank.php', $body['template'] ?? null, 'omitting template leaves the stored value alone' );
-$body = diviops_pgc_call( 'page_set_meta', array( 'id' => 7320, 'template' => '' ) )->get_data();
-assert_same( 'page-template-blank.php', $body['template'] ?? null, 'an empty template is falsy and skips the write' );
+assert_same( 'page-template-blank.php', $body['data']['template'] ?? null, 'omitting template leaves the stored value alone' );
 
-// DEFECT, pinned as-is. PHP's truthiness makes the string '0' falsy, so a
-// template file legitimately named `0` (or any caller sending the string '0')
-// is silently dropped instead of stored, with a success response either way.
+// Fixed by #376. PHP's truthiness makes the string '0' falsy, so `if ( $template )`
+// silently dropped a template file named `0` and reported success with the OLD
+// value read back. A presence check stores it.
 $body = diviops_pgc_call( 'page_set_meta', array( 'id' => 7320, 'template' => '0' ) )->get_data();
-assert_same( 'page-template-blank.php', $body['template'] ?? null, "DEFECT: the literal string '0' is falsy, so it is silently not written" );
-assert_same( true, $body['success'] ?? null, 'DEFECT: and the response still reports success' );
+assert_same( '0', $body['data']['template'] ?? null, "the literal string '0' is written, not silently dropped" );
+assert_same( '0', get_post_meta( 7320, '_wp_page_template', true ), "and '0' really reached post meta" );
+
+// Same guard change, other direction: an explicit empty string is a supplied
+// value, so it clears the template rather than being skipped as falsy. Under the
+// old truthiness guard this was a no-op read-back of the previous value.
+$body = diviops_pgc_call( 'page_set_meta', array( 'id' => 7320, 'template' => '' ) )->get_data();
+assert_same( '', $body['data']['template'] ?? null, 'an explicit empty template clears the stored value' );
+assert_same( '', get_post_meta( 7320, '_wp_page_template', true ), 'the cleared value really reached post meta' );
 
 // ══ page_update_meta ══════════════════════════════════════════════════════
 
