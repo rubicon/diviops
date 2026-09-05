@@ -10,6 +10,14 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.22.0](https://github.com/rubicon/diviops/compare/v1.21.1...v1.22.0) (2026-09-04)
+
+
+### Features
+
+* **#385:** batch the merge-aware extractor into a queryable per-module map ([#389](https://github.com/rubicon/diviops/issues/389)) ([af4467f](https://github.com/rubicon/diviops/commit/af4467f1fc4b7c03189ca2bae574b019d3e9c319))
+* **skill:** generate Tier 3 module maps from @divi/types ([#387](https://github.com/rubicon/diviops/issues/387)) ([2b95928](https://github.com/rubicon/diviops/commit/2b95928efd623e44698977908482841d462d063a))
+
 ## [1.21.1](https://github.com/rubicon/diviops/compare/v1.21.0...v1.21.1) (2026-09-03)
 
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.14.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.13.0...mcp-server-v1.14.0) (2026-09-04)
+
+
+### Features
+
+* **#385:** batch the merge-aware extractor into a queryable per-module map ([#389](https://github.com/rubicon/diviops/issues/389)) ([af4467f](https://github.com/rubicon/diviops/commit/af4467f1fc4b7c03189ca2bae574b019d3e9c319))
+* **skill:** generate Tier 3 module maps from @divi/types ([#387](https://github.com/rubicon/diviops/issues/387)) ([2b95928](https://github.com/rubicon/diviops/commit/2b95928efd623e44698977908482841d462d063a))
+
 ## [1.13.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.12.2...mcp-server-v1.13.0) (2026-09-02)
 
 
