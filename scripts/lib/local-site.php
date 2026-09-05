@@ -17,9 +17,21 @@
  *      plugin directory itself, because that is the obvious way to misread the name.
  *   2. The ``Local site: `…` `` line in `CLAUDE.md`.
  *
+ * Either form may name a host: `[user@]host:/absolute/path` is reached over SSH, and
+ * anything else is a path on this machine. That is the whole of #340. The site this
+ * repository works against moved to staging.colleyvillelions.com while the retired
+ * LocalWP install stayed on disk, so the gate went on comparing against a site nobody
+ * runs and reporting `current` — which renders exactly like certifying the live one.
+ *
+ * The remote shell is `DIVIOPS_SSH`, defaulting to `ssh -o BatchMode=yes
+ * -o ConnectTimeout=10`. BatchMode is not decoration: a gate that can stop and ask for
+ * a passphrase is a gate that hangs a test run. The variable exists so the tests can
+ * drive every remote branch through a stub on a machine with no network and no key.
+ *
  * Usable from the shell as well as from PHP:
  *
  *   php scripts/lib/local-site.php plugin-dir
+ *   php scripts/lib/local-site.php host
  *   php scripts/lib/local-site.php status
  *   php scripts/lib/local-site.php reason
  *   php scripts/lib/local-site.php installed-version
@@ -48,11 +60,130 @@ function diviops_plugin_version( string $file ) {
 	if ( ! is_file( $file ) ) {
 		return null;
 	}
-	$src = (string) file_get_contents( $file );
+	return diviops_plugin_version_from_source( (string) file_get_contents( $file ) );
+}
+
+/**
+ * Read `const VERSION = '…'` out of plugin main-file source text.
+ *
+ * Split out from diviops_plugin_version() because a file on another host arrives as a
+ * string, never as a path this process can stat.
+ *
+ * @param string $src Contents of a plugin main file.
+ * @return string|null The declared version, or null when the const is absent.
+ */
+function diviops_plugin_version_from_source( string $src ) {
 	if ( 1 === preg_match( '/^\s*const\s+VERSION\s*=\s*\'([^\']+)\'/m', $src, $m ) ) {
 		return $m[1];
 	}
 	return null;
+}
+
+/**
+ * The command used to reach a remote site.
+ *
+ * @return string A remote-shell command line, as rsync's `-e` wants it.
+ */
+function diviops_site_remote_shell(): string {
+	$ssh = getenv( 'DIVIOPS_SSH' );
+	return is_string( $ssh ) && '' !== trim( $ssh )
+		? trim( $ssh )
+		: 'ssh -o BatchMode=yes -o ConnectTimeout=10';
+}
+
+/**
+ * Render a target for a human: `host:/path` remotely, `/path` locally.
+ *
+ * @param string|null $host       Host, or null for this machine.
+ * @param string      $plugin_dir Plugin directory.
+ */
+function diviops_site_label( $host, string $plugin_dir ): string {
+	return null === $host ? $plugin_dir : $host . ':' . $plugin_dir;
+}
+
+/**
+ * Look at an installed plugin directory, here or on another host.
+ *
+ * One round trip answers all three questions the report needs — is the host there, is
+ * the directory there, and what does its main file say — because over SSH each extra
+ * question is another connection, and because the three answers have to come from the
+ * same moment to describe the same site.
+ *
+ * The remote command's exit codes are the whole contract. 91 and 92 are picked to sit
+ * clear of the shell's own (126, 127) and of ssh's transport failure (255), so
+ * "the host said no" can never be confused with "the host never answered". Every code
+ * this function does not recognise is unreachable, which is the safe reading: a state
+ * that reports a site it could not talk to as `absent` is one skip away from a green
+ * run over a site that is quietly behind.
+ *
+ * @param string|null $host       Host to reach, or null for this machine.
+ * @param string      $plugin_dir Installed plugin directory.
+ * @return array{state: string, source: string|null} state is
+ *         found|absent|invalid|unreachable; source is the main file's text when found.
+ */
+function diviops_site_plugin_probe( $host, string $plugin_dir ): array {
+	$main = rtrim( $plugin_dir, '/' ) . '/diviops-agent.php';
+
+	if ( null === $host ) {
+		if ( ! is_dir( $plugin_dir ) ) {
+			return array(
+				'state'  => 'absent',
+				'source' => null,
+			);
+		}
+		if ( ! is_file( $main ) ) {
+			return array(
+				'state'  => 'invalid',
+				'source' => null,
+			);
+		}
+		return array(
+			'state'  => 'found',
+			'source' => (string) file_get_contents( $main ),
+		);
+	}
+
+	$remote = sprintf(
+		'test -d %s || exit 91; cat %s 2>/dev/null || exit 92',
+		escapeshellarg( rtrim( $plugin_dir, '/' ) ),
+		escapeshellarg( $main )
+	);
+
+	$out    = array();
+	$status = 0;
+	exec(
+		sprintf(
+			'%s %s %s 2>/dev/null',
+			diviops_site_remote_shell(),
+			escapeshellarg( $host ),
+			escapeshellarg( $remote )
+		),
+		$out,
+		$status
+	);
+
+	if ( 0 === $status ) {
+		return array(
+			'state'  => 'found',
+			'source' => implode( "\n", $out ),
+		);
+	}
+	if ( 91 === $status ) {
+		return array(
+			'state'  => 'absent',
+			'source' => null,
+		);
+	}
+	if ( 92 === $status ) {
+		return array(
+			'state'  => 'invalid',
+			'source' => null,
+		);
+	}
+	return array(
+		'state'  => 'unreachable',
+		'source' => null,
+	);
 }
 
 /**
@@ -76,28 +207,39 @@ function diviops_plugin_version( string $file ) {
  * an mtime would be touched. Only the first group means the site is running
  * different code, which is the question this check exists to answer.
  *
- * @param string $src        Repository plugin directory.
- * @param string $plugin_dir Installed plugin directory to compare against it.
+ * @param string      $src        Repository plugin directory.
+ * @param string      $plugin_dir Installed plugin directory to compare against it.
+ * @param string|null $host       Host holding $plugin_dir, or null for this machine.
  * @return array<int, string>|null Itemized lines for paths whose content differs,
  *                                 empty when the code matches; null when the
  *                                 comparison could not be run at all.
  */
-function diviops_local_site_file_diff( string $src, string $plugin_dir ) {
+function diviops_local_site_file_diff( string $src, string $plugin_dir, $host = null ) {
+	$dest      = rtrim( $plugin_dir, '/' ) . '/';
+	$transport = '';
+
+	if ( null !== $host && '' !== $host ) {
+		$dest      = $host . ':' . $dest;
+		$transport = '-e ' . escapeshellarg( diviops_site_remote_shell() ) . ' ';
+	}
+
 	$out    = array();
 	$status = 0;
 	exec(
 		sprintf(
-			'rsync -a -c --delete --itemize-changes --dry-run %s %s 2>/dev/null',
+			'rsync -a -c --delete --itemize-changes --dry-run %s%s %s 2>/dev/null',
+			$transport,
 			escapeshellarg( rtrim( $src, '/' ) . '/' ),
-			escapeshellarg( rtrim( $plugin_dir, '/' ) . '/' )
+			escapeshellarg( $dest )
 		),
 		$out,
 		$status
 	);
 
-	// An identical tree and a missing rsync both print nothing. The exit status is
-	// the only thing separating "in sync" from "never compared", and reading this
-	// wrong turns the gate into one that passes while inspecting nothing.
+	// An identical tree, a missing rsync and a host that never answered all print
+	// nothing. The exit status is the only thing separating "in sync" from "never
+	// compared", and reading this wrong turns the gate into one that passes while
+	// inspecting nothing.
 	if ( 0 !== $status ) {
 		return null;
 	}
@@ -139,7 +281,7 @@ function diviops_local_site_changed_paths( array $changes ): array {
  *
  * @param string|null $env       Value of DIVIOPS_LOCAL_SITE, or null when unset.
  * @param string      $claude_md Path to the CLAUDE.md carrying the fallback path.
- * @return array{plugin_dir: string|null, source: string} `source` is env|claude-md|none.
+ * @return array{host: string|null, plugin_dir: string|null, source: string} `source` is env|claude-md|none.
  */
 function diviops_local_site_target( $env, string $claude_md ): array {
 	$root   = null;
@@ -158,9 +300,19 @@ function diviops_local_site_target( $env, string $claude_md ): array {
 
 	if ( null === $root || '' === $root ) {
 		return array(
+			'host'       => null,
 			'plugin_dir' => null,
 			'source'     => 'none',
 		);
+	}
+
+	// `[user@]host:/absolute/path` is a site reached over SSH. Requiring the path to
+	// be absolute is what keeps a local path that happens to contain a colon — and
+	// macOS lets a directory name hold one — from being read as a hostname.
+	$host = null;
+	if ( 1 === preg_match( '#^([^/:]+):(/.*)$#', $root, $m ) ) {
+		$host = $m[1];
+		$root = rtrim( $m[2], '/' );
 	}
 
 	// Accept the plugin directory itself, not only the WordPress root.
@@ -169,6 +321,7 @@ function diviops_local_site_target( $env, string $claude_md ): array {
 		: $root . '/wp-content/plugins/diviops-agent';
 
 	return array(
+		'host'       => $host,
 		'plugin_dir' => $plugin_dir,
 		'source'     => $source,
 	);
@@ -177,11 +330,12 @@ function diviops_local_site_target( $env, string $claude_md ): array {
 /**
  * Report whether the local dev site is running the repository's plugin version.
  *
- * The status vocabulary is deliberately five values rather than a boolean, because
+ * The status vocabulary is deliberately six values rather than a boolean, because
  * "I checked and it is current" and "I could not find a site to check" must never
  * render the same way:
  *
  *   unconfigured — no env var, no path in CLAUDE.md. Skip.
+ *   unreachable  — a host is named but did not answer. Skip, loudly, naming it.
  *   absent       — a target is configured but nothing is installed there. Skip.
  *   invalid      — the directory exists but is not a DiviOps plugin, or the file
  *                  comparison could not be run. Fail.
@@ -189,10 +343,15 @@ function diviops_local_site_target( $env, string $claude_md ): array {
  *                  repository. Fail.
  *   current      — the installed tree matches the repository. Pass.
  *
+ * `unreachable` is a skip and not a failure on purpose: CI has no key for the site and
+ * a laptop offline has no route to it, and a gate that fails on both is a gate people
+ * learn to merge past. What it must never do is round down to `current`, which is why
+ * it is its own word and why its reason names the host.
+ *
  * @param string|null $env       Value of DIVIOPS_LOCAL_SITE, or null when unset.
  * @param string      $claude_md Path to the CLAUDE.md carrying the fallback path.
  * @param string      $repo_main Repository plugin main file to compare against.
- * @return array{status: string, reason: string, source: string, plugin_dir: string|null, installed_version: string|null, repo_version: string|null}
+ * @return array{status: string, reason: string, source: string, host: string|null, plugin_dir: string|null, installed_version: string|null, repo_version: string|null}
  */
 function diviops_local_site_report( $env, string $claude_md, string $repo_main ): array {
 	$target       = diviops_local_site_target( $env, $claude_md );
@@ -202,6 +361,7 @@ function diviops_local_site_report( $env, string $claude_md, string $repo_main )
 		'status'            => 'unconfigured',
 		'reason'            => '',
 		'source'            => $target['source'],
+		'host'              => $target['host'],
 		'plugin_dir'        => $target['plugin_dir'],
 		'installed_version' => null,
 		'repo_version'      => $repo_version,
@@ -209,32 +369,46 @@ function diviops_local_site_report( $env, string $claude_md, string $repo_main )
 
 	if ( null === $target['plugin_dir'] ) {
 		$report['reason'] = sprintf(
-			'no local site configured: DIVIOPS_LOCAL_SITE is unset and %s declares no "Local site:" path',
+			'no site configured: DIVIOPS_LOCAL_SITE is unset and %s declares no "Local site:" path',
 			$claude_md
 		);
 		return $report;
 	}
 
-	$main = $target['plugin_dir'] . '/diviops-agent.php';
+	$label = diviops_site_label( $target['host'], $target['plugin_dir'] );
+	$probe = diviops_site_plugin_probe( $target['host'], $target['plugin_dir'] );
 
-	if ( ! is_dir( $target['plugin_dir'] ) ) {
+	if ( 'unreachable' === $probe['state'] ) {
+		$report['status'] = 'unreachable';
+		$report['reason'] = sprintf(
+			'could not reach %s over %s, so nothing about %s was inspected — this is not a pass',
+			$target['host'],
+			diviops_site_remote_shell(),
+			$label
+		);
+		return $report;
+	}
+
+	if ( 'absent' === $probe['state'] ) {
 		$report['status'] = 'absent';
 		$report['reason'] = sprintf(
 			'no plugin installed at %s (target came from %s)',
-			$target['plugin_dir'],
+			$label,
 			$target['source']
 		);
 		return $report;
 	}
 
-	$installed                     = diviops_plugin_version( $main );
-	$report['installed_version']   = $installed;
+	$installed                   = null === $probe['source']
+		? null
+		: diviops_plugin_version_from_source( $probe['source'] );
+	$report['installed_version'] = $installed;
 
 	if ( null === $installed ) {
 		$report['status'] = 'invalid';
 		$report['reason'] = sprintf(
 			'%s exists but declares no DiviOps Agent const VERSION — it is not a DiviOps plugin directory',
-			$target['plugin_dir']
+			$label
 		);
 		return $report;
 	}
@@ -249,7 +423,7 @@ function diviops_local_site_report( $env, string $claude_md, string $repo_main )
 		$report['status'] = 'drift';
 		$report['reason'] = sprintf(
 			'%s runs %s but this repository is at %s',
-			$target['plugin_dir'],
+			$label,
 			$installed,
 			$repo_version
 		);
@@ -259,13 +433,13 @@ function diviops_local_site_report( $env, string $claude_md, string $repo_main )
 	// Same version is not the same code. Everything merged since the last version
 	// bump declares the version the repository declares, so only the files can tell
 	// a current install from one that predates a merged fix (#307).
-	$changes = diviops_local_site_file_diff( dirname( $repo_main ), $target['plugin_dir'] );
+	$changes = diviops_local_site_file_diff( dirname( $repo_main ), $target['plugin_dir'], $target['host'] );
 
 	if ( null === $changes ) {
 		$report['status'] = 'invalid';
 		$report['reason'] = sprintf(
 			'could not compare %s against %s: rsync exited non-zero. Nothing was inspected, so this is not a pass',
-			$target['plugin_dir'],
+			$label,
 			dirname( $repo_main )
 		);
 		return $report;
@@ -278,7 +452,7 @@ function diviops_local_site_report( $env, string $claude_md, string $repo_main )
 		$report['status'] = 'drift';
 		$report['reason'] = sprintf(
 			'%s runs %s, matching this repository, but the contents of %d path(s) differ from %s: %s%s',
-			$target['plugin_dir'],
+			$label,
 			$installed,
 			count( $paths ),
 			dirname( $repo_main ),
@@ -291,7 +465,7 @@ function diviops_local_site_report( $env, string $claude_md, string $repo_main )
 	$report['status'] = 'current';
 	$report['reason'] = sprintf(
 		'%s runs %s and its files hold the same bytes as this repository',
-		$target['plugin_dir'],
+		$label,
 		$installed
 	);
 	return $report;
@@ -310,13 +484,19 @@ if ( 'cli' === PHP_SAPI && isset( $argv[0] ) && realpath( $argv[0] ) === realpat
 		$repo_root . '/plugins/diviops-agent/diviops-agent.php'
 	);
 
-	$cli_src  = $repo_root . '/plugins/diviops-agent';
-	$cli_diff = null === $cli_report['plugin_dir'] || ! is_dir( $cli_report['plugin_dir'] )
-		? null
-		: diviops_local_site_file_diff( $cli_src, $cli_report['plugin_dir'] );
+	$cli_src = $repo_root . '/plugins/diviops-agent';
+
+	// Only the two states that got as far as comparing trees have a diff to report.
+	// `is_dir()` used to stand in for that and cannot: a remote plugin directory is
+	// not a path this process can stat, so it read as "nothing installed" for every
+	// site reached over SSH.
+	$cli_diff = in_array( $cli_report['status'], array( 'drift', 'current' ), true )
+		? diviops_local_site_file_diff( $cli_src, (string) $cli_report['plugin_dir'], $cli_report['host'] )
+		: null;
 
 	$fields = array(
 		'plugin-dir'        => $cli_report['plugin_dir'],
+		'host'              => (string) $cli_report['host'],
 		'status'            => $cli_report['status'],
 		'reason'            => $cli_report['reason'],
 		'installed-version' => $cli_report['installed_version'],
@@ -324,6 +504,10 @@ if ( 'cli' === PHP_SAPI && isset( $argv[0] ) && realpath( $argv[0] ) === realpat
 		'source'            => $cli_report['source'],
 		'diff'              => null === $cli_diff ? null : implode( PHP_EOL, $cli_diff ),
 	);
+
+	// `diff` and `host` both have a meaningful empty answer — nothing to change, and
+	// a site on this machine. Every other field's empty is a failure to resolve.
+	$cli_empty_ok = array( 'diff', 'host' );
 
 	$field = $argv[1] ?? '';
 	if ( ! array_key_exists( $field, $fields ) ) {
@@ -337,7 +521,7 @@ if ( 'cli' === PHP_SAPI && isset( $argv[0] ) && realpath( $argv[0] ) === realpat
 		);
 		exit( 1 );
 	}
-	if ( 'diff' === $field && '' === $fields[ $field ] ) {
+	if ( in_array( $field, $cli_empty_ok, true ) && '' === $fields[ $field ] ) {
 		exit( 0 );
 	}
 	echo $fields[ $field ], PHP_EOL;

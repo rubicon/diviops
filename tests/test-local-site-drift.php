@@ -349,9 +349,173 @@ assert_same( 'claude-md', $report['source'], 'the report says where the target c
 $report = diviops_local_site_report( $root_stale, $md_site, $repo_main );
 assert_same( 'env', $report['source'], 'DIVIOPS_LOCAL_SITE overrides the path in CLAUDE.md' );
 
+/* -------------------------------------------------------------------------
+ * 7. Targets reached over SSH (#340).
+ *
+ * The LocalWP site is retired and its directory survived on disk, so the gate
+ * went on reporting `current` against an install nobody runs — which renders
+ * identically to certifying the live one. staging.colleyvillelions.com is the
+ * site that matters now, and it is only reachable over SSH.
+ *
+ * Every remote branch is exercised through a stub remote shell rather than a
+ * real connection, so this half makes real assertions on a machine with no
+ * network and no key, including CI. The stub is faithful to the only part of
+ * ssh's contract this code depends on: drop the host argument, hand the rest
+ * to a shell. That is what both the version probe and rsync's -e rely on.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Write a stub standing in for `ssh`, running the "remote" command locally.
+ *
+ * It logs every invocation first. The fixtures it points at are ordinary local
+ * directories, so code that ignored the host entirely and operated on the path
+ * directly would produce exactly the same end state and pass — the log is what
+ * separates "went over the transport" from "happened to work locally".
+ *
+ * @param string $path File to write.
+ * @param string $log  File the stub appends its arguments to.
+ * @return string The stub path.
+ */
+function diviops_drift_test_stub_shell( string $path, string $log ): string {
+	file_put_contents(
+		$path,
+		"#!/bin/sh\necho \"\$@\" >> " . escapeshellarg( $log ) . "\nshift\nexec /bin/sh -c \"\$*\"\n"
+	);
+	chmod( $path, 0700 );
+	return $path;
+}
+
+/**
+ * Read and clear the stub remote shell's log.
+ *
+ * @param string $log Log file the stub appends to.
+ * @return string Everything logged since the last call.
+ */
+function diviops_drift_test_stub_log( string $log ): string {
+	$seen = is_file( $log ) ? (string) file_get_contents( $log ) : '';
+	if ( is_file( $log ) ) {
+		unlink( $log );
+	}
+	return $seen;
+}
+
+// Parsing: `[user@]host:/absolute/path` is a remote target, anything else is local.
+$parsed = diviops_local_site_target( 'staging.example.com:/home/u/site', $md_none );
+assert_same( 'staging.example.com', $parsed['host'], 'a host:path target names its host' );
+assert_same(
+	'/home/u/site/wp-content/plugins/diviops-agent',
+	$parsed['plugin_dir'],
+	'a remote WordPress root resolves to the plugin directory beneath it'
+);
+assert_same( 'env', $parsed['source'], 'a remote target from the env var says so' );
+
+$parsed = diviops_local_site_target( 'deploy@host.example.com:/srv/wp/wp-content/plugins/diviops-agent', $md_none );
+assert_same( 'deploy@host.example.com', $parsed['host'], 'a user@host prefix is part of the host, not the path' );
+assert_same(
+	'/srv/wp/wp-content/plugins/diviops-agent',
+	$parsed['plugin_dir'],
+	'a remote path already naming the plugin directory is taken as-is'
+);
+
+$parsed = diviops_local_site_target( $root_current, $md_none );
+assert_same( null, $parsed['host'], 'a filesystem path resolves to no host, so the local path keeps working' );
+
+$parsed = diviops_local_site_target( '/Users/dax/Local Sites/a:b/app/public', $md_none );
+assert_same( null, $parsed['host'], 'an absolute path that happens to contain a colon is still local, not host:path' );
+
+$stub_log = $tmp . '/stub-ssh.log';
+$stub     = diviops_drift_test_stub_shell( $tmp . '/stub-ssh', $stub_log );
+putenv( 'DIVIOPS_SSH=' . $stub );
+diviops_drift_test_stub_log( $stub_log );
+
+// The same four installed-plugin states, reached over the remote transport rather
+// than the local one. `unreachable` has no local counterpart and comes after them.
+$report          = diviops_local_site_report( 'fixture-host:' . $tmp . '/no-such-remote-site', $md_none, $repo_main );
+$statuses_seen[] = $report['status'];
+assert_same( 'absent', $report['status'], 'a remote target with nothing installed reports absent, not current' );
+assert_same( 'fixture-host', $report['host'], 'an absent remote report still names the host it asked' );
+
+$report          = diviops_local_site_report( 'fixture-host:' . $root_invalid, $md_none, $repo_main );
+$statuses_seen[] = $report['status'];
+assert_same( 'invalid', $report['status'], 'a remote directory with no diviops-agent.php is invalid, not absent' );
+
+$report          = diviops_local_site_report( 'fixture-host:' . $root_stale, $md_none, $repo_main );
+$statuses_seen[] = $report['status'];
+assert_same( 'drift', $report['status'], 'a remote install below the repository version reports drift' );
+assert_same( '0.0.1', $report['installed_version'], 'the remote report reads the installed version off the host' );
+
+$report          = diviops_local_site_report( 'fixture-host:' . $root_extra, $md_none, $repo_main );
+$statuses_seen[] = $report['status'];
+assert_same( 'drift', $report['status'], 'a remote install at the same version with different files reports drift' );
+assert_true(
+	false !== strpos( $report['reason'], 'leftover-from-an-older-install.php' ),
+	'the remote drift reason names the differing path: ' . $report['reason']
+);
+
+diviops_drift_test_stub_log( $stub_log );
+$report          = diviops_local_site_report( 'fixture-host:' . $root_current, $md_none, $repo_main );
+$statuses_seen[] = $report['status'];
+assert_same( 'current', $report['status'], 'a remote install holding the same bytes reports current: ' . $report['reason'] );
+assert_same( 'fixture-host', $report['host'], 'the current remote report names the host it inspected' );
+$log = diviops_drift_test_stub_log( $stub_log );
+assert_true(
+	false !== strpos( $log, 'fixture-host' ),
+	'the remote report reached the host through the transport rather than reading the path locally: ' . var_export( $log, true )
+);
+assert_true(
+	false !== strpos( $log, 'rsync' ),
+	'the remote comparison itself went over the transport, not just the version probe: ' . var_export( $log, true )
+);
+
+// The comparison itself over the remote transport. An in-sync tree and a transport
+// that never ran both print nothing, so the two must not return the same value.
+assert_same(
+	array(),
+	diviops_local_site_file_diff( $repo_plugin_dir, $dir_current, 'fixture-host' ),
+	'an in-sync remote tree returns an empty array of changes'
+);
+assert_same(
+	null,
+	diviops_local_site_file_diff( $tmp . '/no-such-source', $dir_current, 'fixture-host' ),
+	'a remote comparison rsync could not run returns null, not the empty in-sync result'
+);
+
+// The host cannot be reached at all. This is every CI run and every offline laptop,
+// and it is the state that must never render as "I checked and staging is current".
+putenv( 'DIVIOPS_SSH=/usr/bin/false' );
+assert_same(
+	null,
+	diviops_local_site_file_diff( $repo_plugin_dir, $dir_current, 'fixture-host' ),
+	'a remote comparison whose transport fails returns null, the same as any other comparison that never ran'
+);
+$report          = diviops_local_site_report( 'fixture-host:' . $root_current, $md_none, $repo_main );
+$statuses_seen[] = $report['status'];
+assert_same(
+	'unreachable',
+	$report['status'],
+	'a host that cannot be reached is its own state, never current and never a bare absent: ' . $report['reason']
+);
+assert_true(
+	false !== strpos( $report['reason'], 'fixture-host' ),
+	'the unreachable reason names the host it failed to reach: ' . $report['reason']
+);
+assert_same( null, $report['installed_version'], 'an unreachable host yields no installed version to compare' );
+
+putenv( 'DIVIOPS_SSH=' . $stub );
+
+// The CLI carries the host, because scripts/deploy-local-site.sh has to know whether
+// its gate, backup and lint run here or over there.
+$cli = diviops_drift_test_cli( $lib, 'host', 'fixture-host:' . $root_current );
+assert_same( 0, $cli['status'], 'the host subcommand exits zero for a remote target: ' . $cli['output'] );
+assert_same( 'fixture-host', trim( $cli['output'] ), 'the host subcommand prints the host' );
+
+$cli = diviops_drift_test_cli( $lib, 'host', $root_current );
+assert_same( 0, $cli['status'], 'the host subcommand exits zero for a local target too: ' . $cli['output'] );
+assert_same( '', trim( $cli['output'] ), 'a local target prints an empty host rather than failing' );
+
 // Coverage assertion. Every status this check can produce must have been reached by
 // a fixture, so no branch of it is dead code that only "works" in theory.
-$expected_statuses = array( 'unconfigured', 'absent', 'invalid', 'drift', 'current' );
+$expected_statuses = array( 'unconfigured', 'unreachable', 'absent', 'invalid', 'drift', 'current' );
 sort( $expected_statuses );
 $seen = array_values( array_unique( $statuses_seen ) );
 sort( $seen );
@@ -428,6 +592,85 @@ assert_true(
 );
 assert_same( 1, diviops_drift_test_backups( $root_deploy ), 'an idempotent no-op run takes no second backup' );
 
+/* -------------------------------------------------------------------------
+ * The same deploy, over the remote transport (#340).
+ * ---------------------------------------------------------------------- */
+
+putenv( 'DIVIOPS_SSH=' . $stub );
+
+// The refuse-if-not-a-DiviOps-directory gate has to run on the host, not here.
+// Locally that directory does not exist at all, so a gate that stayed local would
+// pass it as "nothing to check" and point rsync --delete at a live install.
+$root_remote_refuse = $tmp . '/remote-refuse';
+diviops_drift_test_site( $root_remote_refuse, null );
+$run = diviops_drift_test_deploy( $deploy, 'fixture-host:' . $root_remote_refuse );
+assert_true(
+	0 !== $run['status'],
+	'the script refuses a remote target that is not a DiviOps plugin directory: ' . $run['output']
+);
+assert_same( 0, diviops_drift_test_backups( $root_remote_refuse ), 'a refused remote deploy leaves no backup' );
+
+$root_remote = $tmp . '/remote-deploy';
+$dir_remote  = diviops_drift_test_site( $root_remote, '0.0.1' );
+diviops_drift_test_stub_log( $stub_log );
+$run = diviops_drift_test_deploy( $deploy, 'fixture-host:' . $root_remote );
+assert_same( 0, $run['status'], 'deploying onto a stale remote install succeeds: ' . $run['output'] );
+assert_same(
+	$repo_version,
+	diviops_plugin_version( $dir_remote . '/diviops-agent.php' ),
+	'after a remote deploy the installed const VERSION equals the repository version'
+);
+assert_same( 1, diviops_drift_test_backups( $root_remote ), 'a remote deploy that changed files left exactly one backup' );
+
+// The fixtures are ordinary local directories, so a deploy that ignored the host and
+// wrote straight to the path would leave the same tree, the same version and the same
+// backup, and every assertion above would pass over a script that cannot reach a real
+// site at all. This is the one that fails in that case.
+// Deliberately not asserting on the rsync line: every rsync in this run goes over the
+// transport, and telling the real transfer from the dry-run comparison means reading
+// server flags whose spelling differs between rsync versions. The backup and the lint
+// are unambiguous — a deploy that wrote to the path directly performs neither there.
+$log = diviops_drift_test_stub_log( $stub_log );
+assert_true(
+	false !== strpos( $log, 'cp -a' ),
+	'the remote deploy took its backup on the host, not here: ' . var_export( $log, true )
+);
+assert_true(
+	false !== strpos( $log, 'php -l' ),
+	'the remote deploy linted the files it landed on the host: ' . var_export( $log, true )
+);
+assert_same(
+	'current',
+	diviops_local_site_report( 'fixture-host:' . $root_remote, $md_none, $repo_main )['status'],
+	'the drift check agrees with the remote deploy it just performed'
+);
+
+$run = diviops_drift_test_deploy( $deploy, 'fixture-host:' . $root_remote );
+assert_same( 0, $run['status'], 'a second consecutive remote deploy succeeds: ' . $run['output'] );
+assert_true(
+	false !== stripos( $run['output'], 'no change' ),
+	'the second remote run reports no change rather than a deploy it did not do: ' . $run['output']
+);
+assert_same( 1, diviops_drift_test_backups( $root_remote ), 'an idempotent remote no-op takes no second backup' );
+
+// An unreachable host must stop the deploy loudly. A failed transport transfers
+// nothing and itemizes nothing, which is byte-for-byte what an in-sync tree prints,
+// so without reading the exit status this run would announce "no change" and exit 0
+// having touched no site at all.
+putenv( 'DIVIOPS_SSH=/usr/bin/false' );
+$run = diviops_drift_test_deploy( $deploy, 'fixture-host:' . $root_remote );
+assert_true(
+	0 !== $run['status'],
+	'the deploy fails on an unreachable host instead of reporting no change: ' . $run['output']
+);
+assert_true(
+	false !== stripos( $run['output'], 'fixture-host' ),
+	'the failed remote deploy names the host it could not reach: ' . $run['output']
+);
+assert_same( 1, diviops_drift_test_backups( $root_remote ), 'a deploy that could not reach the host takes no backup' );
+
+putenv( 'DIVIOPS_SSH' );
+
 diviops_drift_test_rmtree( $tmp );
 
 /* -------------------------------------------------------------------------
@@ -436,6 +679,20 @@ diviops_drift_test_rmtree( $tmp );
  * Skips loudly with a stated reason when no site is configured or present, which
  * is every CI run. Fails naming both versions when a site is present and behind.
  * ---------------------------------------------------------------------- */
+
+// The gate watches whatever CLAUDE.md names, so CLAUDE.md naming nothing — or naming
+// a retired install that still sits on disk — is how it goes blind while staying
+// green. Pin the declared target itself, not just the code that reads it.
+$declared = diviops_local_site_target( null, $root . '/CLAUDE.md' );
+assert_true(
+	null !== $declared['plugin_dir'],
+	'CLAUDE.md declares the site this gate watches; without that line the live half inspects nothing'
+);
+assert_same(
+	'staging.colleyvillelions.com',
+	$declared['host'],
+	'CLAUDE.md points the gate at staging, the site this work actually runs against (#340)'
+);
 
 $env_target = getenv( 'DIVIOPS_LOCAL_SITE' );
 $live       = diviops_local_site_report(
@@ -450,12 +707,12 @@ if ( 'current' === $live['status'] || 'drift' === $live['status'] || 'invalid' =
 	assert_same(
 		'current',
 		$live['status'],
-		'the local dev site runs the current plugin — run scripts/deploy-local-site.sh. ' . $live['reason']
+		'the dev site runs the current plugin — run scripts/deploy-local-site.sh. ' . $live['reason']
 	);
 } else {
-	printf( "SKIP  local-site drift check: %s%s", $live['reason'], PHP_EOL );
+	printf( "SKIP  site drift check: %s%s", $live['reason'], PHP_EOL );
 	assert_true(
-		in_array( $live['status'], array( 'unconfigured', 'absent' ), true ),
+		in_array( $live['status'], array( 'unconfigured', 'unreachable', 'absent' ), true ),
 		'a skipped drift check skipped for a known reason, not an unrecognised one'
 	);
 }
