@@ -318,6 +318,21 @@ function diviops_variable_seed( string $type, string $id, array $fields ) {
  * @param string $id   Variable id.
  * @return array
  */
+/**
+ * The response payload with the site-wide cache report lifted off (#381).
+ *
+ * Every variable write now reports what it did to Divi's compiled CSS. These
+ * assertions are about the record the handler echoes back, and folding the report's
+ * prose into four whole-payload expectations would make them fail on a reworded
+ * reason string rather than on a behaviour change. The report itself is asserted
+ * once, separately, so removing it here hides nothing.
+ */
+function diviops_variable_payload_sans_cache( array $data ): array {
+	$payload = $data['data'] ?? array();
+	unset( $payload['cache'] );
+	return $payload;
+}
+
 function diviops_variable_record( string $type, string $id ): array {
 	$registry = diviops_variable_registry();
 	return isset( $registry[ $type ][ $id ] ) && is_array( $registry[ $type ][ $id ] )
@@ -1398,8 +1413,16 @@ $resp = diviops_call( 'variable_create', array( diviops_variable_request( array(
 $data = $resp->get_data();
 assert_same(
 	array( 'success' => true, 'id' => 'gvid-tag', 'type' => 'strings', 'label' => 'Tagline', 'value' => 'Hello World' ),
-	$data['data'],
+	diviops_variable_payload_sans_cache( $data ),
 	'the create response echoes the sanitized value, not the raw input'
+);
+// #381: the write reports what it did to the compiled CSS. `unavailable` is the
+// correct answer in this harness — wp-shim.php declares no WP_Filesystem, and the
+// point of the field is that "could not clear" never renders as "cleared".
+assert_same(
+	'unavailable',
+	$data['data']['cache']['status'] ?? null,
+	'a variable create reports a site-wide cache result'
 );
 $record = diviops_variable_record( 'strings', 'gvid-tag' );
 assert_same(
@@ -1717,7 +1740,7 @@ $resp = diviops_call( 'variable_update', array( diviops_variable_request( array(
 $data = $resp->get_data();
 assert_same(
 	array( 'success' => true, 'id' => 'gvid-up', 'type' => 'strings', 'label' => 'Before', 'value' => 'new value' ),
-	$data['data'],
+	diviops_variable_payload_sans_cache( $data ),
 	'the update response reports the merged record, including the label it did not change'
 );
 $updated = diviops_variable_record( 'strings', 'gvid-up' );
@@ -1787,7 +1810,7 @@ assert_true( array() !== diviops_variable_record( 'numbers', 'gvid-del' ), 'dry_
 
 $resp = diviops_call( 'variable_delete', array( diviops_variable_request( array( 'id' => 'gvid-del' ) ) ) );
 $data = $resp->get_data();
-assert_same( array( 'success' => true, 'deleted' => 'gvid-del', 'forced' => false ), $data['data'], 'an unreferenced delete succeeds and reports it was not forced' );
+assert_same( array( 'success' => true, 'deleted' => 'gvid-del', 'forced' => false ), diviops_variable_payload_sans_cache( $data ), 'an unreferenced delete succeeds and reports it was not forced' );
 assert_same( array(), diviops_variable_record( 'numbers', 'gvid-del' ), 'the record is gone from the registry' );
 
 // The blocking path. The reference lives in the preset registry, which both the
@@ -1831,7 +1854,7 @@ assert_same( 'conflict', $resp->get_data()['error']['code'], 'dry_run surfaces t
 // the documented orphan-creating escape hatch.
 $resp = diviops_call( 'variable_delete', array( diviops_variable_request( array( 'id' => 'gvid-live', 'force' => true ) ) ) );
 $data = $resp->get_data();
-assert_same( array( 'success' => true, 'deleted' => 'gvid-live', 'forced' => true ), $data['data'], 'force=true deletes despite live references and says it was forced' );
+assert_same( array( 'success' => true, 'deleted' => 'gvid-live', 'forced' => true ), diviops_variable_payload_sans_cache( $data ), 'force=true deletes despite live references and says it was forced' );
 assert_same( array(), diviops_variable_record( 'numbers', 'gvid-live' ), 'the forced delete removed the record' );
 // The references it left behind are now dangling, and the scanner still sees
 // them — which is exactly what variable_scan_orphans would report.

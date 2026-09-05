@@ -1484,6 +1484,77 @@ trait DiviOps_Agent_Meta {
 	}
 
 	/**
+	 * Invalidate Divi's compiled CSS site-wide, for a write with no owning post (#381).
+	 *
+	 * The per-post twin, `invalidate_divi_cache( $post_id )` in trait-core.php, is the
+	 * right shape for a page write and the wrong shape here: a global colour, font or
+	 * variable belongs to no single post and can restyle every page on the site. Passing
+	 * any post id would invalidate one page and leave the rest stale.
+	 *
+	 * This is the same two-phase clear `meta_flush_cache`'s `all` mode performs, reusing
+	 * its helpers rather than restating them — the physical sweep that preserves `-vb-`
+	 * runtime CSS, then Divi's site-wide WP purges without the `.cache-cleared-at`
+	 * timestamp. `sweep_all_divi_css_preserving_vb()` documents why the timestamp is
+	 * withheld; the short version is that writing it would invalidate the Visual Builder
+	 * files phase 1 just went out of its way to keep.
+	 *
+	 * ## Best-effort, and never silent about it
+	 *
+	 * The write has already been persisted by the time this runs. Failing the request now
+	 * would report a failure for an operation that succeeded, so nothing here throws and
+	 * nothing here changes the caller's success envelope into an error. The report is
+	 * returned instead, for the handler to attach — because a cache clear that could not
+	 * run must not render the same as one that did. That is the same rule the five-state
+	 * drift gate follows, and the reason `meta_flush_cache` answers 500 rather than 200
+	 * on a filesystem it cannot initialize.
+	 *
+	 * `init_wp_filesystem()` is deliberately not called blind: it `require_once`s
+	 * `ABSPATH . 'wp-admin/includes/file.php'`, which is a fatal on any bootstrap where
+	 * that file is not present. A fatal here would take down a write that had already
+	 * succeeded.
+	 *
+	 * @return array{status: string, files: int, bytes: int, scope: string, reason?: string}
+	 *   status: 'invalidated' when the sweep ran, 'unavailable' when it could not.
+	 */
+	private static function invalidate_divi_cache_sitewide(): array {
+		$report = [
+			'status' => 'unavailable',
+			'scope'  => 'sitewide',
+			'files'  => 0,
+			'bytes'  => 0,
+		];
+
+		if (
+			! function_exists( 'WP_Filesystem' )
+			&& ! ( defined( 'ABSPATH' ) && is_readable( ABSPATH . 'wp-admin/includes/file.php' ) )
+		) {
+			$report['reason'] = 'WP_Filesystem is unavailable, so no compiled CSS was deleted — this is not a clear.';
+			return $report;
+		}
+
+		$wpfs = self::init_wp_filesystem();
+		if ( ! $wpfs ) {
+			$report['reason'] = 'WP_Filesystem could not be initialized, so no compiled CSS was deleted — this is not a clear. On managed hosts, define FS_METHOD / saved FTP credentials in wp-config.php.';
+			return $report;
+		}
+
+		$cache_root = self::resolve_et_cache_root();
+		$swept      = self::sweep_all_divi_css_preserving_vb( $cache_root, $wpfs );
+		self::run_divi_site_wide_cache_purges();
+
+		// Match Divi's post-clear convention so page-cache plugins and CDNs skip caching
+		// the first request while CSS regenerates (PageResource.php writes the same file).
+		if ( is_dir( $cache_root ) ) {
+			$wpfs->put_contents( $cache_root . '/DONOTCACHEPAGE', '' );
+		}
+
+		$report['status'] = 'invalidated';
+		$report['files']  = $swept['files'];
+		$report['bytes']  = $swept['bytes'];
+		return $report;
+	}
+
+	/**
 	 * Physically sweep one numeric et-cache/{post_id}/ directory through
 	 * WP_Filesystem. Used as a targeted reinforcement after Divi's native
 	 * post clear because real dogfooding found remove_static_resources()

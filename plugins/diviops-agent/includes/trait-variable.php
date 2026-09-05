@@ -1050,12 +1050,17 @@ trait DiviOps_Agent_Variable {
 			$global_data['global_colors'] = $colors;
 			et_update_option( 'et_global_data', $global_data );
 
+			// Site-wide, not per-post (#381). A global variable has no owning post and
+			// can restyle every page, so the invalidation is the whole compiled cache.
+			$cache = self::invalidate_divi_cache_sitewide();
+
 			return self::envelope_success( [
 				'success' => true,
 				'id'      => $id,
 				'type'    => 'colors',
 				'label'   => $label,
 				'value'   => $color,
+				'cache'   => $cache,
 			] );
 		}
 
@@ -1129,12 +1134,17 @@ trait DiviOps_Agent_Variable {
 
 		self::write_divi_global_variables_registry( $vars );
 
+		// Site-wide, not per-post (#381). A global variable has no owning post and can
+		// restyle every page, so the invalidation is the whole compiled cache.
+		$cache = self::invalidate_divi_cache_sitewide();
+
 		return self::envelope_success( [
 			'success' => true,
 			'id'      => $id,
 			'type'    => $type,
 			'label'   => $label,
 			'value'   => $sanitized_value,
+			'cache'   => $cache,
 		] );
 	}
 
@@ -1825,8 +1835,14 @@ trait DiviOps_Agent_Variable {
 			);
 		}
 
+		// Invalidate only when the registry was actually written (#381). A run that
+		// created nothing changed no token, so clearing every compiled file would be
+		// a site-wide cost for a no-op — and would make "nothing to do" and "styles
+		// changed" indistinguishable to anything watching the cache.
+		$cache = null;
 		if ( ! empty( $created ) ) {
 			self::write_divi_global_variables_registry( $vars );
+			$cache = self::invalidate_divi_cache_sitewide();
 		}
 
 		return self::envelope_success( [
@@ -1839,6 +1855,7 @@ trait DiviOps_Agent_Variable {
 			'skipped'      => $skipped,
 			'created_count' => count( $created ),
 			'skipped_count' => count( $skipped ),
+			'cache'         => $cache,
 		] );
 	}
 
@@ -2057,17 +2074,26 @@ trait DiviOps_Agent_Variable {
 			$global_data['global_colors'] = $colors;
 			et_update_option( 'et_global_data', $global_data );
 
+			// Site-wide, not per-post (#381). A global variable has no owning post and
+			// can restyle every page, so the invalidation is the whole compiled cache.
+			$cache = self::invalidate_divi_cache_sitewide();
+
 			return self::envelope_success( [
 				'success' => true,
 				'id'      => $id,
 				'type'    => 'colors',
 				'label'   => $updated['label'] ?? '',
 				'value'   => $updated['color'] ?? '',
+				'cache'   => $cache,
 			] );
 		}
 
 		$vars[ $found_type ][ $id ] = $updated;
 		self::write_divi_global_variables_registry( $vars );
+
+		// Site-wide, not per-post (#381). A global variable has no owning post and can
+		// restyle every page, so the invalidation is the whole compiled cache.
+		$cache = self::invalidate_divi_cache_sitewide();
 
 		return self::envelope_success( [
 			'success' => true,
@@ -2075,6 +2101,7 @@ trait DiviOps_Agent_Variable {
 			'type'    => $found_type,
 			'label'   => $updated['label'] ?? '',
 			'value'   => $updated['value'] ?? '',
+			'cache'   => $cache,
 		] );
 	}
 
@@ -2210,7 +2237,11 @@ trait DiviOps_Agent_Variable {
 			self::write_divi_global_variables_registry( $vars );
 		}
 
-		return self::envelope_success( [ 'success' => true, 'deleted' => $id, 'forced' => $force ] );
+		// Site-wide, not per-post (#381). Both storage branches above land here, so one
+		// invalidation covers a deleted colour and a deleted non-colour variable alike.
+		$cache = self::invalidate_divi_cache_sitewide();
+
+		return self::envelope_success( [ 'success' => true, 'deleted' => $id, 'forced' => $force, 'cache' => $cache ] );
 	}
 
 	/**
