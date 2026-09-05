@@ -63,11 +63,17 @@ php tests/run.php
 
 No Composer, no PHPUnit, no build step. Test files are `tests/test-*.php`.
 
-The runner fails when it discovers no test files, and when a filter matches nothing.
-That guard is deliberate: a gate that reports what it inspected but derives pass or
-fail only from problems-found will pass while inspecting nothing. That exact failure
-happened three times on the predecessor repository. Any gate added here must assert
-that it actually inspected something.
+**Before writing or reviewing a test, read "Characterization tests" in
+[CONTRIBUTING.md](CONTRIBUTING.md).** That section is canonical for the file shape, the
+two-function assertion surface, the `diviops_call*` helpers, the defect markers, the
+shim contract, and the mutation-checking discipline — do not re-derive any of it here.
+`tests/test-characterization-convention.php` gates it against drift.
+
+The one rule repeated here because it governs every gate this file asks for: a gate that
+reports what it inspected but derives pass or fail only from problems-found will pass
+while inspecting nothing. That exact failure happened three times on the predecessor
+repository, which is why the runner fails on empty discovery and on a filter that matches
+nothing. Any gate added here must assert that it actually inspected something.
 
 ## DiviOps Agent Pro artifacts in `upstream-releases/`
 
