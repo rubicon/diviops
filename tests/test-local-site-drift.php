@@ -428,7 +428,8 @@ $stub     = diviops_drift_test_stub_shell( $tmp . '/stub-ssh', $stub_log );
 putenv( 'DIVIOPS_SSH=' . $stub );
 diviops_drift_test_stub_log( $stub_log );
 
-// The same five states, reached over the remote transport rather than the local one.
+// The same four installed-plugin states, reached over the remote transport rather
+// than the local one. `unreachable` has no local counterpart and comes after them.
 $report          = diviops_local_site_report( 'fixture-host:' . $tmp . '/no-such-remote-site', $md_none, $repo_main );
 $statuses_seen[] = $report['status'];
 assert_same( 'absent', $report['status'], 'a remote target with nothing installed reports absent, not current' );
