@@ -93,6 +93,39 @@ function assert_true( $actual, string $message ): void {
 	DiviOps_Test_Runner::assert_true( $actual, $message );
 }
 
+/*
+ * Child mode (#395): `php tests/run.php --file <path>` runs exactly ONE test file and
+ * emits a machine-readable tail the parent parses. The parent below re-invokes this
+ * script once per file so each gets its own PHP process.
+ *
+ * Why a process per file and not a closure: `require` isolates variable scope but not
+ * the FUNCTION TABLE. `function_exists()` is global and one-way, and the plugin uses
+ * `function_exists( 'et_get_option' )` as its "is Divi active" signal
+ * (`diviops-agent.php:755`, `:2621`, `trait-meta.php:1847`). In one process, any file
+ * that defines the Divi option accessors flips every later file to Divi-active and
+ * destroys the Divi-inactive coverage in test-meta-characterization.php plus the
+ * fatal-as-signal probes in the ref-scan and preset characterization files. That made
+ * every global colour/font/variable handler untestable — see #380.
+ */
+if ( isset( $argv[1] ) && '--file' === $argv[1] ) {
+	$one = $argv[2] ?? '';
+	if ( '' === $one || ! is_file( $one ) ) {
+		fwrite( STDERR, "child: --file requires an existing test file\n" );
+		exit( 2 );
+	}
+	DiviOps_Test_Runner::$current = basename( $one );
+	( static function ( string $file ): void {
+		require $file;
+	} )( $one );
+
+	// The parent reads these two lines. Keep them last and keep the format stable.
+	printf( "__DIVIOPS_PASSED__ %d%s", DiviOps_Test_Runner::$passed, PHP_EOL );
+	foreach ( DiviOps_Test_Runner::$failures as $child_failure ) {
+		printf( "__DIVIOPS_FAILURE__ %s%s", str_replace( "\n", '\\n', $child_failure ), PHP_EOL );
+	}
+	exit( array() === DiviOps_Test_Runner::$failures ? 0 : 1 );
+}
+
 $filter = $argv[1] ?? '';
 $files  = glob( __DIR__ . '/test-*.php' ) ?: array();
 
@@ -132,10 +165,50 @@ if ( array() === $files ) {
  * that class of collision can't recur even for a test that isn't careful about it.
  */
 foreach ( $files as $file ) {
-	DiviOps_Test_Runner::$current = basename( $file );
-	( static function ( string $file ): void {
-		require $file;
-	} )( $file );
+	$command = sprintf(
+		'%s %s --file %s 2>&1',
+		escapeshellarg( PHP_BINARY ),
+		escapeshellarg( __FILE__ ),
+		escapeshellarg( $file )
+	);
+
+	$output    = array();
+	$exit_code = 0;
+	exec( $command, $output, $exit_code );
+
+	$saw_count = false;
+	foreach ( $output as $line ) {
+		if ( 0 === strpos( $line, '__DIVIOPS_PASSED__ ' ) ) {
+			DiviOps_Test_Runner::$passed += (int) substr( $line, strlen( '__DIVIOPS_PASSED__ ' ) );
+			$saw_count                    = true;
+			continue;
+		}
+		if ( 0 === strpos( $line, '__DIVIOPS_FAILURE__ ' ) ) {
+			DiviOps_Test_Runner::$failures[] = str_replace(
+				'\\n',
+				"\n",
+				substr( $line, strlen( '__DIVIOPS_FAILURE__ ' ) )
+			);
+			continue;
+		}
+		// Anything else is the child's own output — a PHP fatal, a warning, a test
+		// file that echoes. Surface it rather than swallowing it.
+		printf( '%s%s', $line, PHP_EOL );
+	}
+
+	/*
+	 * A child that died before printing its count is a fatal, not a pass. Without
+	 * this, a segfaulting or fatal-erroring file would contribute zero assertions and
+	 * zero failures — reported as green. A runner that swallows a dead child is
+	 * strictly worse than the single-process one it replaced.
+	 */
+	if ( ! $saw_count ) {
+		DiviOps_Test_Runner::$failures[] = sprintf(
+			'%s: the test process died without reporting a result (exit %d) — see its output above',
+			basename( $file ),
+			$exit_code
+		);
+	}
 }
 
 $failed = count( DiviOps_Test_Runner::$failures );
