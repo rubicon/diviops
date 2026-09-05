@@ -10,6 +10,16 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.22.1](https://github.com/rubicon/diviops/compare/v1.22.0...v1.22.1) (2026-09-05)
+
+
+### Bug Fixes
+
+* **#340:** point the deploy and the drift gate at staging, over SSH ([#398](https://github.com/rubicon/diviops/issues/398)) ([4730f74](https://github.com/rubicon/diviops/commit/4730f749afb3f38ac732212bf0906f9d1ddc25fb))
+* **#376:** envelope page_set_meta and stop it dropping a '0' template ([#394](https://github.com/rubicon/diviops/issues/394)) ([ae051c2](https://github.com/rubicon/diviops/commit/ae051c2597527c567302276aeffd9e3d51080bb4))
+* **#380:** merge into the stored global colour instead of replacing it ([#400](https://github.com/rubicon/diviops/issues/400)) ([6e580f2](https://github.com/rubicon/diviops/commit/6e580f23c9ee7e7e2f1d5bdb99e740f306f09504)), closes [#380](https://github.com/rubicon/diviops/issues/380)
+* **tests:** run each test file in its own process ([#396](https://github.com/rubicon/diviops/issues/396)) ([403adc5](https://github.com/rubicon/diviops/commit/403adc5caf2ccb309d71ef2447d49c348776739e)), closes [#395](https://github.com/rubicon/diviops/issues/395)
+
 ## [1.22.0](https://github.com/rubicon/diviops/compare/v1.21.1...v1.22.0) (2026-09-04)
 
 
