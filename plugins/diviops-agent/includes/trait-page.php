@@ -149,20 +149,35 @@ trait DiviOps_Agent_Page {
 		$post     = get_post( $post_id );
 
 		if ( ! $post ) {
-			return new WP_Error( 'not_found', 'Page not found', [ 'status' => 404 ] );
+			return self::envelope_error(
+				'not_found',
+				"Page #{$post_id} not found.",
+				'Verify the page id via diviops_page_list.',
+				404,
+				[ 'page_id' => $post_id ]
+			);
 		}
 
 		if ( ! current_user_can( 'edit_post', $post_id ) ) {
-			return new WP_Error( 'forbidden', 'Cannot edit this post', [ 'status' => 403 ] );
+			return self::envelope_error(
+				'forbidden',
+				"Cannot edit page #{$post_id}.",
+				'Authenticate as a user with edit rights to this post.',
+				403,
+				[ 'page_id' => $post_id ]
+			);
 		}
 
+		// Presence, not truthiness: PHP reads the string '0' as falsy, so
+		// `if ( $template )` dropped a template named `0` while still reporting
+		// success with the unchanged value read back (#376). This matches how
+		// page_meta_request_value() below distinguishes absent from empty.
 		$template = $request->get_param( 'template' );
-		if ( $template ) {
+		if ( null !== $template ) {
 			update_post_meta( $post_id, '_wp_page_template', sanitize_text_field( $template ) );
 		}
 
-		return rest_ensure_response( [
-			'success'  => true,
+		return self::envelope_success( [
 			'page_id'  => $post_id,
 			'template' => get_post_meta( $post_id, '_wp_page_template', true ),
 		] );
