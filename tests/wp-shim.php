@@ -456,6 +456,26 @@ if ( ! function_exists( 'update_option' ) ) {
 	}
 }
 
+if ( ! function_exists( 'sanitize_hex_color' ) ) {
+	/**
+	 * Model WP core's sanitize_hex_color() (wp-includes/formatting.php).
+	 *
+	 * Three-valued on purpose and easy to get wrong: '' for the empty string, the
+	 * colour itself for a 3- or 6-digit hex WITH the leading '#', and null for
+	 * anything else. Callers distinguish '' from null, so collapsing them to false
+	 * would change branch behaviour in the caller rather than just the return value.
+	 */
+	function sanitize_hex_color( $color ) {
+		if ( '' === $color ) {
+			return '';
+		}
+		if ( preg_match( '|^#([A-Fa-f0-9]{3}){1,2}$|', $color ) ) {
+			return $color;
+		}
+		return null;
+	}
+}
+
 /*
  * Options-table row metadata.
  *

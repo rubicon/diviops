@@ -560,14 +560,28 @@ trait DiviOps_Agent_GlobalColor {
 				? $existing['usedInPosts']
 				: [];
 
-			$color_map[ $id ] = [
-				'color'       => $color,
-				'folder'      => $folder,
-				'label'       => $label,
-				'lastUpdated' => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
-				'status'      => $status,
-				'usedInPosts' => $used_in_posts,
-			];
+			// MERGE, never replace (#380). Divi stores keys this plugin does not
+			// enumerate — `id` and `order` at minimum, plus anything a future Divi
+			// release adds — and a whole-array assignment silently destroyed every
+			// one of them. Observed four times out of four on a live palette: a
+			// colour updated through this handler came back without `id` or `order`,
+			// so Divi then rendered it in an unpredictable position.
+			//
+			// `$existing` is the stored entry, or [] for a create, so a new colour
+			// still gets a clean entry with nothing inherited from its siblings.
+			// The six computed keys below deliberately win over the stored copy —
+			// they are this write's payload; everything else survives untouched.
+			$color_map[ $id ] = array_merge(
+				$existing,
+				[
+					'color'       => $color,
+					'folder'      => $folder,
+					'label'       => $label,
+					'lastUpdated' => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
+					'status'      => $status,
+					'usedInPosts' => $used_in_posts,
+				]
+			);
 			$added++;
 		}
 
