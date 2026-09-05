@@ -128,9 +128,10 @@ Releases published before 2026-08-26 are raw automation output and are deliberat
 that way. Release notes are read at release time, and rewriting six of them would mean
 reconstructing retrospective prose from changelogs. The standard applies forward.
 
-### Deploying to the local dev site
+### Deploying to the dev site
 
-The dev site runs a **copy** of the plugin, not a symlink, so nothing that happens in git
+The dev site is `staging.colleyvillelions.com`, reached over SSH; `CLAUDE.md` carries its
+webroot. It runs a **copy** of the plugin, not a symlink, so nothing that happens in git
 reaches it. Outside a release, deploy from `main` whenever the drift gate reports the site
 behind:
 
@@ -145,24 +146,36 @@ version while the site still runs the old one, so the drift gate fails until the
 happens (#310). Deploying first is what makes the suite green on the commit that is about
 to ship, and the site then runs exactly what shipped rather than what shipped an hour ago.
 
-The script resolves the target from `DIVIOPS_LOCAL_SITE` (the WordPress root), falling
-back to the ``Local site: `…` `` path in `CLAUDE.md`. It refuses anything that is not a
-DiviOps Agent plugin directory, takes a timestamped backup before writing, verifies the
-installed `const VERSION` against the repository's, and lints the deployed PHP. Running it
-twice is safe — the second run reports `no change` and writes nothing.
+The script resolves the target from `DIVIOPS_LOCAL_SITE`, falling back to the
+``Local site: `…` `` path in `CLAUDE.md`. Either may be a WordPress root on this machine
+or `[user@]host:/absolute/root` for one reached over SSH — the remote shell is
+`DIVIOPS_SSH`, defaulting to `ssh -o BatchMode=yes -o ConnectTimeout=10`. It refuses
+anything that is not a DiviOps Agent plugin directory, takes a timestamped backup before
+writing, verifies the installed `const VERSION` against the repository's, and lints the
+deployed PHP — all four on the host when the target is remote, because running them here
+would inspect a path this machine does not have and pass for the wrong reason. Running it
+twice is safe: the second run reports `no change` and writes nothing.
 
-Two things it deliberately does not do. It is **not** wired into CI: the site is LocalWP
-on one machine, CI cannot reach it, and a step that silently no-ops is worse than no step.
-And it should **not** be run mid-build-session without saying so — plugin behaviour
-changing under a running page-write batch makes a bad payload indistinguishable from a
-semantics change.
+Two things it deliberately does not do. It is **not** wired into CI: CI holds no key for
+the site, and a step that silently no-ops is worse than no step. And it should **not** be
+run mid-build-session without saying so — plugin behaviour changing under a running
+page-write batch makes a bad payload indistinguishable from a semantics change.
 
 Forgetting this step is the bug (#292): v1.19.2 shipped the #288 validator fix while the
 site still ran 1.19.1, and a session building pages kept hitting the exact false positives
 that release had fixed. So the step is not the whole guard —
-`tests/test-local-site-drift.php` fails the suite whenever a local site is present and
-behind, naming both versions. On a machine with no local site it prints a loud `SKIP` with
-the reason, which is what every CI run does.
+`tests/test-local-site-drift.php` fails the suite whenever the site is present and behind,
+naming both versions.
+
+That check reports six states rather than a boolean, because they must not render the
+same way: `unconfigured`, `unreachable`, `absent`, `invalid`, `drift`, `current`. The
+last three decide pass or fail; the first three print a loud `SKIP` naming the reason,
+which is what every CI run does. `unreachable` is the one #340 added — a named host that
+did not answer. It is a skip and not a failure because CI and any offline laptop hit it,
+and a gate that fails there is a gate people learn to merge past; what it must never do
+is round down to `current`. Every one of the six is exercised against synthetic fixtures,
+including the remote transport, which is driven through a stub remote shell so the suite
+makes real assertions on a machine with no network and no key.
 
 ### If a release PR merges but no tag appears
 
