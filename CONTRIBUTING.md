@@ -42,7 +42,11 @@ No Composer, no PHPUnit, no build step. The suite is plain PHP:
 php tests/run.php
 ```
 
-Test files are `tests/test-*.php`. A few conventions that are not obvious:
+Test files are `tests/test-*.php`. The runner takes an optional **positional** substring
+filter — `php tests/run.php seo` runs the SEO files and nothing else. There is no
+`--filter=` flag.
+
+A few conventions that are not obvious:
 
 - **The runner fails when it discovers no test files, and when a filter matches nothing.**
   That is deliberate. A gate that reports what it inspected but derives pass/fail only
@@ -62,13 +66,235 @@ Test files are `tests/test-*.php`. A few conventions that are not obvious:
 
 - **Prefer a test that fails for the right reason.** If you are fixing a bug, show the
   test failing before the fix. Mutation-checking a new assertion — break the thing it
-  guards, confirm it fails — is cheap and catches assertions that never had teeth.
+  guards, confirm it fails — is cheap and catches assertions that never had teeth. The
+  full discipline is in "Characterization tests" below, and it applies to every test
+  here, not only characterization ones.
 
 The MCP server has its own checks:
 
 ```bash
 cd diviops-server && npm ci && npm run build && npm run smoke
 ```
+
+## Characterization tests
+
+Most of the suite is characterization: tests that pin what the inherited plugin code does
+**today**, right or wrong, so a later edit — an upstream adoption in particular — cannot
+change it silently.
+
+This matters more here than in a normal repository. The fork inherited roughly 24,000
+plugin lines with no tests and no CI, so these suites are the only safety net that code
+will ever have. **A characterization test that passes on broken code does not merely fail
+to catch the bug — it certifies it**, because the next person trusts it precisely for
+being green. Everything below exists to stop that.
+
+The convention below is enforced in review. It was re-derived verbally once per wave
+before it was written down, which cost at least one round trip to a fatal error over an
+invented `DiviOps_Test` class that has never existed in this repository.
+
+### The shape of a test file
+
+Flat and procedural. There is no test class, no `setUp`, no `tearDown`, no annotations,
+and no framework — `tests/run.php` is a single plain-PHP file with no dependencies. Every
+file in `tests/` follows the same shape:
+
+```php
+<?php
+// SPDX-License-Identifier: MIT
+/**
+ * One-line subject, then why this file exists (#<issue>).
+ *
+ * ... what is covered, what is deliberately NOT covered, and why.
+ *
+ * @package DiviOps
+ */
+
+require_once __DIR__ . '/wp-shim.php';
+
+// Fixtures, then assertions, top to bottom.
+```
+
+`tests/test-spdx-headers.php` enforces the SPDX line on every file. The docblock is not
+decoration: the reader who inherits your file needs the coverage measurement you did, the
+handlers you found uncovered, and the boundary you chose. Say how you measured, and say
+whether you ran a positive control — a name known to be present — before trusting a zero.
+
+The runner `require`s each file inside its own closure, so a top-level **variable** cannot
+leak into the runner's scope or into the next file. **Functions are not protected that
+way.** They are process-global once declared, so give every helper a per-file prefix:
+`diviops_pgc_call()`, `diviops_tbc_post()`, `preset_reassign_assert_refusal()`.
+
+A file that needs the SEO Framework or a Divi date hierarchy requires an extra stub
+alongside the shim; see "The shim contract" below.
+
+### The assertion surface
+
+Two global functions, both defined in `tests/run.php`, and that is the whole surface:
+
+```php
+assert_same( $expected, $actual, $message );  // strict ===
+assert_true( $actual, $message );             // delegates to assert_same( true, ... )
+```
+
+There is no `assert_false`, no `assert_throws`, no `assert_contains`, and no negation
+helper. Assert the positive form of what you mean — `assert_true( false === $data['ok'], … )`
+is the idiom for a falsy expectation, because it prints the actual value on failure.
+
+A failing assertion records and continues, so one run reports every failure rather than
+only the first.
+
+**The `$message` argument is not decoration — it is what a failure prints**, above the
+`expected:` / `actual:` JSON. The house style is a lowercase declarative sentence naming
+the fact the assertion proves, in the present tense:
+
+```php
+assert_same( 'not_found', $data['error']['code'], 'a missing parent page is not_found' );
+assert_same( 7, $stored, 'z_index is cast to int before storage' );
+```
+
+Not "should", not a restatement of the expression, not a case number. A reader who sees
+only the failure line should be able to tell what broke.
+
+### Reaching private statics
+
+Nearly everything under test is a private static on `DiviOps_Agent`. Three Reflection
+helpers in `tests/wp-shim.php` reach them, and they are not interchangeable:
+
+| Helper | Use it for |
+| --- | --- |
+| `diviops_call( $method, $args )` | Everything, unless a parameter binds by reference. |
+| `diviops_call_ref( $method, &$args )` | A method with a by-reference parameter. Today that is only `parse_block_tree`'s `&$counters`, which must accumulate across recursive calls. `ReflectionMethod::invoke()` with a spread copies the arguments and **silently** fails to bind the reference, so this uses `invokeArgs()` with the caller's array passed by reference. |
+| `diviops_call_static( $method, $args )` | Helpers taking plain positional arguments instead of a REST request — `media_ip_is_reserved()`, `media_url_is_safe()`. Delegates to `diviops_call_ref()`, so a `&$reason` element still binds through. |
+
+Getting this wrong does not error. It produces an assertion that passes against an
+argument the method never actually mutated.
+
+### Markers: pinning behaviour you believe is wrong
+
+Characterization pins current behaviour **including bugs**. Do not fix a bug in a
+characterization PR. Pin it as it is, mark the assertion inline, and list the marked
+assertions in the PR body so that a later, correct fix does not read as a regression.
+
+| Marker | Means | What a later reader does with it |
+| --- | --- | --- |
+| `DEFECT` | Believed wrong, pinned anyway. | Do **not** "fix" it by editing the expectation. The assertion failing is the signal it exists to produce; a real fix lands as its own issue that deliberately updates the line. |
+| `SUSPECTED DEFECT` | Same, where the verdict is not yet certain. | As `DEFECT`. Treat the failure as wanting a human decision. |
+| `QUIRK` | Same, where the behaviour is trap-shaped rather than plainly wrong. | As `DEFECT`. Nothing marked this way is an endorsement. |
+| `AMBIGUITY` | Behaviour recorded without a verdict, for the owner to judge. | Judge it, then re-mark it. |
+| `DELIBERATE` | A recorded decision, with the rationale in `FORK.md`. | Pinned so it stays deliberate. "Fixing" it would undo the decision. |
+| `FINDING` | An observation about the code that changes nothing. | Nothing. It is context. |
+
+`DEFECT`, `SUSPECTED DEFECT` and `QUIRK` are three spellings of the same idea in the
+existing corpus, which grew them independently. **Prefer `DEFECT` in new files**; the
+other two are kept here so a `grep` over the older suites still finds every pinned
+defect.
+
+Put the marker in the comment above the assertion *and* at the front of the `$message`,
+so it is visible in failure output:
+
+```php
+// DEFECT, pinned as-is. PHP's truthiness makes the string '0' falsy, so a
+// caller sending '0' gets a silent no-write with a success response.
+assert_same( true, $body['success'], 'DEFECT: and the response still reports success' );
+```
+
+### Where expected values come from
+
+**Expected values must derive from the real system, never from the harness.** The tell is
+not "the assertion is about ordering" — that is one instance of it. The tell is that the
+expected value was *read off a run* rather than derived from a source you can cite. Such
+an assertion is green for the wrong reason and stays green until someone edits the
+fixture.
+
+Live case: an assertion pinned which of two attached terms was reported first. It would
+have passed under real WordPress **by coincidence** — `'row'` sorts before `'section'`
+under `name ASC` — which is not the same as being correct.
+
+Every non-obvious expected value carries a comment naming its source: Divi's own PHP with
+the file and line, WordPress core, the handler's own branch body, or a documented
+contract. The existing suites do exactly this — status codes cited to the branch that
+sets them, length ceilings cited to the literal limits, the Divi customizer colour ids
+cited to `GlobalData.php`.
+
+Fixtures are chosen to reach one specific branch, and the earlier guards a fixture must
+survive to get there are noted inline. These checks run in a fixed order, and a careless
+fixture silently characterizes the wrong branch.
+
+### The shim contract: model core faithfully, or raise
+
+`tests/wp-shim.php` models just enough WordPress for the real plugin file to load
+unmodified. Two rules govern it.
+
+**Never approximate.** Where the shim cannot model an argument's effect it **raises**
+rather than ignoring it — see `diviops_test_query_refuse_unmodelled()` and
+`diviops_test_object_terms_refuse_unmodelled()`. An ignored argument returns a plausible
+answer, and a test driven through it goes green on broken code. This fork shipped that
+once: the shim compared `post_type` with `!==`, so the array argument every multi-post-type
+scanner passes matched nothing and read as "the site has no such posts". Every test
+through it passed. A per-argument waiver exists for the case where refusing would delete a
+handler's only coverage; it is per argument name, never a blanket switch, and the waiver
+is the test author's to justify in a comment.
+
+**A characterization suite may not widen the shared shim.** Bending the harness to make
+your own test pass produces a false green that outlives the test, and the shim is often
+being edited concurrently. There are exactly two acceptable outcomes:
+
+1. **A new dedicated stub file**, named for your suite and required alongside the shim.
+   Precedents: `tests/wp-date-hierarchy-shim.php`, `tests/preset-characterization-stubs.php`,
+   `tests/variable-characterization-stubs.php`. Everything in one is additive, guarded by
+   `function_exists`/`class_exists`, transcribed from core with the source line cited, and
+   models a **primitive** — never the behaviour under test.
+2. **A reported gap**, naming the stub that would be required. Leaving a branch
+   uncharacterized and saying so is better than faking it.
+
+Where a primitive is called behind `function_exists()` in the plugin, leaving it undefined
+is a legitimate runtime shape — pin the behaviour with that branch skipped rather than
+inventing a model the harness cannot check. `tests/test-wp-shim-*-contract.php` characterize
+the shim itself against core's contract; add to those when you extend it.
+
+### Mutation-check every assertion
+
+A new assertion is not finished until it has been shown failing, with the real output.
+
+1. **Prove red first.** Break the thing the assertion guards, run the suite, and read the
+   failure. An assertion that has never been red has no established teeth.
+2. **Back the file up to a scratch directory first**, and restore from that copy.
+   **Never `git checkout --`** to undo a mutation: it restores from `HEAD` and has eaten
+   uncommitted work in this repository.
+3. **Verify the mutation actually landed.** Compare `shasum` of the file before and after.
+   A `sed` that matched nothing produces a `PASS` byte-identical to a surviving mutant,
+   and `git diff --numstat` is empty for a full-file revert too, so neither a green run
+   nor an empty diff distinguishes the two.
+4. **Read which failure you got: a fatal is not a kill.** The runner exits `1` when an
+   assertion fails and `255` when PHP fatals, and a mutation that breaks the file's syntax
+   or calls a method statically that is not static goes red without any assertion having
+   noticed anything. Check the exit code and the failure text, not just "it went red".
+   This is not hypothetical — the gate for this very section had a surviving mutant hidden
+   behind a fatal on its first matrix run.
+5. **A surviving mutant is a fixture hole, not an acceptable matrix line.** If a mutation
+   does not break the test, that is proof the fixture cannot observe the mutated branch.
+   Fix the fixture and re-run until it dies. Do not record it as "the test is broader than
+   that mutation". The usual shape of the hole is a fixture holding only the happy case:
+   no anonymous request, no dangling reference, no adversarial input.
+
+Live case, 2026-09-02: seven guards were mutation-tested, six died correctly, and one
+survived because the fixture built its lookup from pre-mutation state. Reported as-is,
+that line would have certified an unguarded path as guarded.
+
+Say in the PR body which mutations you ran and what each did to the suite.
+
+### Gates must assert they inspected something
+
+A gate that reports what it inspected but derives pass/fail only from problems-found
+passes while inspecting nothing. This repository has been bitten three times, which is why
+`tests/run.php` fails on empty discovery and on a filter that matches nothing.
+
+Applied to a gate you write: count what you inspected and assert the count is non-zero
+before asserting anything about the findings. A bare `strpos` for a common word matches
+unrelated prose and reports green against a document that says nothing — match qualified,
+distinctive strings instead, and prefer reading the convention out of its source over
+restating it, so the source cannot change while the gate keeps enforcing the old wording.
+`tests/test-skill-verification-tiers.php` is the model.
 
 ## Four identifiers that must never be renamed
 
