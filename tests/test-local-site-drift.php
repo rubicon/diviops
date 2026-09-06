@@ -671,6 +671,57 @@ assert_same( 1, diviops_drift_test_backups( $root_remote ), 'a deploy that could
 
 putenv( 'DIVIOPS_SSH' );
 
+/* -------------------------------------------------------------------------
+ * The default remote shell must be able to run a command (#412).
+ *
+ * This gate went blind through an entire Divi upgrade and stayed green. The default was
+ * `ssh -o BatchMode=yes -o ConnectTimeout=10`, and the staging host's ssh_config
+ * deliberately sets `RequestTTY yes` + `RemoteCommand cd <webroot> && bash` so an
+ * interactive login lands in the webroot. OpenSSH refuses to run a command argument when a
+ * RemoteCommand is configured:
+ *
+ *     $ ssh -o BatchMode=yes staging.colleyvillelions.com 'wp option get home'
+ *     Cannot execute command-line and remote command.     # exit 255
+ *
+ * Every probe died at 255, which the gate reads as "unreachable" and reports as SKIP — inside
+ * a suite that then prints PASS. The config is a deliberate ergonomic choice and is not the
+ * thing to change; the tooling has to be robust to it. `RemoteCommand=none` and
+ * `RequestTTY=no` are correct on a host with no RemoteCommand too, so this costs nothing.
+ *
+ * Asserted on the string rather than by connecting, so it runs on every machine including CI,
+ * where there is no host to reach.
+ * ---------------------------------------------------------------------- */
+
+$diviops_drift_default_shell = diviops_site_remote_shell();
+assert_true(
+	false !== strpos( $diviops_drift_default_shell, 'RemoteCommand=none' ),
+	'the default remote shell neutralises a RemoteCommand from ssh_config, or every probe exits 255 and the gate skips (#412)'
+);
+assert_true(
+	false !== strpos( $diviops_drift_default_shell, 'RequestTTY=no' ),
+	'and does not request a TTY, which a configured RequestTTY would otherwise force'
+);
+assert_true(
+	false !== strpos( $diviops_drift_default_shell, 'BatchMode=yes' ),
+	'while still refusing to prompt — an unattended run must fail rather than hang'
+);
+
+// The deploy script builds its own copy of this default. Two copies that can disagree is how
+// one of them goes stale: the drift gate and the deploy would then reach different hosts, or
+// one would work while the other silently could not.
+$diviops_drift_deploy_src = (string) file_get_contents( $root . '/scripts/deploy-local-site.sh' );
+assert_true( strlen( $diviops_drift_deploy_src ) > 500, 'deploy-local-site.sh loaded — positive control for the match below' );
+assert_same(
+	1,
+	preg_match( '/SSH="\$\{DIVIOPS_SSH:-([^}]*)\}"/', $diviops_drift_deploy_src, $diviops_drift_deploy_m ),
+	'deploy-local-site.sh still builds its remote shell from a DIVIOPS_SSH default this test can read'
+);
+assert_same(
+	$diviops_drift_default_shell,
+	$diviops_drift_deploy_m[1],
+	'the deploy script and the drift gate use the identical default remote shell (#412)'
+);
+
 diviops_drift_test_rmtree( $tmp );
 
 /* -------------------------------------------------------------------------
