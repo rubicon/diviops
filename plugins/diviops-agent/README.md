@@ -95,7 +95,7 @@ See the [DiviOps MCP Server README](../../diviops-server/) for full setup and th
 
 ## Capabilities
 
-The plugin advertises 123 capability keys through the handshake. The MCP server gates its 104 plugin-backed tools against those keys and adds 12 server-local tools of its own, for **116 always-on tools** in total. Keys outnumber plugin-backed tools because some advertise a sub-feature of a tool rather than the tool itself (`variable_create_gradient`, the `*_backup` rollback keys, the `*_storage_multipath_v1` contract keys). For one row per tool, see the [per-tool reference](../../diviops-server/README.md#per-tool-reference).
+The plugin advertises 124 capability keys through the handshake. The MCP server gates its 104 plugin-backed tools against those keys and adds 12 server-local tools of its own, for **116 always-on tools** in total. Keys outnumber plugin-backed tools because some advertise a sub-feature of a tool rather than the tool itself (`variable_create_gradient`, the `*_backup` rollback keys, the `*_storage_multipath_v1` contract keys). For one row per tool, see the [per-tool reference](../../diviops-server/README.md#per-tool-reference).
 
 - **Page building** — Divi page/section/module/canvas CRUD; Theme Builder layouts + templates
 - **Data model reasoning** — module schema introspection, post meta surveys

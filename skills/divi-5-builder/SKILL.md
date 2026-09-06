@@ -49,6 +49,28 @@ Read the right file for the task at hand — don't load everything.
 9. **Always use section/row/column structure**: Wrapperless top-level modules lose styling
 10. **Cache invalidation**: Page, Theme Builder, canvas, revision and rollback writes invalidate the compiled CSS **for the post they changed**. Global colour, font and variable writes invalidate it **site-wide**, because a design token belongs to no single post. Each of those returns a `cache` block reporting `status` (`invalidated` or `unavailable`) and how much it freed — read it rather than assuming, since a host where WordPress cannot initialise its filesystem API reports `unavailable` and clears nothing. **Preset writes are the exception and invalidate nothing** ([#403](https://github.com/rubicon/diviops/issues/403)); after `diviops_preset_create`, `_update`, `_delete`, `_set_default` or `_cleanup`, call `diviops_meta_flush_cache {all:true}` yourself. Stale styles after any of these is a server-side cache, not a browser one — a hard refresh cannot fix it.
 
+### Authoring a design system from a style guide
+
+`diviops_design_system_apply` applies a whole colour token set in one call, instead of one
+`diviops_global_color_create` per token.
+
+- **Deterministic ids** — `gcid-<namespace>-<slug>` — so re-running an updated style guide
+  **updates** rather than duplicating. `overwrite=false` (the default) skips existing ids and
+  reports each with a reason; `overwrite=true` updates in place, preserving `order` and every
+  Divi-owned key the writer does not enumerate.
+- **Derived colours stay derived.** A token given `derived_from` plus `settings`
+  (`lightness` / `saturation` / `opacity`, integers) is stored as a real Divi `$variable()`
+  reference, so changing the base colour still cascades. Nearly half a mature palette is this
+  shape; emitting flat hex instead would silently break every one of those relationships.
+- **It refuses rather than guesses.** A token with neither `value` nor `derived_from` is
+  rejected — the tool never invents a colour. So are a dependency cycle, a `derived_from` that
+  resolves to nothing, an unrecognised setting, and a name that would need rewriting to become
+  an id. Every refusal names the token and its index.
+- **All-or-nothing.** One bad token refuses the whole payload and writes nothing, so you never
+  have to work out which half landed. Use `dry_run` to see the plan first.
+- Colours only for now. Fonts and non-colour variables still go through
+  `diviops_global_font_create` and `diviops_variable_create`.
+
 ### Native-first authoring and custom components
 
 Prefer editable native Divi modules. When they cannot reasonably meet the
