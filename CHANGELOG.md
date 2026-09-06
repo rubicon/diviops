@@ -10,6 +10,20 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.23.0](https://github.com/rubicon/diviops/compare/v1.22.1...v1.23.0) (2026-09-06)
+
+
+### Features
+
+* **#392:** apply a design-token set to a live Divi palette in one call ([#409](https://github.com/rubicon/diviops/issues/409)) ([426cb43](https://github.com/rubicon/diviops/commit/426cb435ff3d497263e0154325dff33a8ba426d8)), closes [#392](https://github.com/rubicon/diviops/issues/392)
+* **#392:** style-guide ingestion skill, gated against the tool's real contract ([#410](https://github.com/rubicon/diviops/issues/410)) ([2fd0cee](https://github.com/rubicon/diviops/commit/2fd0ceefd0d1607f45deac5893d376e716716582)), closes [#392](https://github.com/rubicon/diviops/issues/392)
+
+
+### Bug Fixes
+
+* **#381:** invalidate the Divi CSS cache site-wide on global token writes ([#404](https://github.com/rubicon/diviops/issues/404)) ([12a8d4b](https://github.com/rubicon/diviops/commit/12a8d4b75ec66f51d9df787918d41c23cd20617f)), closes [#381](https://github.com/rubicon/diviops/issues/381)
+* **#393:** use Divi's own status vocabulary per surface, and refuse instead of coercing ([#407](https://github.com/rubicon/diviops/issues/407)) ([5500f7e](https://github.com/rubicon/diviops/commit/5500f7ed8a8dfacf4f223402160d80f186610627)), closes [#393](https://github.com/rubicon/diviops/issues/393)
+
 ## [1.22.1](https://github.com/rubicon/diviops/compare/v1.22.0...v1.22.1) (2026-09-05)
 
 
