@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.14.0...mcp-server-v1.15.0) (2026-09-06)
+
+
+### Features
+
+* **#392:** apply a design-token set to a live Divi palette in one call ([#409](https://github.com/rubicon/diviops/issues/409)) ([426cb43](https://github.com/rubicon/diviops/commit/426cb435ff3d497263e0154325dff33a8ba426d8)), closes [#392](https://github.com/rubicon/diviops/issues/392)
+
 ## [1.14.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.13.0...mcp-server-v1.14.0) (2026-09-04)
 
 
