@@ -38,17 +38,20 @@ trait DiviOps_Agent_DesignSystem {
 	/**
 	 * The settings a derived colour may carry.
 	 *
-	 * Measured from the live staging palette (Divi 5.12.0), where 47 of 99 colours are
-	 * references. Every observed entry uses one or more of these three keys with integer
-	 * values, e.g.
-	 *   $variable({"type":"color","value":{"name":"gcid-primary-color",
-	 *              "settings":{"lightness":34,"opacity":20}}})$
+	 * Read from Divi 5.12.0's OWN source, not from observed data: `GlobalData.php:177`
+	 * documents "The color settings containing hue, saturation, lightness, and opacity",
+	 * and `:187` reads `$settings['hue'] ?? 0`.
+	 *
+	 * A first draft listed only lightness/saturation/opacity, derived from the 47 reference
+	 * entries on the live palette — none of which happens to carry a hue. That is measuring
+	 * the sample instead of the contract, and it made a legal Divi setting look like a typo:
+	 * a hue-shifted token would have been refused as "unrecognised".
 	 *
 	 * A private static function rather than a constant: traits carry no constants below
 	 * PHP 8.2 and this plugin's floor is 7.4.
 	 */
 	private static function design_system_color_settings_keys(): array {
-		return [ 'lightness', 'saturation', 'opacity' ];
+		return [ 'hue', 'saturation', 'lightness', 'opacity' ];
 	}
 
 	/**
@@ -242,6 +245,19 @@ trait DiviOps_Agent_DesignSystem {
 				return self::design_system_reject( 'name', null, $idx, 'each colour needs a name.' );
 			}
 
+			// Guard scalarity BEFORE any (string) cast: casting an array yields the literal
+			// "Array", which would sail through every check below and be stored as a colour.
+			foreach ( [ 'value', 'derived_from', 'label', 'status' ] as $scalar_field ) {
+				if ( array_key_exists( $scalar_field, $c ) && ! is_scalar( $c[ $scalar_field ] ) && null !== $c[ $scalar_field ] ) {
+					return self::design_system_reject(
+						$scalar_field,
+						$name,
+						$idx,
+						sprintf( "colour '%s' field '%s' must be a string.", $name, $scalar_field )
+					);
+				}
+			}
+
 			$has_value   = array_key_exists( 'value', $c ) && '' !== (string) $c['value'];
 			$has_derived = array_key_exists( 'derived_from', $c ) && '' !== (string) $c['derived_from'];
 
@@ -300,8 +316,10 @@ trait DiviOps_Agent_DesignSystem {
 					}
 					// A float would be silently truncated by the cast below, and a silently
 					// different number is a silently different colour.
+					// `ctype_digit( ltrim( $val, '-' ) )` accepted '--5' and cast it to 0 —
+					// a silently different colour. Match one optional leading minus only.
 					$is_intish = is_int( $val )
-						|| ( is_string( $val ) && '' !== $val && ctype_digit( ltrim( $val, '-' ) ) );
+						|| ( is_string( $val ) && 1 === preg_match( '/^-?[0-9]+$/', $val ) );
 					if ( ! $is_intish ) {
 						return self::design_system_reject(
 							(string) $key,
@@ -333,12 +351,34 @@ trait DiviOps_Agent_DesignSystem {
 				}
 			}
 
+			// Validate the literal through the SAME sanitizer the sibling writer uses.
+			// Without this the handler stored any string at all as a colour.
+			$value = null;
+			if ( $has_value ) {
+				$value = self::sanitize_color( (string) $c['value'] );
+				if ( null === $value ) {
+					return self::design_system_reject(
+						'value',
+						$name,
+						$idx,
+						sprintf(
+							"colour '%s' value is not a valid CSS colour (hex #rgb/#rrggbb/#rrggbbaa, or rgb()/rgba()/hsl()/hsla()).",
+							$name
+						)
+					);
+				}
+			}
+
 			$tokens[] = [
 				'name'         => $name,
-				'value'        => $has_value ? (string) $c['value'] : null,
+				'value'        => $value,
 				'derived_from' => $has_derived ? (string) $c['derived_from'] : null,
 				'settings'     => $settings,
-				'label'        => isset( $c['label'] ) && is_string( $c['label'] ) ? $c['label'] : $name,
+				// null means "omitted": preserved from the stored entry on update, defaulted
+				// to the name only on create. Previously an omitted label silently
+				// overwrote the stored one while an omitted status was preserved — two
+				// different rules for the same situation, in the same record.
+				'label'        => array_key_exists( 'label', $c ) ? sanitize_text_field( (string) $c['label'] ) : null,
 				'status'       => $status,
 				'index'        => $idx,
 			];
@@ -385,11 +425,25 @@ trait DiviOps_Agent_DesignSystem {
 			return self::envelope_error( $validated['code'], $validated['message'], null, 400, $validated['data'] );
 		}
 
+		// maybe_unserialize, exactly as global_color_upsert does at trait-global-color.php:444.
+		// Divi stores this option serialized on some substrates. Reading it with a bare
+		// is_array() check treated a serialized string as "no data", and the write-back then
+		// replaced the WHOLE option — destroying global_fonts, global_variables and every
+		// other key living under et_global_data, not merely the palette.
 		$raw         = et_get_option( 'et_global_data' );
-		$global_data = is_array( $raw ) ? $raw : [];
-		$color_map   = isset( $global_data['global_colors'] ) && is_array( $global_data['global_colors'] )
-			? $global_data['global_colors']
-			: [];
+		$global_data = ! empty( $raw ) ? maybe_unserialize( $raw ) : [];
+		$global_data = self::normalize_storage_array( $global_data );
+		if ( null === $global_data ) {
+			return self::envelope_error(
+				'invalid_state',
+				'et_global_data is present but is not an array after unserializing, so this tool cannot safely merge into it.',
+				'Refusing rather than overwriting: a write here would replace every key under et_global_data, including global_fonts and global_variables.',
+				409,
+				[ 'option' => 'et_divi.et_global_data' ]
+			);
+		}
+		$color_map = self::normalize_storage_array( $global_data['global_colors'] ?? null );
+		$color_map = is_array( $color_map ) ? $color_map : [];
 
 		$existing_ids = [];
 		foreach ( array_keys( $color_map ) as $existing_id ) {
@@ -403,7 +457,8 @@ trait DiviOps_Agent_DesignSystem {
 
 		// Resolve every id BEFORE writing anything, so an unslugifiable name late in the
 		// payload cannot leave the earlier half applied.
-		$ids = [];
+		$ids   = [];
+		$minted = [];
 		foreach ( $ordered['tokens'] as $t ) {
 			$id = self::design_system_token_id( 'gcid', $namespace, $t['name'] );
 			if ( null === $id ) {
@@ -418,7 +473,69 @@ trait DiviOps_Agent_DesignSystem {
 					[ 'field' => 'name', 'token' => $t['name'], 'index' => $t['index'] ]
 				);
 			}
+
+			// Hold the minted id to the SAME contract the sibling writer enforces, rather
+			// than trusting that concatenation produced a legal one. Two writers to one
+			// registry must not disagree about what a valid id is.
+			//
+			// This catches what the name-level slug cannot: `namespace` is validated by
+			// validate_name_prefix(), which is the gvid-* charset and permits `_`. A
+			// namespace of "my_brand" minted `gcid-my_brand-primary`, which Divi's own
+			// gcid scanner (DetectFeature.php:138, `gcid-[0-9a-z-]*`) truncates to
+			// `gcid-my` — so the :root custom property is never emitted and the colour
+			// silently fails to render. It also enforces the 80-char suffix cap and the
+			// customizer-locked reserved ids, both of which were writable here.
+			$checked = self::validate_global_color_id( $id );
+			if ( is_wp_error( $checked ) ) {
+				$err_data = (array) $checked->get_error_data();
+				return self::envelope_error(
+					'reserved_id' === $checked->get_error_code() ? 'variable.customizer_default_immutable' : 'invalid_input',
+					sprintf( "colour '%s': %s", $t['name'], $checked->get_error_message() ),
+					'The id is derived from namespace + name; adjust either so the result matches [0-9a-z-]{1,80} and is not customizer-bound.',
+					isset( $err_data['status'] ) ? (int) $err_data['status'] : 400,
+					[ 'field' => 'name', 'token' => $t['name'], 'index' => $t['index'], 'id' => $id ]
+				);
+			}
+
+			// Two names can mint one id — "Brand Blue" and "brand blue" both slug to
+			// brand-blue, and so do two identical names. Last-wins would silently drop a
+			// token the caller supplied, and would make the dry-run count disagree with the
+			// real one.
+			if ( isset( $minted[ $id ] ) ) {
+				return self::envelope_error(
+					'invalid_input',
+					sprintf(
+						"colours '%s' and '%s' both resolve to the id %s.",
+						$minted[ $id ],
+						$t['name'],
+						$id
+					),
+					'Ids are case-insensitive and whitespace-collapsing. Rename one of the two tokens.',
+					400,
+					[ 'field' => 'name', 'token' => $t['name'], 'index' => $t['index'], 'id' => $id ]
+				);
+			}
+			$minted[ $id ]     = $t['name'];
 			$ids[ $t['name'] ] = $id;
+		}
+
+		// The cycle check in design_system_order_colors() runs in NAME space, which cannot
+		// see a token whose derived_from names its own minted id. Re-check in id space now
+		// that every id exists.
+		foreach ( $ordered['tokens'] as $t ) {
+			if ( null === $t['derived_from'] ) {
+				continue;
+			}
+			$target = isset( $ids[ $t['derived_from'] ] ) ? $ids[ $t['derived_from'] ] : $t['derived_from'];
+			if ( $target === $ids[ $t['name'] ] ) {
+				return self::envelope_error(
+					'invalid_input',
+					sprintf( "colour '%s' derives from itself once ids are resolved (%s).", $t['name'], $target ),
+					'Divi cannot resolve a self-referential colour; it renders as nothing with no error.',
+					400,
+					[ 'field' => 'derived_from', 'token' => $t['name'], 'index' => $t['index'], 'id' => $target ]
+				);
+			}
 		}
 
 		// Offset past Divi's customizer-bound colours, as the other writers do.
@@ -462,12 +579,15 @@ trait DiviOps_Agent_DesignSystem {
 			$order = $exists && isset( $existing['order'] ) ? $existing['order'] : (string) ( ++$max_order );
 
 			// MERGE, never replace (#380): Divi stores keys this writer does not enumerate.
+			// An omitted label keeps the stored one, exactly as an omitted status does.
+			$label = null !== $t['label'] ? $t['label'] : ( $existing['label'] ?? $t['name'] );
+
 			$record = array_merge(
 				$existing,
 				[
 					'id'          => $id,
 					'color'       => $value,
-					'label'       => $t['label'],
+					'label'       => $label,
 					'status'      => $status,
 					'order'       => $order,
 					'lastUpdated' => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
@@ -483,7 +603,7 @@ trait DiviOps_Agent_DesignSystem {
 			$changes[] = [
 				'kind'   => $exists ? 'design_system.update' : 'design_system.create',
 				'target' => 'global_colors/' . $id,
-				'after'  => [ 'id' => $id, 'color' => $value, 'label' => $t['label'], 'status' => $status ],
+				'after'  => [ 'id' => $id, 'color' => $value, 'label' => $label, 'status' => $status ],
 			];
 
 			if ( $exists ) {

@@ -75,9 +75,36 @@ $orphan = diviops_ds_validate( array(
 ) );
 assert_same( false, $orphan['ok'] ?? null, 'settings without derived_from is refused' );
 
-// The three legal keys, measured off the live palette rather than chosen.
+// The four legal keys, read from Divi's OWN source: GlobalData.php:177 documents "hue,
+// saturation, lightness, and opacity" and :187 reads $settings['hue'] ?? 0. An earlier
+// revision listed only three, derived from the 47 reference entries on the live palette —
+// none of which carries a hue. That is measuring the sample instead of the contract, and it
+// made a legal Divi setting look like a typo.
 $settings = diviops_call( 'design_system_color_settings_keys', array() );
-assert_same( array( 'lightness', 'saturation', 'opacity' ), $settings, 'the settings vocabulary matches Divi' );
+assert_same( array( 'hue', 'saturation', 'lightness', 'opacity' ), $settings, 'the settings vocabulary matches Divi' );
+
+$hue = diviops_ds_validate( array(
+	array( 'name' => 'primary', 'value' => '#1B4D8F' ),
+	array( 'name' => 'shifted', 'derived_from' => 'primary', 'settings' => array( 'hue' => 30 ) ),
+) );
+assert_same( true, $hue['ok'] ?? null, 'a hue-shifted derived colour is accepted' );
+
+// '--5' passed a ctype_digit(ltrim(...,'-')) guard and cast to 0 — a silently different colour.
+$dbl = diviops_ds_validate( array(
+	array( 'name' => 'primary', 'value' => '#1B4D8F' ),
+	array( 'name' => 'tint', 'derived_from' => 'primary', 'settings' => array( 'lightness' => '--5' ) ),
+) );
+assert_same( false, $dbl['ok'] ?? null, "a malformed integer like '--5' is refused, not cast to 0" );
+
+// A colour value is validated through the same sanitizer the sibling writer uses.
+$junk = diviops_ds_validate( array( array( 'name' => 'primary', 'value' => 'not-a-colour' ) ) );
+assert_same( false, $junk['ok'] ?? null, 'a value that is not a CSS colour is refused' );
+$rgba = diviops_ds_validate( array( array( 'name' => 'primary', 'value' => 'rgba(0,0,0,0.3)' ) ) );
+assert_same( true, $rgba['ok'] ?? null, 'functional rgba() notation is accepted — Divi\'s own palette stores it' );
+
+// A non-scalar reached a (string) cast and became the literal "Array".
+$arr = diviops_ds_validate( array( array( 'name' => 'primary', 'value' => array( '#000000' ) ) ) );
+assert_same( false, $arr['ok'] ?? null, 'a non-scalar value is refused rather than cast to the string "Array"' );
 
 // Status follows #393's per-surface vocabulary rather than a second copy of the list.
 $badstatus = diviops_ds_validate( array(
@@ -288,3 +315,149 @@ $kept = diviops_ds_palette();
 assert_same( '#222222', $kept['gcid-acme-kept']['color'] ?? null, 'an update writes the new value' );
 assert_same( 'inactive', $kept['gcid-acme-kept']['status'] ?? null, 'and an omitted status keeps the stored one' );
 assert_same( '4', $kept['gcid-acme-kept']['order'] ?? null, 'and order survives the update' );
+
+// ---------------------------------------------------------------------------
+// Id contract. Two writers to one registry must not disagree about what a legal id is,
+// and the sibling writer's validate_global_color_id() is that contract.
+// ---------------------------------------------------------------------------
+
+et_update_option( 'et_global_data', array( 'global_colors' => array() ) );
+
+// validate_name_prefix() is the gvid-* charset and permits '_'. A gcid may not contain one:
+// Divi's own scanner (DetectFeature.php:138, gcid-[0-9a-z-]*) truncates gcid-my_brand-primary
+// to gcid-my, so the :root custom property is never emitted and the colour silently does not
+// render. Nothing errors anywhere, which is why this has to be refused at write time.
+$under = diviops_ds_apply( array( 'namespace' => 'my_brand', 'colors' => array(
+	array( 'name' => 'primary', 'value' => '#1B4D8F' ),
+) ) );
+assert_same( false, $under->get_data()['ok'] ?? null, 'an underscore in the namespace is refused — it mints an id Divi cannot resolve' );
+assert_same( 0, count( diviops_ds_palette() ), 'and nothing is written' );
+
+// The suffix after gcid- is capped at 80 chars by the same contract.
+$long = diviops_ds_apply( array( 'namespace' => 'acme', 'colors' => array(
+	array( 'name' => str_repeat( 'ab', 60 ), 'value' => '#1B4D8F' ),
+) ) );
+assert_same( false, $long->get_data()['ok'] ?? null, 'an over-length id is refused' );
+
+// The five customizer-bound colours are managed through WP Customizer; the sibling writers
+// answer 403 on them and this one must not be a back door.
+$locked = diviops_ds_apply( array( 'namespace' => 'primary', 'colors' => array(
+	array( 'name' => 'color', 'value' => '#1B4D8F' ),
+) ) );
+$ldata = $locked->get_data();
+assert_same( false, $ldata['ok'] ?? null, 'a customizer-bound id cannot be minted through this tool' );
+assert_same(
+	'variable.customizer_default_immutable',
+	$ldata['error']['code'] ?? null,
+	'and it answers with the same code the sibling writers use'
+);
+
+// Two names that mint one id are refused rather than silently collapsed last-wins, which
+// would drop a token the caller supplied and make dry_run disagree with the real run.
+$collide = diviops_ds_apply( array( 'namespace' => 'acme', 'colors' => array(
+	array( 'name' => 'Brand Blue', 'value' => '#1B4D8F' ),
+	array( 'name' => 'brand blue', 'value' => '#000000' ),
+) ) );
+assert_same( false, $collide->get_data()['ok'] ?? null, 'two names colliding on one id are refused' );
+assert_same( 0, count( diviops_ds_palette() ), 'and neither is written' );
+
+// ---------------------------------------------------------------------------
+// The critical one: et_global_data can be stored serialized, and it holds far more than
+// the palette. Reading it with a bare is_array() check treated a serialized string as "no
+// data", and the write-back then replaced the WHOLE option.
+// ---------------------------------------------------------------------------
+
+et_update_option( 'et_global_data', serialize( array(
+	'global_colors'    => array(),
+	'global_fonts'     => array( 'gfid-keepme' => array( 'family' => 'Inter' ) ),
+) ) );
+$ser = diviops_ds_apply( array( 'namespace' => 'acme', 'colors' => array(
+	array( 'name' => 'primary', 'value' => '#1B4D8F' ),
+) ) );
+assert_same( true, $ser->get_data()['ok'] ?? null, 'a serialized et_global_data is unserialized and written through' );
+$after_ser = et_get_option( 'et_global_data' );
+assert_true(
+	isset( $after_ser['global_fonts']['gfid-keepme'] ),
+	'and every sibling key under et_global_data survives — global_fonts is not destroyed'
+);
+assert_same( '#1B4D8F', $after_ser['global_colors']['gcid-acme-primary']['color'] ?? null, 'while the colour is still written' );
+
+// A value that is neither an array nor unserializable is refused rather than overwritten.
+et_update_option( 'et_global_data', 'not-serialized-and-not-an-array' );
+$corrupt = diviops_ds_apply( array( 'namespace' => 'acme', 'colors' => array(
+	array( 'name' => 'primary', 'value' => '#1B4D8F' ),
+) ) );
+assert_same( false, $corrupt->get_data()['ok'] ?? null, 'an unusable et_global_data is refused, not overwritten' );
+assert_same(
+	'not-serialized-and-not-an-array',
+	et_get_option( 'et_global_data' ),
+	'and the option is left exactly as it was'
+);
+
+// ---------------------------------------------------------------------------
+// The #380 merge this file's docblock leans on. Without an assertion, removing array_merge
+// left the whole suite green — the fixture's stored entry carried no key the writer does
+// not itself set, so there was nothing for the merge to preserve.
+// ---------------------------------------------------------------------------
+
+et_update_option( 'et_global_data', array( 'global_colors' => array(
+	'gcid-acme-merged' => array(
+		'id' => 'gcid-acme-merged', 'color' => '#111111', 'label' => 'Merged',
+		'status' => 'inactive', 'order' => '9', 'folder' => 'brand',
+		'usedInPosts' => array( 900390 ),
+		'customField' => 'divi-may-add-this',
+	),
+) ) );
+diviops_ds_apply( array( 'namespace' => 'acme', 'overwrite' => true, 'colors' => array(
+	array( 'name' => 'merged', 'value' => '#222222' ),
+) ) );
+$merged = diviops_ds_palette()['gcid-acme-merged'] ?? array();
+
+assert_same( '#222222', $merged['color'] ?? null, 'the requested field is written' );
+assert_same(
+	'divi-may-add-this',
+	$merged['customField'] ?? null,
+	'a key this fork does not enumerate survives the write — the merge is total (#380)'
+);
+assert_same( 'brand', $merged['folder'] ?? null, 'a stored folder is not blanked' );
+assert_same( array( 900390 ), $merged['usedInPosts'] ?? null, 'and Divi\'s usedInPosts index is preserved' );
+assert_same( 'Merged', $merged['label'] ?? null, 'an omitted label keeps the stored one, as an omitted status does' );
+assert_same( 'inactive', $merged['status'] ?? null, 'and the stored status is kept' );
+
+// ---------------------------------------------------------------------------
+// The dry-run plan must actually describe the change. An empty plan satisfied the earlier
+// "it reports itself as a dry run" assertion while describing nothing.
+// ---------------------------------------------------------------------------
+
+et_update_option( 'et_global_data', array( 'global_colors' => array() ) );
+$planned = diviops_ds_apply( array( 'namespace' => 'acme', 'dry_run' => true, 'colors' => array(
+	array( 'name' => 'primary', 'value' => '#1B4D8F' ),
+	array( 'name' => 'tint', 'derived_from' => 'primary', 'settings' => array( 'lightness' => 20 ) ),
+) ) );
+$pd = $planned->get_data()['data'] ?? array();
+assert_same( 2, count( $pd['plan']['changes'] ?? array() ), 'the dry-run plan names one change per token' );
+assert_same( 'design_system.create', $pd['plan']['changes'][0]['kind'] ?? null, 'and classifies a new token as a create' );
+assert_same( 'global_colors/gcid-acme-primary', $pd['plan']['changes'][0]['target'] ?? null, 'and names the id it would write' );
+assert_same( 2, $pd['created_count'] ?? null, 'and its counts match the plan' );
+
+// ---------------------------------------------------------------------------
+// The #381 rule: invalidate once per run, and NOT at all when nothing was written.
+// ---------------------------------------------------------------------------
+
+$nothing = diviops_ds_apply( array( 'namespace' => 'acme', 'colors' => array(
+	array( 'name' => 'primary', 'value' => '#1B4D8F' ),
+) ) );
+assert_same( 1, $nothing->get_data()['data']['created_count'] ?? null, 'the first run creates' );
+
+$rerun = diviops_ds_apply( array( 'namespace' => 'acme', 'colors' => array(
+	array( 'name' => 'primary', 'value' => '#1B4D8F' ),
+) ) );
+$rd = $rerun->get_data()['data'] ?? array();
+assert_same( 1, $rd['skipped_count'] ?? null, 'a re-run without overwrite skips' );
+// `?? ` fires on a present-but-null value too, so it cannot tell "absent" from "null".
+// array_key_exists can, and the distinction is the whole point: the key is always emitted,
+// and null is how it says "no clear was attempted".
+assert_true(
+	array_key_exists( 'cache', $rd ) && null === $rd['cache'],
+	'and clears no cache, because it wrote nothing'
+);

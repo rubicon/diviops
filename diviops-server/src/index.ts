@@ -5567,6 +5567,113 @@ registerPluginTool(
 );
 
 registerPluginTool(
+  "diviops_design_system_apply",
+  {
+    description:
+      "Apply a whole colour design system in one call, from a style guide's token set, instead of one diviops_global_color_create per token. " +
+      "Ids are DETERMINISTIC — gcid-<namespace>-<slug> — so re-running an updated style guide UPDATES the same tokens rather than duplicating them. " +
+      "overwrite=false (the default) skips ids that already exist and reports each in skipped[] with a reason; overwrite=true updates in place, " +
+      "preserving each entry's `order` and every Divi-owned key this tool does not set. " +
+      "DERIVED COLOURS STAY DERIVED: a token given `derived_from` plus optional `settings` (lightness / saturation / opacity, integers) is stored as a real " +
+      "Divi $variable() reference rather than a resolved hex, so changing the base colour still cascades to everything built on it. `derived_from` may name " +
+      "another token in the same payload or an id already on the site. " +
+      "IT REFUSES RATHER THAN GUESSES — this tool never invents a token value. A colour carrying neither `value` nor `derived_from` is rejected, as are: both at once, " +
+      "an unrecognised or non-integer setting, a status outside Divi's colour vocabulary (active | inactive | temporary), a `derived_from` that resolves to nothing, " +
+      "a dependency cycle, and a name that could not become an id without being silently rewritten. Every refusal names the offending token and its index. " +
+      "ALL-OR-NOTHING: one bad token refuses the entire payload and writes nothing, so you never have to work out which half landed. " +
+      "An omitted `status` keeps the stored one on update and defaults to active on create. Colours only — fonts and non-colour variables still go through " +
+      "diviops_global_font_create and diviops_variable_create. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; " +
+      "data carries created[] / updated[] / skipped[] with counts, and a `cache` block reporting the one site-wide CSS invalidation the run performs." +
+      DRY_RUN_DESC_SUFFIX,
+    inputSchema: {
+      colors: z
+        .array(
+          z.object({
+            name: z
+              .string()
+              .describe(
+                'Token name from the style guide, e.g. "primary" or "Primary 600". Slugged into the id; letters, digits, spaces and hyphens only. A name needing any other rewriting is REFUSED rather than sanitised, because a silent rewrite would alias this token onto a different one.',
+              ),
+            value: z
+              .string()
+              .optional()
+              .describe(
+                'Literal colour value, e.g. "#1B4D8F". Supply exactly one of value or derived_from — neither is refused (this tool never invents a value) and both is refused as ambiguous.',
+              ),
+            derived_from: z
+              .string()
+              .optional()
+              .describe(
+                'Name of another token in this payload, or an existing gcid-* id on the site, that this colour is derived from. Stored as a real Divi $variable() reference so the relationship survives.',
+              ),
+            settings: z
+              .object({
+                lightness: z.number().int().optional(),
+                saturation: z.number().int().optional(),
+                opacity: z.number().int().optional(),
+              })
+              .optional()
+              .describe(
+                "How this colour differs from the one it derives from. Only valid alongside derived_from. Unrecognised keys are refused, not dropped — a dropped setting is a silently different colour.",
+              ),
+            label: z
+              .string()
+              .optional()
+              .describe("Human-readable label shown in the Visual Builder picker. Defaults to name."),
+            status: z
+              .enum(["active", "inactive", "temporary"])
+              .optional()
+              .describe(
+                "Divi's colour status vocabulary. Omit to keep the stored status on update, or default to active on create. Note 'archived' is a gvid-* VARIABLE status and is refused here.",
+              ),
+          }),
+        )
+        .min(1)
+        .describe(
+          "The colour token set. Must be non-empty: a run that would write nothing is reported as a mistake rather than silently succeeding.",
+        ),
+      namespace: z
+        .string()
+        .optional()
+        .default("ds")
+        .describe(
+          'Namespace segment of every minted id, e.g. "acme" yields gcid-acme-primary. Keep it stable across re-runs — changing it mints a whole new token set rather than updating the existing one.',
+        ),
+      overwrite: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "false (default): existing ids are skipped and reported. true: existing ids are updated in place, preserving order and Divi-owned keys.",
+        ),
+      dry_run: z.boolean().optional().default(false).describe("Plan the apply without writing anything."),
+    },
+    // Conditional, for the same reason diviops_global_color_update is: ids are
+    // deterministic, so with overwrite=false a re-run is a pure no-op and with
+    // overwrite=true it converges to the same stored state. What is NOT identical is
+    // `lastUpdated`, which moves on every write, and the created/updated/skipped split,
+    // which differs between the first run and the second.
+    annotations: { idempotentHint: false },
+    _meta: { idempotent: "conditional" },
+  },
+  async ({ colors, namespace, overwrite, dry_run }) => {
+    const body: Record<string, unknown> = { colors };
+    if (namespace !== undefined) body.namespace = namespace;
+    if (overwrite !== undefined) body.overwrite = overwrite;
+    if (dry_run !== undefined) body.dry_run = dry_run;
+    const result = await wp.requestEnveloped("/design-system/apply", {
+      method: "POST",
+      body,
+    });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_design_system_apply") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
   "diviops_variable_create_fluid_system",
   {
     description:
