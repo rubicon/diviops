@@ -532,10 +532,15 @@ trait DiviOps_Agent_GlobalFont {
 		$global_data['global_fonts'] = $fonts;
 		et_update_option( 'et_global_data', $global_data );
 
+		// Site-wide, not per-post (#381). A global font has no owning post and can
+		// restyle every page, so the compiled CSS this write invalidates is all of it.
+		$cache = self::invalidate_divi_cache_sitewide();
+
 		return self::attach_meta(
 			self::envelope_success( [
 				'id'    => $id,
 				'font'  => $record,
+				'cache' => $cache,
 			] ),
 			[ 'canonical_path' => 'et_divi.et_global_data.global_fonts' ]
 		);
@@ -628,10 +633,15 @@ trait DiviOps_Agent_GlobalFont {
 		$global_data['global_fonts'] = $fonts;
 		et_update_option( 'et_global_data', $global_data );
 
+		// Site-wide, not per-post (#381). A global font has no owning post and can
+		// restyle every page, so the compiled CSS this write invalidates is all of it.
+		$cache = self::invalidate_divi_cache_sitewide();
+
 		return self::attach_meta(
 			self::envelope_success( [
-				'id'   => $id,
-				'font' => $record,
+				'id'    => $id,
+				'font'  => $record,
+				'cache' => $cache,
 			] ),
 			[ 'canonical_path' => 'et_divi.et_global_data.global_fonts' ]
 		);
@@ -752,6 +762,10 @@ trait DiviOps_Agent_GlobalFont {
 		$global_data['global_fonts'] = $fonts;
 		et_update_option( 'et_global_data', $global_data );
 
+		// Site-wide, not per-post (#381). A global font has no owning post and can
+		// restyle every page, so the compiled CSS this write invalidates is all of it.
+		$cache = self::invalidate_divi_cache_sitewide();
+
 		return self::attach_meta(
 			self::envelope_success( [
 				'deleted' => [
@@ -761,6 +775,7 @@ trait DiviOps_Agent_GlobalFont {
 					'forced' => $force,
 				],
 				'message' => "Font '{$id}' deleted.",
+				'cache'   => $cache,
 			] ),
 			[ 'canonical_path' => 'et_divi.et_global_data.global_fonts' ]
 		);

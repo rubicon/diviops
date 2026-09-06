@@ -47,7 +47,7 @@ Read the right file for the task at hand — don't load everything.
 7. **Font inheritance**: Set global fonts via theme options, skip explicit `family` on modules
 8. **Use semantic HTML**: Set `elementType` for SEO/accessibility (`header`, `nav`, `main`, `article`, `footer`)
 9. **Always use section/row/column structure**: Wrapperless top-level modules lose styling
-10. **Cache invalidation**: All write tools auto-invalidate Divi's CSS cache. If styles appear stale, hard-refresh the browser.
+10. **Cache invalidation**: Page, Theme Builder, canvas, revision and rollback writes invalidate the compiled CSS **for the post they changed**. Global colour, font and variable writes invalidate it **site-wide**, because a design token belongs to no single post. Each of those returns a `cache` block reporting `status` (`invalidated` or `unavailable`) and how much it freed — read it rather than assuming, since a host where WordPress cannot initialise its filesystem API reports `unavailable` and clears nothing. **Preset writes are the exception and invalidate nothing** ([#403](https://github.com/rubicon/diviops/issues/403)); after `diviops_preset_create`, `_update`, `_delete`, `_set_default` or `_cleanup`, call `diviops_meta_flush_cache {all:true}` yourself. Stale styles after any of these is a server-side cache, not a browser one — a hard refresh cannot fix it.
 
 ### Native-first authoring and custom components
 

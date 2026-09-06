@@ -617,11 +617,17 @@ trait DiviOps_Agent_GlobalColor {
 		$global_data['global_colors'] = $color_map;
 		et_update_option( 'et_global_data', $global_data );
 
+		// Site-wide, not per-post (#381). A palette entry has no owning post and can
+		// restyle every page, so the compiled CSS this write invalidates is all of it.
+		// Once per request, after the single write — not once per colour in $colors.
+		$cache = self::invalidate_divi_cache_sitewide();
+
 		return self::attach_meta(
 			self::envelope_success( [
 				'count'   => count( $color_map ),
 				'added'   => $added,
 				'colors'  => $color_map,
+				'cache'   => $cache,
 			] ),
 			[ 'canonical_path' => 'et_divi.et_global_data.global_colors' ]
 		);
@@ -769,6 +775,10 @@ trait DiviOps_Agent_GlobalColor {
 		$global_data['global_colors'] = $colors;
 		et_update_option( 'et_global_data', $global_data );
 
+		// Site-wide, not per-post (#381). A global colour has no owning post and can
+		// restyle every page, so the compiled CSS this write invalidates is all of it.
+		$cache = self::invalidate_divi_cache_sitewide();
+
 		return self::attach_meta(
 			self::envelope_success( [
 				'deleted' => [
@@ -778,6 +788,7 @@ trait DiviOps_Agent_GlobalColor {
 					'forced' => $force,
 				],
 				'message' => "Color '{$gcid}' deleted.",
+				'cache'   => $cache,
 			] ),
 			[ 'canonical_path' => 'et_divi.et_global_data.global_colors' ]
 		);
