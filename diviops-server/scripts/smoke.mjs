@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 // 104 plugin + 12 local registrations. The 30 Pro tools are deliberately NOT
 // counted: they register only when a live handshake reports the Pro target, so a
 // credential-free run must not see them.
-const EXPECTED_ALWAYS_ON = 116;
+const EXPECTED_ALWAYS_ON = 117;
 
 // A representative slice spanning several capability domains. If the registry
 // silently emptied or a domain stopped registering, a bare count check could

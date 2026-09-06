@@ -43,6 +43,7 @@ require_once __DIR__ . '/includes/trait-compatibility.php';
 require_once __DIR__ . '/includes/trait-seo.php';
 require_once __DIR__ . '/includes/trait-theme-builder.php';
 require_once __DIR__ . '/includes/trait-validate.php';
+require_once __DIR__ . '/includes/trait-design-system.php';
 require_once __DIR__ . '/includes/trait-variable.php';
 
 
@@ -71,6 +72,7 @@ class DiviOps_Agent {
 	use DiviOps_Agent_SEO;
 	use DiviOps_Agent_ThemeBuilder;
 	use DiviOps_Agent_Validate;
+	use DiviOps_Agent_DesignSystem;
 	use DiviOps_Agent_Variable;
 
 	/**
@@ -143,6 +145,8 @@ class DiviOps_Agent {
 		'cross_env_source_export_get', 'cross_env_target_context_get', 'cross_env_footer_layout_evidence',
 		'tb_layout_block_insert', 'tb_layout_block_insert_backup', 'tb_layout_get', 'tb_layout_update', 'tb_layout_update_backup', 'tb_template_create', 'tb_template_list',
 		'tb_template_trash',
+		// design system (#392) — bulk token authoring from a style guide
+		'design_system_apply',
 		// validate
 		'validate_blocks',
 		// page_id overload on validate_blocks + render_preview (#700) —
@@ -2267,6 +2271,19 @@ class DiviOps_Agent {
 			'callback'            => [ __CLASS__, 'variable_scan_orphans' ],
 			// Admin-only: response correlates variable IDs with page titles — inventory-leak risk (matches /preset/scan-orphans).
 			'permission_callback' => [ __CLASS__, 'check_admin_permission' ],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/design-system/apply', [
+			'methods'             => 'POST',
+			'callback'            => [ __CLASS__, 'design_system_apply' ],
+			// Admin-only: one call writes across the whole global colour registry.
+			'permission_callback' => [ __CLASS__, 'check_admin_permission' ],
+			'args'                => [
+				'namespace' => [ 'required' => false, 'type' => 'string', 'default' => 'ds' ],
+				'colors'    => [ 'required' => true,  'type' => 'array' ],
+				'dry_run'   => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
+				'overwrite' => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
+			],
 		] );
 
 		register_rest_route( self::REST_NAMESPACE, '/variable/create-fluid-system', [
