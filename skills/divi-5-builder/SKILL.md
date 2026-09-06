@@ -34,6 +34,7 @@ Read the right file for the task at hand — don't load everything.
 | SCF/ACF custom fields — discovery, JSON sync, dynamic-content binding | [scf-fields.md](references/scf-fields.md) |
 | Presets & cleanup | [presets.md](references/presets.md) |
 | Design system setup | [SKILL.md](#design-system-lifecycle) (below) → [presets.md](references/presets.md) |
+| Turning a style guide, brand guideline or token table into a live palette | [style-guide-ingestion.md](references/style-guide-ingestion.md) |
 | Page templates | [patterns/](references/patterns/) — SaaS landing, more coming |
 
 ## Workflow Best Practices
