@@ -1713,10 +1713,17 @@ assert_same( 403, $resp->get_status(), 'the customizer refusal carries HTTP 403'
 assert_same( 'wp_customizer', $data['error']['data']['managed_by'], 'error.data names the system that owns the value' );
 assert_same( 'Edit the corresponding theme option via WP Customizer instead.', $data['error']['hint'], 'the hint routes the caller to the Customizer' );
 
+// UPDATED by #406. This previously pinned a flat four-value list, which was the UNION of
+// three different Divi vocabularies rather than any one surface's. Characterizing it that way
+// certified the defect: `variable_update` accepted `inactive` on a `gvid-*`, stored it, and
+// the variable kept rendering, because Divi's front end reads only `archived` as the variable
+// soft-delete marker. `gvid-up` is a non-colour id, so the vocabulary here is the variable
+// one. See tests/test-variable-status-vocabulary.php for the per-bucket coverage.
 $resp = diviops_call( 'variable_update', array( diviops_variable_request( array( 'id' => 'gvid-up', 'status' => 'retired' ) ) ) );
 $data = $resp->get_data();
-assert_same( 'status must be one of: active, inactive, archived, temporary.', $data['error']['message'], 'status is validated against the four Divi statuses' );
-assert_same( array( 'active', 'inactive', 'archived', 'temporary' ), $data['error']['data']['allowed'], 'the status refusal lists the vocabulary' );
+assert_same( 'status must be one of: active, archived (this id is a global variable).', $data['error']['message'], "status is validated against Divi's variable vocabulary, and the message names the surface" );
+assert_same( array( 'active', 'archived' ), $data['error']['data']['allowed'], 'the status refusal lists the vocabulary for this bucket' );
+assert_same( 'global_variables', $data['error']['data']['surface'], 'and names which surface decided it' );
 
 $resp = diviops_call( 'variable_update', array( diviops_variable_request( array( 'id' => 'gvid-up', 'value' => array( 'a' ) ) ) ) );
 $data = $resp->get_data();
