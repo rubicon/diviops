@@ -55,6 +55,25 @@ trait DiviOps_Agent_GlobalColor {
 	 * 5.5.x substrate, but kept as a defensive probe in case a non-row-
 	 * stored layout writes it.
 	 */
+	/**
+	 * Divi's status vocabulary for GLOBAL COLOURS, and only for colours (#393).
+	 *
+	 * Read from Divi 5.12.0's own source — `GlobalData.php` documents
+	 * `active | inactive | temporary` for colour entries at :119, :339, :381 and :472.
+	 * It is NOT the same list as fonts (`active | inactive`, :427) or non-colour
+	 * variables (`active | archived`, :883 and :1056-1077), which is exactly how the
+	 * bug arose: this writer previously used the *variable* list, so it admitted
+	 * `archived` — a value Divi never writes to a colour — and refused `inactive`, which
+	 * 42 of the 99 colours on the live palette carry.
+	 *
+	 * Derived from Divi, never from what this plugin already had. The old list looked
+	 * plausible precisely because `archived` is a real Divi status, just on another
+	 * surface.
+	 */
+	private static function valid_global_color_statuses(): array {
+		return [ 'active', 'inactive', 'temporary' ];
+	}
+
 	private static function global_color_paths(): array {
 		return [
 			[ 'path' => 'et_divi.et_global_data.global_colors', 'provenance' => 'et_divi_nested' ],
@@ -550,8 +569,37 @@ trait DiviOps_Agent_GlobalColor {
 				? sanitize_text_field( $c['folder'] )
 				: ( $existing['folder'] ?? '' );
 
+			// Refuse, never coerce (#393). The old ternary fell through to 'active' on
+			// anything unrecognised, so `status: "inactive"` ACTIVATED the colour and
+			// reported success — the caller's intent inverted, silently. Replacing one
+			// silent coercion with a different one would fix nothing, so an unknown
+			// status is an error.
+			//
+			// The default when the caller omits `status` is the STORED value, falling
+			// back to 'active' only for a genuinely new entry. That default is not
+			// validated against the allowlist: a value Divi itself wrote must survive a
+			// write that never mentioned it, even if a future Divi adds a status this
+			// list has not caught up with.
 			$status_raw = $c['status'] ?? ( $existing['status'] ?? 'active' );
-			$status     = in_array( $status_raw, [ 'active', 'archived' ], true ) ? $status_raw : 'active';
+			$status     = $status_raw;
+			if ( array_key_exists( 'status', $c ) && ! in_array( $status_raw, self::valid_global_color_statuses(), true ) ) {
+				return self::envelope_error(
+					'invalid_input',
+					sprintf(
+						'colors[%d]: status must be one of: %s.',
+						$idx,
+						implode( ', ', self::valid_global_color_statuses() )
+					),
+					"Divi uses a different status vocabulary per surface: 'archived' belongs to gvid-* variables, not to colours.",
+					400,
+					[
+						'field'        => sprintf( 'colors[%d].status', $idx ),
+						'allowed'      => self::valid_global_color_statuses(),
+						'received'     => is_scalar( $status_raw ) ? (string) $status_raw : null,
+						'colors_index' => $idx,
+					]
+				);
+			}
 
 			// Preserve usedInPosts on update — Divi tracks where each color is
 			// referenced; our writer should never clobber that index. Read from
