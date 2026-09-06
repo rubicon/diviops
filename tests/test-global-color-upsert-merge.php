@@ -104,30 +104,36 @@ assert_same( array( 900390 ), $omitted['usedInPosts'] ?? null, 'usedInPosts is s
 // ---------------------------------------------------------------------------
 
 diviops_t380_seed();
+// 'inactive', not 'archived': #393 established that Divi's colour vocabulary is
+// active | inactive | temporary (GlobalData.php:119) and that `archived` belongs to
+// gvid-* variables (:883). A colour write carrying 'archived' is now refused, so using
+// it here would characterize the refusal path rather than the overwrite this block is about.
 diviops_t380_upsert( array( array(
 	'id'     => 'gcid-xebc8wg4kb',
 	'color'  => '#000000',
 	'label'  => 'black now',
-	'status' => 'archived',
+	'status' => 'inactive',
 ) ) );
 $written = diviops_t380_stored();
 
 assert_same( '#000000', $written['color'] ?? null, 'a provided color overwrites the stored one' );
 assert_same( 'black now', $written['label'] ?? null, 'a provided label overwrites the stored one' );
-assert_same( 'archived', $written['status'] ?? null, 'a provided status overwrites the stored one' );
+assert_same( 'inactive', $written['status'] ?? null, 'a provided status overwrites the stored one' );
 assert_same( '24', $written['order'] ?? null, 'order is preserved alongside a real update' );
 
-// DEFECT (#393, not fixed here): the status allowlist is [active, archived], but the
-// live palette uses `inactive` on 42 of 99 colours and `archived` on none. An
-// unrecognised status is silently coerced to 'active' rather than refused, so asking
-// to deactivate a colour ACTIVATES it. This assertion pins the current wrong
-// behaviour so the eventual fix reads as an intentional change, not a regression.
+// FIXED in #393. This assertion was pinned here as a marked DEFECT while #380 landed —
+// the allowlist was [active, archived], so an unrecognised status fell through to
+// 'active' and asking to deactivate a colour ACTIVATED it. Divi's real colour
+// vocabulary is active | inactive | temporary (GlobalData.php:119); `archived` is the
+// gvid-* variable status (:883) and was never valid here. The expectation below is the
+// deliberate inversion of that marker, not a regression.
+// Full coverage of the vocabulary lives in tests/test-global-status-vocabulary.php.
 diviops_t380_seed( array( 'status' => 'inactive' ) );
 diviops_t380_upsert( array( array( 'id' => 'gcid-xebc8wg4kb', 'status' => 'inactive' ) ) );
 assert_same(
-	'active',
+	'inactive',
 	diviops_t380_stored()['status'] ?? null,
-	'DEFECT #393: a valid Divi status of "inactive" is silently coerced to "active"'
+	'a valid Divi status of "inactive" survives the write (#393)'
 );
 
 // lastUpdated is a stamp, not a merged field — it must move on every write.

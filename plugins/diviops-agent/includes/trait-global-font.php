@@ -269,6 +269,19 @@ trait DiviOps_Agent_GlobalFont {
 	 * Allowed `source` enum for global_font_create. Matches the ratified
 	 * the ratified contract; expand later as needs surface.
 	 */
+	/**
+	 * Divi's status vocabulary for GLOBAL FONTS (#393).
+	 *
+	 * Two values, not three: Divi 5.12.0's `GlobalData.php:427` documents the global
+	 * font status as `active | inactive`. Colours additionally carry `temporary`
+	 * (:119) and non-colour variables use `active | archived` (:883) — three surfaces,
+	 * three vocabularies. This writer previously used the variable list for a font,
+	 * admitting `archived` and refusing `inactive`.
+	 */
+	private static function valid_global_font_statuses(): array {
+		return [ 'active', 'inactive' ];
+	}
+
 	private static function valid_font_sources(): array {
 		return [ 'google', 'system', 'custom' ];
 	}
@@ -386,8 +399,22 @@ trait DiviOps_Agent_GlobalFont {
 			? sanitize_text_field( (string) $input['fallback'] )
 			: ( $existing['fallback'] ?? '' );
 
+		// Refuse, never coerce (#393) — same defect and same reasoning as the colour
+		// writer. As there, an OMITTED status defaults to the stored value and is not
+		// re-validated, so a value Divi itself wrote survives an unrelated edit.
 		$status_raw = $input['status'] ?? ( $existing['status'] ?? 'active' );
-		$status     = in_array( $status_raw, [ 'active', 'archived' ], true ) ? $status_raw : 'active';
+		$status     = $status_raw;
+		if ( array_key_exists( 'status', $input ) && ! in_array( $status_raw, self::valid_global_font_statuses(), true ) ) {
+			return new WP_Error(
+				'invalid_status',
+				sprintf( 'status must be one of: %s.', implode( ', ', self::valid_global_font_statuses() ) ),
+				[
+					'field'    => 'status',
+					'allowed'  => self::valid_global_font_statuses(),
+					'received' => is_scalar( $status_raw ) ? (string) $status_raw : null,
+				]
+			);
+		}
 
 		return [
 			'family'      => $family,
