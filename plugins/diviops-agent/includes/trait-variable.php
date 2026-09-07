@@ -1887,6 +1887,27 @@ trait DiviOps_Agent_Variable {
 	}
 
 	/**
+	 * Divi's status vocabulary for NON-COLOUR GLOBAL VARIABLES, and only for those (#406).
+	 *
+	 * Read from Divi's own source — `GlobalData.php` documents `active | archived` for
+	 * `gvid-*` entries at :883 and :1056-1077. It is NOT the same list as colours
+	 * (`active | inactive | temporary`, :119/:339/:381/:472) or fonts
+	 * (`active | inactive`, :427).
+	 *
+	 * `archived` is the soft-delete marker Divi's front end reads to gate a variable out of
+	 * the emitted output. There is no equivalent handling for `inactive` on a `gvid-*`, so
+	 * storing one is a write that does nothing: the caller asks to retire the variable and it
+	 * keeps rendering. That is why this list is short rather than permissive — accepting a
+	 * status the reader never acts on is a silent failure, not a harmless extra.
+	 *
+	 * A private static function rather than a constant: traits carry no constants below PHP
+	 * 8.2 and this plugin's floor is 7.4.
+	 */
+	private static function valid_global_variable_statuses(): array {
+		return [ 'active', 'archived' ];
+	}
+
+	/**
 	 * Update an existing variable's label/value/status in place, by id.
 	 * Auto-detects storage bucket from the id prefix, same as
 	 * variable_delete. Strict update — the id must already exist; an
@@ -1989,19 +2010,42 @@ trait DiviOps_Agent_Variable {
 			$overrides['label'] = sanitize_text_field( (string) $label_param );
 		}
 
-		// status — optional; validated against the vocabulary variable_list's
-		// is_active() already treats as known ('active', and the three demoted
-		// statuses it sorts to the tail).
+		// status — optional; validated against the vocabulary for THIS bucket (#406).
+		//
+		// This previously validated both buckets against one flat list,
+		// [ 'active', 'inactive', 'archived', 'temporary' ], which is the union of three
+		// different Divi vocabularies and so accepted every value for every surface. Divi
+		// documents `active | inactive | temporary` for colours and `active | archived` for
+		// variables; the union let `inactive` through on a `gvid-*`, where Divi's front end
+		// reads only `archived` as the soft-delete marker. The write succeeded, stored
+		// `inactive`, and the variable kept rendering.
+		//
+		// $is_color was resolved above from the id prefix, so it already names the surface.
+		// The colour list is #393's helper rather than a second copy — a duplicated
+		// allowlist is how the two colour writers came to disagree in the first place.
 		$status_param = $request->get_param( 'status' );
 		if ( null !== $status_param ) {
-			$valid_statuses = [ 'active', 'inactive', 'archived', 'temporary' ];
+			$valid_statuses = $is_color
+				? self::valid_global_color_statuses()
+				: self::valid_global_variable_statuses();
 			if ( ! in_array( $status_param, $valid_statuses, true ) ) {
 				return self::envelope_error(
 					'invalid_input',
-					'status must be one of: ' . implode( ', ', $valid_statuses ) . '.',
-					null,
+					sprintf(
+						'status must be one of: %s (this id is a %s).',
+						implode( ', ', $valid_statuses ),
+						$is_color ? 'global colour' : 'global variable'
+					),
+					$is_color
+						? "'archived' is a global-variable status and has no meaning for a colour."
+						: "'inactive' and 'temporary' belong to other surfaces; use 'archived' to retire a variable.",
 					400,
-					[ 'field' => 'status', 'allowed' => $valid_statuses, 'received' => $status_param ]
+					[
+						'field'    => 'status',
+						'surface'  => $is_color ? 'global_colors' : 'global_variables',
+						'allowed'  => $valid_statuses,
+						'received' => $status_param,
+					]
 				);
 			}
 			$overrides['status'] = $status_param;
