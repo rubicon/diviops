@@ -33,7 +33,11 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$REPO/plugins/diviops-agent"
-SSH="${DIVIOPS_SSH:-ssh -o BatchMode=yes -o ConnectTimeout=10}"
+# RemoteCommand=none / RequestTTY=no keep this working on a host whose ssh_config sets a
+# RemoteCommand — OpenSSH otherwise refuses to run a command argument and exits 255. Kept
+# byte-identical to diviops_site_remote_shell() in scripts/lib/local-site.php; the drift test
+# asserts the two match so a fix to one cannot miss the other (#412).
+SSH="${DIVIOPS_SSH:-ssh -o BatchMode=yes -o ConnectTimeout=10 -o RemoteCommand=none -o RequestTTY=no}"
 
 if [ ! -f "$SRC/diviops-agent.php" ]; then
   echo "error: $SRC/diviops-agent.php is missing; this is not a diviops checkout" >&2

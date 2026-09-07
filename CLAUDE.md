@@ -131,14 +131,34 @@ than as a wrong path. The plugin lives at
 `diviops-design-library` sit beside it and are **never** a deploy target.
 
 `~/.ssh/config` carries a `Host staging.colleyvillelions.com` entry, so
-`ssh -o BatchMode=yes staging.colleyvillelions.com` connects without a prompt. The
-host has `/usr/bin/rsync` (3.1.3), `php` 7.4 and `wp` on `PATH` under a non-login
+`ssh staging.colleyvillelions.com` connects without a prompt. That entry deliberately sets
+`RequestTTY yes` and `RemoteCommand cd <webroot> && bash`, so an interactive login lands in
+the webroot instead of `$HOME`.
+
+That is correct for interactive use and wrong for every scripted use, because OpenSSH refuses
+to run a command argument when a `RemoteCommand` is configured:
+
+```
+$ ssh staging.colleyvillelions.com 'wp option get home'
+Cannot execute command-line and remote command.     # exit 255
+```
+
+**Always pass `-o RemoteCommand=none -o RequestTTY=no` when running a command.** Both are
+correct on a host without a `RemoteCommand`, so there is no reason to omit them. Leaving them
+off is what silently blinded the drift gate through a whole Divi upgrade (#412) — the probe
+exited 255, the gate read that as unreachable, and the suite printed `PASS`.
+
+The host has `/usr/bin/rsync` (3.1.3), `php` 7.4 and `wp` on `PATH` under a non-login
 command, so WP-CLI runs directly:
 
 ```bash
-ssh staging.colleyvillelions.com \
+ssh -o BatchMode=yes -o RemoteCommand=none -o RequestTTY=no staging.colleyvillelions.com \
   'cd /home/rdeepmh/public_html/staging.colleyvillelions.com && wp <command>'
 ```
+
+Two WP-CLI gotchas on this host: handlers that check `current_user_can` return a `WP_Error`
+unless you pass `--user=1`, and `wp eval-file /dev/stdin` does not work — `scp` the file
+first.
 
 Deploy this fork onto it with `scripts/deploy-local-site.sh`, which takes a
 timestamped backup on the host first. Confirm afterwards that Pro still attaches by

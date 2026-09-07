@@ -86,9 +86,18 @@ function diviops_plugin_version_from_source( string $src ) {
  */
 function diviops_site_remote_shell(): string {
 	$ssh = getenv( 'DIVIOPS_SSH' );
+	// RemoteCommand=none / RequestTTY=no are not optional politeness — without them this
+	// gate goes blind on any host whose ssh_config sets a RemoteCommand. OpenSSH refuses to
+	// run a command argument when one is configured ("Cannot execute command-line and remote
+	// command.", exit 255), the probe reads that as unreachable, and the check SKIPs inside a
+	// suite that then prints PASS. Both options are correct on a host without a RemoteCommand
+	// too, so there is no case where this is the wrong default (#412).
+	//
+	// scripts/deploy-local-site.sh builds the same default; tests/test-local-site-drift.php
+	// asserts the two strings are identical so they cannot drift apart.
 	return is_string( $ssh ) && '' !== trim( $ssh )
 		? trim( $ssh )
-		: 'ssh -o BatchMode=yes -o ConnectTimeout=10';
+		: 'ssh -o BatchMode=yes -o ConnectTimeout=10 -o RemoteCommand=none -o RequestTTY=no';
 }
 
 /**
