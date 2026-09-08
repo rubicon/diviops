@@ -227,11 +227,11 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 | `diviops_page_block_insert` | plugin | `page_id`, `parent_selector?`, `parent_path?`, `position?`, `content`, `dry_run?`, `backup?` | conditional | Insert one or more serialized Divi blocks (a new row, column, or module) at a specific position on a page/post, without rebuilding the surrounding section. … |
 | `diviops_page_create` | plugin | `title`, `content?`, `status?`, `post_type?`, `dry_run?` | false | Create a new WordPress page — or, via post_type, a post or custom post type — optionally with Divi block content. … |
 | `diviops_page_duplicate` | plugin | `page_id`, `title?`, `status?`, `post_type?`, `dry_run?` | false | Duplicate a page/post on the SAME site — a first-class operation instead of hand-rolling diviops_page_get_layout + diviops_page_create. … |
-| `diviops_page_get` | plugin | `page_id` | true | Get detailed info about a specific page including its raw Divi block content. … |
+| `diviops_page_get` | plugin | `page_id` | true | Get detailed info about a specific page including its raw Divi block content and a content_checksum (`sha256:` over the exact post_content bytes) to pass back to diviops_page_update_content as a stale-write guard. … |
 | `diviops_page_get_layout` | plugin | `page_id`, `full?` | true | Get the parsed block tree for a page. … |
 | `diviops_page_list` | plugin | `post_type?`, `per_page?`, `page?` | true | List pages/posts in the WordPress site. … |
 | `diviops_page_trash` | plugin | `post_id`, `force?`, `dry_run?` | true | Trash or permanently delete a page/post. … |
-| `diviops_page_update_content` | plugin | `page_id`, `content`, `dry_run?`, `backup?` | conditional | Update the content of a page with Divi block markup. … |
+| `diviops_page_update_content` | plugin | `page_id`, `content`, `expected_checksum?`, `dry_run?`, `backup?` | conditional | Update the content of a page with Divi block markup. … |
 | `diviops_page_update_meta` | plugin | `page_id`, `title?`, `slug?`, `parent?`, `menu_order?`, `preserve_old_slug?`, `dry_run?` | true | Update page/post metadata fields without touching post_content. … |
 | `diviops_page_update_status` | plugin | `post_id`, `status`, `date_gmt?`, `dry_run?` | true | Update a page's post_status. … |
 | `diviops_preset_audit` | plugin | _(none)_ | true | Audit all Divi presets (module + group). … |
@@ -274,7 +274,7 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 | `diviops_tb_layout_block_insert` | plugin | `layout_id`, `parent_selector?`, `parent_path?`, `position?`, `content`, `dry_run?`, `backup?` | conditional | Insert one or more serialized Divi blocks into an existing Theme Builder layout without replacing the whole layout. … |
 | `diviops_tb_layout_get` | plugin | `layout_id` | true | Get a Theme Builder layout's block markup content (header, body, or footer). … |
 | `diviops_tb_layout_update` | plugin | `layout_id`, `content`, `dry_run?`, `backup?` | conditional | Update a Theme Builder layout's block markup (header, body, or footer). … |
-| `diviops_tb_template_create` | plugin | `title`, `condition`, `header_content?`, `footer_content?`, `dry_run?` | false | Create a Theme Builder template with custom header and/or footer. … |
+| `diviops_tb_template_create` | plugin | `title`, `condition`, `header_content?`, `footer_content?`, `body_content?`, `dry_run?` | false | Create a Theme Builder template with a custom header, body and/or footer. … |
 | `diviops_tb_template_list` | plugin | `per_page?`, `page?` | true | List all Theme Builder templates with their conditions, layout IDs, and enabled status. … |
 | `diviops_tb_template_trash` | plugin | `template_id`, `force?`, `dry_run?` | conditional | Trash (or permanently delete) a Theme Builder template AND its linked header/body/footer layouts AND scrub the `_et_template` meta refs on the Theme Builder master post. … |
 | `diviops_template_get` | server-local | `template_name` | true | Get a specific Divi template with verified block markup, customizable variables, and usage notes. … |
