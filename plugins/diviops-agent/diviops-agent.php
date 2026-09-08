@@ -125,7 +125,7 @@ class DiviOps_Agent {
 		'module_clone_backup', 'module_lock_backup', 'module_move_backup', 'module_unlock_backup', 'module_update_backup',
 		// page
 		'page_block_insert', 'page_create', 'page_duplicate', 'page_get', 'page_get_layout', 'page_list',
-		'page_trash', 'page_update_content', 'page_update_content_backup', 'page_update_meta', 'page_update_status',
+		'page_trash', 'page_update_content', 'page_update_content_backup', 'page_update_content_expected_checksum', 'page_update_meta', 'page_update_status',
 		// preset
 		'preset_audit', 'preset_audit_storage', 'preset_cleanup', 'preset_create', 'preset_delete', 'preset_inspect', 'preset_registry_doctor',
 		'preset_reassign', 'preset_scan_orphans', 'preset_set_default', 'preset_update',
@@ -143,7 +143,7 @@ class DiviOps_Agent {
 		'section_append', 'section_append_backup', 'section_get', 'section_remove', 'section_remove_backup', 'section_replace', 'section_replace_backup',
 		// theme builder
 		'cross_env_source_export_get', 'cross_env_target_context_get', 'cross_env_footer_layout_evidence',
-		'tb_layout_block_insert', 'tb_layout_block_insert_backup', 'tb_layout_get', 'tb_layout_update', 'tb_layout_update_backup', 'tb_template_create', 'tb_template_list',
+		'tb_layout_block_insert', 'tb_layout_block_insert_backup', 'tb_layout_get', 'tb_layout_update', 'tb_layout_update_backup', 'tb_template_create', 'tb_template_create_body', 'tb_template_list',
 		'tb_template_trash',
 		// design system (#392) — bulk token authoring from a style guide
 		'design_system_apply',
@@ -548,11 +548,15 @@ class DiviOps_Agent {
 		$post_types = [ 'et_theme_builder', 'et_template' ];
 		$header_content = $request->get_param( 'header_content' );
 		$footer_content = $request->get_param( 'footer_content' );
+		$body_content   = $request->get_param( 'body_content' );
 		if ( is_string( $header_content ) && '' !== $header_content ) {
 			$post_types[] = 'et_header_layout';
 		}
 		if ( is_string( $footer_content ) && '' !== $footer_content ) {
 			$post_types[] = 'et_footer_layout';
+		}
+		if ( is_string( $body_content ) && '' !== $body_content ) {
+			$post_types[] = 'et_body_layout';
 		}
 		return self::fixed_publish_route_permission( 'manage_options', $post_types );
 	}
@@ -1505,6 +1509,7 @@ class DiviOps_Agent {
 				'condition'      => [ 'required' => true, 'type' => 'string' ],
 				'header_content' => [ 'required' => false, 'type' => 'string', 'default' => '' ],
 				'footer_content' => [ 'required' => false, 'type' => 'string', 'default' => '' ],
+				'body_content'   => [ 'required' => false, 'type' => 'string', 'default' => '' ],
 			],
 		] );
 
@@ -1658,6 +1663,11 @@ class DiviOps_Agent {
 				'content' => [
 					'required' => true,
 					'type'     => 'string',
+				],
+				'expected_checksum' => [
+					'required' => false,
+					'type'     => 'string',
+					'pattern'  => '^sha256:[a-f0-9]{64}$',
 				],
 				'dry_run' => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
 				'backup'  => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
