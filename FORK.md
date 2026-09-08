@@ -188,6 +188,19 @@ git fetch upstream
 git merge upstream/main        # through the normal issue, branch, PR flow
 ```
 
+### Sync-commit triage log
+
+Upstream publishes as `Sync from dev repo: <sha>` commits, one per release, and takes
+no outside PRs. Each one that has been looked at is recorded here with its outcome, so
+the next sync does not re-derive a decision that has already been made. Commits through
+`2e66046` were triaged under #328; the divergence tables above carry the per-file
+detail.
+
+| Upstream commit | Release | What it carried | Outcome |
+| --- | --- | --- | --- |
+| `e4427a8` | v1.5.55, plugin 1.5.16 | Optional exact-checksum guard on the full-content page writer, plus the `page_update_content_expected_checksum` capability key | **Adopted** (#391). Reimplemented against this fork's own helpers; see the divergence table. It was not optional: Pro's three FluentCart campaign workflows gate on that key and were silently absent without it |
+| `8cb630f` | v1.5.56, plugin 1.5.17 | Optional `body_content` on `tb_template_create` with the `tb_template_create_body` key; Divi 5.12.1 skill evidence for the Slider swipe bar, Image sizing and the regenerated path index; two new Pro FluentCart campaign-page tools in the server | **Partly adopted.** `body_content` adopted (#420), reimplemented for the same reason. The Slider swipe-bar paths were re-verified against Divi's own source and written up here (#418); upstream's Image `module.advanced.sizing` correction and the `module.decoration.interactions` index entries are not taken yet, because both ride on a regenerated 5.12.1 fixture this fork has not produced (#416, #419). The two Pro campaign-page tool registrations are **not** adopted: they call `/pro/fluentcart/campaign-page/*`, which is Pro's own route surface, and taking them is a decision about how far this fork mirrors Pro rather than a reconciliation |
+
 Files that originated upstream (`README.md`, the other repo docs, and everything
 under `plugins/`, `diviops-server/`, and `skills/`) may be edited or taken over as
 needed under the Maintained-fork posture above — we are not minimizing divergence
