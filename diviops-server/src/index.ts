@@ -519,14 +519,25 @@ function requireCapability(key: string): void {
   }
 }
 
-function backupCapabilityError(
+/**
+ * Gate a capability that only some calls to a tool need.
+ *
+ * The tool itself is registered against its own capability key; this covers
+ * the additive behaviour keys a plugin advertises for one optional argument
+ * (`*_backup`, `page_update_content_expected_checksum`). Checking it only when
+ * the argument is actually supplied is the point: gating at registration would
+ * remove the whole tool from an older plugin that supports every other call
+ * shape it accepts.
+ */
+function conditionalCapabilityError(
   toolName: string,
-  backup: boolean | undefined,
+  capabilityKey: string,
+  active: boolean,
+  alternativeHint: string,
 ): MissingCapabilityMcpResult | null {
-  if (!backup) return null;
-  const key = toolName.replace(/^diviops_/, "") + "_backup";
+  if (!active) return null;
   try {
-    requireCapability(key);
+    requireCapability(capabilityKey);
   } catch (e) {
     if (e instanceof MissingCapabilityError) {
       return missingCapabilityEnvelope(e, toolName, {
@@ -534,13 +545,25 @@ function backupCapabilityError(
         hint: capabilityUpgradeHint(
           e.capability,
           e.pluginComponent,
-          "Alternatively, omit backup:true from this call.",
+          alternativeHint,
         ),
       });
     }
     throw e;
   }
   return null;
+}
+
+function backupCapabilityError(
+  toolName: string,
+  backup: boolean | undefined,
+): MissingCapabilityMcpResult | null {
+  return conditionalCapabilityError(
+    toolName,
+    toolName.replace(/^diviops_/, "") + "_backup",
+    backup === true,
+    "Alternatively, omit backup:true from this call.",
+  );
 }
 
 // `any` here is deliberate, not laziness. McpServer.registerTool is a
@@ -820,7 +843,7 @@ registerPluginTool(
   "diviops_page_get",
   {
     description:
-      "Get detailed info about a specific page including its raw Divi block content. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; missing page_id returns ok:false with code 'not_found' and a hint pointing to diviops_page_list.",
+      "Get detailed info about a specific page including its raw Divi block content and a content_checksum (`sha256:` over the exact post_content bytes) to pass back to diviops_page_update_content as a stale-write guard. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; missing page_id returns ok:false with code 'not_found' and a hint pointing to diviops_page_list.",
     inputSchema: {
       page_id: z.number().describe("WordPress post/page ID"),
     },
@@ -1909,7 +1932,7 @@ registerPluginTool(
   "diviops_page_update_content",
   {
     description:
-      "Update the content of a page with Divi block markup. The content should be valid WordPress block markup using divi/* blocks. IMPORTANT: This overwrites the entire page content. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; missing page_id returns 'not_found', edit-permission failures return 'forbidden' (HTTP 403), non-string content returns 'invalid_input' with `error.data = { field, received_type }`." +
+      "Update the content of a page with Divi block markup. The content should be valid WordPress block markup using divi/* blocks. IMPORTANT: This overwrites the entire page content. Pass expected_checksum from diviops_page_get to refuse stale writes; omitting it preserves the legacy unconditional-write contract. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; missing page_id returns 'not_found', edit-permission failures return 'forbidden' (HTTP 403), stale content returns 'page.content_drift' (HTTP 409) with both checksums in `error.data`, and non-string content returns 'invalid_input' with `error.data = { field, received_type }`." +
       DRY_RUN_DESC_SUFFIX,
     inputSchema: {
       page_id: z.number().describe("WordPress post/page ID to update"),
@@ -1918,21 +1941,36 @@ registerPluginTool(
         .describe(
           "Full page content in WordPress block markup format (<!-- wp:divi/section -->...<!-- /wp:divi/section -->)",
         ),
+      expected_checksum: z
+        .string()
+        .regex(/^sha256:[a-f0-9]{64}$/)
+        .optional()
+        .describe(
+          "Optional review binding from diviops_page_get.content_checksum. When supplied, a page that has changed since it was read refuses with no force path.",
+        ),
       dry_run: DRY_RUN_FIELD,
       backup: BACKUP_FIELD,
     },
     annotations: { idempotentHint: false },
     _meta: { idempotent: "conditional" },
   },
-  async ({ page_id, content, dry_run, backup }) => {
+  async ({ page_id, content, expected_checksum, dry_run, backup }) => {
     const backupGate = backupCapabilityError("diviops_page_update_content", backup);
     if (backupGate) return backupGate;
+    const checksumGate = conditionalCapabilityError(
+      "diviops_page_update_content",
+      "page_update_content_expected_checksum",
+      expected_checksum !== undefined,
+      "Alternatively, omit expected_checksum to use the legacy unconditional-write contract.",
+    );
+    if (checksumGate) return checksumGate;
     const isolationGate = writerIsolationErrorResult(
       "diviops_page_update_content",
       { content },
     );
     if (isolationGate) return isolationGate;
     const body: Record<string, unknown> = { content };
+    if (expected_checksum !== undefined) body.expected_checksum = expected_checksum;
     if (dry_run) body.dry_run = true;
     if (backup) body.backup = true;
     const result = await wp.requestEnveloped(`/page/update-content/${page_id}`, {

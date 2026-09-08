@@ -94,7 +94,72 @@ trait DiviOps_Agent_Page {
 			'post_type'    => $post->post_type,
 			'has_divi'     => self::post_uses_divi( $post ),
 			'content_raw'  => $post->post_content,
+			'content_checksum' => self::page_content_checksum( (string) $post->post_content ),
 		] );
+	}
+
+	/**
+	 * The review binding a caller passes back as `expected_checksum`.
+	 *
+	 * Hashes the exact post_content bytes, unnormalized. DiviOps Agent Pro
+	 * computes the same value on its side and refuses the write when the two
+	 * disagree, so the input and the `sha256:` prefix are a fixed contract
+	 * rather than an implementation choice.
+	 *
+	 * @param string $content Raw post_content.
+	 * @return string
+	 */
+	private static function page_content_checksum( string $content ): string {
+		return 'sha256:' . hash( 'sha256', $content );
+	}
+
+	/**
+	 * Read post_content straight from the posts table, bypassing the cache.
+	 *
+	 * `get_post()` may return a request-local cached object after another
+	 * request has committed an edit, so the mutation-boundary check has to go
+	 * back to the row rather than trust the object the handler loaded.
+	 *
+	 * @param int $post_id Post id.
+	 * @return string|null post_content, or null when the row or the primitive
+	 *                     is unavailable.
+	 */
+	private static function page_content_read_uncached( int $post_id ): ?string {
+		global $wpdb;
+
+		if ( ! is_object( $wpdb ?? null ) || empty( $wpdb->posts ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return null;
+		}
+		$content = $wpdb->get_var(
+			$wpdb->prepare( "SELECT post_content FROM {$wpdb->posts} WHERE ID = %d LIMIT 1", $post_id )
+		);
+		return is_string( $content ) ? $content : null;
+	}
+
+	/**
+	 * The one refusal both checksum checks emit.
+	 *
+	 * Pro matches on this code and reads both checksums out of the data bag,
+	 * so the two call sites must not drift apart.
+	 *
+	 * @param int    $post_id  Post id.
+	 * @param string $expected Checksum the caller sent.
+	 * @param string $current  Checksum of the content that is actually there.
+	 * @return WP_REST_Response
+	 */
+	private static function page_content_drift_refusal( int $post_id, string $expected, string $current ) {
+		return self::envelope_error(
+			'page.content_drift',
+			"Page #{$post_id} changed before its content could be updated.",
+			'Re-read diviops_page_get and review the new content before retrying. There is no force path.',
+			409,
+			[
+				'page_id'           => $post_id,
+				'expected_checksum' => $expected,
+				'current_checksum'  => $current,
+				'mutated'           => false,
+			]
+		);
 	}
 
 	/**
@@ -212,6 +277,27 @@ trait DiviOps_Agent_Page {
 				[ 'page_id' => $post_id ]
 			);
 		}
+
+		// Optional review binding (#391). Omitted, this is the legacy
+		// unconditional write; supplied, a mismatch refuses and there is no
+		// force path, because the caller reviewed content that no longer
+		// exists.
+		$expected_checksum = $request->get_param( 'expected_checksum' );
+		if ( null !== $expected_checksum ) {
+			if ( ! is_string( $expected_checksum ) || 1 !== preg_match( '/^sha256:[a-f0-9]{64}$/', $expected_checksum ) ) {
+				return self::envelope_error(
+					'invalid_input',
+					'expected_checksum must be a lowercase SHA-256 checksum from diviops_page_get.',
+					'Read the page, then pass its exact content_checksum. Omit only for legacy unconditional writes.',
+					400,
+					[ 'field' => 'expected_checksum', 'mutated' => false ]
+				);
+			}
+			$current_checksum = self::page_content_checksum( (string) $post->post_content );
+			if ( ! hash_equals( $current_checksum, $expected_checksum ) ) {
+				return self::page_content_drift_refusal( $post_id, $expected_checksum, $current_checksum );
+			}
+		}
 		if ( ! is_string( $content ) ) {
 			return self::envelope_error(
 				'invalid_input',
@@ -249,6 +335,24 @@ trait DiviOps_Agent_Page {
 				[],
 				$extra
 			);
+		}
+
+		// Re-read at the mutation boundary so a hook or a concurrent editor
+		// cannot pass the entry check and then be silently overwritten. The
+		// snapshot and the integrity guard below both read $post, so the
+		// fresh bytes replace the loaded ones on a clone rather than only
+		// being compared.
+		if ( null !== $expected_checksum ) {
+			$fresh_content = self::page_content_read_uncached( $post_id );
+			if ( null === $fresh_content || ! hash_equals( $expected_checksum, self::page_content_checksum( $fresh_content ) ) ) {
+				return self::page_content_drift_refusal(
+					$post_id,
+					$expected_checksum,
+					null === $fresh_content ? '' : self::page_content_checksum( $fresh_content )
+				);
+			}
+			$post               = clone $post;
+			$post->post_content = $fresh_content;
 		}
 
 		$snapshot = null;
