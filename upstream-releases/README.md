@@ -18,17 +18,35 @@ therefore what may be committed and what may be copied:
 | `diviops-agent-<version>.zip`, `diviops-design-library-*.zip` | Individual free plugins. | MIT / GPL-2.0-or-later | Read, and reuse under its licence. |
 | `diviops-pro-suite-*` | Pro distribution: everything in Free **plus** the Pro plugin and the deeper skill-knowledge layer (`divi-5-builder` Tier 2 + Tier 3). | Commercial, third party | Read. Never commit, never transcribe. |
 | `diviops-agent-pro*.zip` | The Pro plugin alone. | Commercial, third party | Read. Never commit, never transcribe. |
+| `diviops-pro-skills-<hash>.zip` | The paid skill-knowledge layer alone (`divi-5-builder` Tier 2 + Tier 3, and the `diviops-scf` skill). | Commercial, third party | Read. Never commit, never transcribe. |
 
 Current layout:
 
 ```
 upstream-releases/
-  README.md     tracked
-  agent/        diviops-agent-*.zip, diviops-design-library-*.zip
-  agent-pro/    diviops-agent-pro-*.zip        (commercial)
-  suite/        diviops-suite-<version>.zip
-  suite-pro/    diviops-pro-suite-*.zip        (commercial)
+  README.md          tracked
+  agent/             diviops-agent-<version>.zip
+  agent-pro/         diviops-agent-pro-<version>-beta.zip       (commercial)
+  design-library/    diviops-design-library-<version>.zip
+  skills-pro/        diviops-pro-skills-<hash>.zip              (commercial)
+  suite/             diviops-<version>.zip
+  suite-pro/         diviops-pro-suite-v<version>-beta.zip      (commercial)
 ```
+
+Two things about that listing are worth stating rather than inferring. The free
+suite is published as `diviops-<version>.zip`, with no `suite` in the filename,
+so the directory is what distinguishes it from the standalone agent plugin. And
+the Pro skills archives are named by content hash rather than by version, so
+their order is not recoverable from the filenames: modification time is the only
+way to tell which one is newest, and moving them between machines loses even
+that.
+
+**Upstream's GitHub releases carry no assets.** Every zip here came from the
+publisher's own distribution channel, not from
+`https://github.com/oaris-dev/diviops/releases`, whose entries are release notes
+alone - verified against v1.5.51, v1.5.53, v1.5.55 and v1.5.56, all of which
+list zero assets. Nothing in this repository can fetch a missing version; a gap
+in the archive is closed by hand.
 
 ## The clean-room rule was rescinded
 
