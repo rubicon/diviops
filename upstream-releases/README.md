@@ -41,12 +41,29 @@ their order is not recoverable from the filenames: modification time is the only
 way to tell which one is newest, and moving them between machines loses even
 that.
 
-**Upstream's GitHub releases carry no assets.** Every zip here came from the
-publisher's own distribution channel, not from
-`https://github.com/oaris-dev/diviops/releases`, whose entries are release notes
-alone - verified against v1.5.51, v1.5.53, v1.5.55 and v1.5.56, all of which
-list zero assets. Nothing in this repository can fetch a missing version; a gap
-in the archive is closed by hand.
+**Where these files come from.** An upstream release has an empty `assets`
+array - `gh api repos/oaris-dev/diviops/releases/tags/<tag> --jq '.assets|length'`
+returns `0` for every tag checked - which makes it look as though nothing is
+published and a gap has to be closed by hand. It is not. The same payload carries
+`tarball_url` and `zipball_url`: GitHub's auto-generated source archives, which are
+not members of `assets` and render at the bottom of the release page as "Source
+code". That is where the archive's contents come from, and it is fetchable:
+
+```bash
+gh release download <tag> --repo oaris-dev/diviops --archive=zip
+```
+
+Verified on v1.5.56, which produced a file byte-identical in size to the
+`diviops-1.5.56.zip` in `suite/`.
+
+**So `suite/*.zip` is a repository source archive, not a built distribution.** Its
+top-level entries are `.claude-plugin/`, `.github/`, `CONTRIBUTING.md`, `LICENSE` -
+the repo tree at that tag. The built plugin zips ride inside it, because upstream
+tracks `diviops-agent.zip` and `diviops-design-library.zip` at its repository root;
+`agent/` and `design-library/` hold those, extracted.
+
+Nothing about the Pro tiers changes: those are not on GitHub in any form, and the
+rules above govern them.
 
 ## The clean-room rule was rescinded
 
@@ -99,13 +116,19 @@ it on disk.
 
 ## What the free distribution is good for
 
-Prefer `git show upstream/main:<path>` when the question is about source already
-tracked. Reach for a free zip when the question is about a *published artifact*:
+`git show upstream/main:<path>` answers questions about tracked source at HEAD.
+These zips answer questions about a *tag*, and which zip depends on what is being
+asked:
 
-- Confirming what upstream actually shipped in a version, rather than inferring
-  it from a sync commit.
-- Checking a `FORK.md` divergence claim against a real release.
-- Reproducing a reported bug at the exact version a user is running.
+- **A free `suite/` zip is upstream's tree at that tag.** It confirms what a
+  version's source actually said, which is what a `FORK.md` divergence claim is
+  checked against and what reproduces a reported bug at the version a user is
+  running. It is not evidence about a built artifact, because it is not one - and
+  `git show <tag>:<path>` against the `upstream` remote answers the same question
+  without a zip, whenever the tag is fetched.
+- **An `agent/` or `design-library/` zip is the published plugin**, extracted from
+  the root-tracked zip inside a suite archive. That is the artifact tier: what a
+  site actually installs, at the exact bytes it installs.
 
 ## Naming
 
