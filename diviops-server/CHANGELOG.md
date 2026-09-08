@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.15.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.14.0...mcp-server-v1.15.0) (2026-09-08)
+
+
+### Features
+
+* **#391:** adopt the exact-checksum guard on page_update_content ([#422](https://github.com/rubicon/diviops/issues/422)) ([ffb60fa](https://github.com/rubicon/diviops/commit/ffb60fa3d5b0293dbf47bd94839ce421f63c5da5)), closes [#391](https://github.com/rubicon/diviops/issues/391)
+* **#392:** apply a design-token set to a live Divi palette in one call ([#409](https://github.com/rubicon/diviops/issues/409)) ([426cb43](https://github.com/rubicon/diviops/commit/426cb435ff3d497263e0154325dff33a8ba426d8)), closes [#392](https://github.com/rubicon/diviops/issues/392)
+* **#420:** create a Theme Builder body layout from tb_template_create ([#423](https://github.com/rubicon/diviops/issues/423)) ([f19cd0b](https://github.com/rubicon/diviops/commit/f19cd0b84c4832674a874827d2962a94a8ae1bc4))
+
 ## [1.14.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.13.0...mcp-server-v1.14.0) (2026-09-04)
 
 
