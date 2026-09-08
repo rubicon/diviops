@@ -27,6 +27,25 @@ final class DiviOps_Test_Runner {
 	/** @var array<int, string> */
 	public static $failures = array();
 
+	/**
+	 * Blocks of assertions that did not run, and why (#416).
+	 *
+	 * A test file that cannot reach what it inspects has three honest options: fail,
+	 * assert something weaker, or say plainly that it inspected nothing. The third is
+	 * right when the resource is legitimately absent — CI has no Divi install — but it
+	 * is only honest if it is VISIBLE. Two files guarded 21 assertions behind
+	 * `DIVIOPS_DIVI_BUILDER5_PATH` and simply did nothing when it was unset, so
+	 * `PASS 5519 assertion(s)` read identically whether those 21 ran or not. They are
+	 * the only assertions in the suite a Divi upgrade could break, and they were the
+	 * ones silently not running through 5.12.0 -> 5.12.1.
+	 *
+	 * This does NOT fail the run: a machine without Divi is a normal machine. It makes
+	 * the omission countable, which is the whole difference between a skip and a lie.
+	 *
+	 * @var array<int, array{reason: string, assertions: int}>
+	 */
+	public static $skips = array();
+
 	/** @var string */
 	public static $current = '';
 
@@ -93,6 +112,24 @@ function assert_true( $actual, string $message ): void {
 	DiviOps_Test_Runner::assert_true( $actual, $message );
 }
 
+/**
+ * Record that a block of assertions did not run, and why (#416).
+ *
+ * Call this from the `else` of a guard that skips real work. `$assertions` is how many
+ * assertions were passed over — declare it as a literal and assert it against the block's
+ * actual contents, or the number rots the first time someone adds an assertion inside the
+ * guard and the summary quietly under-reports.
+ *
+ * @param string $reason     Why the block could not run, in terms a reader can act on.
+ * @param int    $assertions How many assertions did not execute.
+ */
+function diviops_skip( string $reason, int $assertions ): void {
+	DiviOps_Test_Runner::$skips[] = array(
+		'reason'     => $reason,
+		'assertions' => $assertions,
+	);
+}
+
 /*
  * Child mode (#395): `php tests/run.php --file <path>` runs exactly ONE test file and
  * emits a machine-readable tail the parent parses. The parent below re-invokes this
@@ -118,8 +155,16 @@ if ( isset( $argv[1] ) && '--file' === $argv[1] ) {
 		require $file;
 	} )( $one );
 
-	// The parent reads these two lines. Keep them last and keep the format stable.
+	// The parent reads these lines. Keep them last and keep the format stable.
 	printf( "__DIVIOPS_PASSED__ %d%s", DiviOps_Test_Runner::$passed, PHP_EOL );
+	foreach ( DiviOps_Test_Runner::$skips as $child_skip ) {
+		printf(
+			"__DIVIOPS_SKIPPED__ %d %s%s",
+			$child_skip['assertions'],
+			str_replace( "\n", '\\n', $child_skip['reason'] ),
+			PHP_EOL
+		);
+	}
 	foreach ( DiviOps_Test_Runner::$failures as $child_failure ) {
 		printf( "__DIVIOPS_FAILURE__ %s%s", str_replace( "\n", '\\n', $child_failure ), PHP_EOL );
 	}
@@ -183,6 +228,27 @@ foreach ( $files as $file ) {
 			$saw_count                    = true;
 			continue;
 		}
+		if ( 0 === strpos( $line, '__DIVIOPS_SKIPPED__ ' ) ) {
+			$skip_body  = substr( $line, strlen( '__DIVIOPS_SKIPPED__ ' ) );
+			$skip_split = explode( ' ', $skip_body, 2 );
+
+			DiviOps_Test_Runner::$skips[] = array(
+				'file'       => basename( $file ),
+				'assertions' => (int) $skip_split[0],
+				'reason'     => str_replace( '\\n', "\n", $skip_split[1] ?? '' ),
+			);
+
+			// Printed as it is read, not only totalled at the end, so the omission sits
+			// next to the file it belongs to rather than in a footer nobody reads.
+			printf(
+				"SKIP  %s: %s (%d assertion(s) did not run)%s",
+				basename( $file ),
+				$skip_split[1] ?? '',
+				(int) $skip_split[0],
+				PHP_EOL
+			);
+			continue;
+		}
 		if ( 0 === strpos( $line, '__DIVIOPS_FAILURE__ ' ) ) {
 			DiviOps_Test_Runner::$failures[] = str_replace(
 				'\\n',
@@ -213,9 +279,32 @@ foreach ( $files as $file ) {
 
 $failed = count( DiviOps_Test_Runner::$failures );
 
+/*
+ * The skip total rides alongside the pass total rather than below it (#416). A reader
+ * scanning for one line has to see both, because "5519 passed" and "5519 passed, 21 never
+ * ran" are different claims about the same run and previously rendered identically.
+ */
+$skipped_assertions = 0;
+foreach ( DiviOps_Test_Runner::$skips as $skip ) {
+	$skipped_assertions += (int) $skip['assertions'];
+}
+$skip_summary = array() === DiviOps_Test_Runner::$skips
+	? ''
+	: sprintf(
+		', %d assertion(s) SKIPPED in %d file(s)',
+		$skipped_assertions,
+		count( DiviOps_Test_Runner::$skips )
+	);
+
 echo "\n";
 if ( 0 === $failed ) {
-	printf( "PASS  %d assertion(s) in %d file(s)%s", DiviOps_Test_Runner::$passed, count( $files ), PHP_EOL );
+	printf(
+		"PASS  %d assertion(s) in %d file(s)%s%s",
+		DiviOps_Test_Runner::$passed,
+		count( $files ),
+		$skip_summary,
+		PHP_EOL
+	);
 	exit( 0 );
 }
 
@@ -223,10 +312,11 @@ foreach ( DiviOps_Test_Runner::$failures as $failure ) {
 	printf( "FAIL  %s%s", $failure, PHP_EOL );
 }
 printf(
-	"%sFAIL  %d passed, %d failed%s",
+	"%sFAIL  %d passed, %d failed%s%s",
 	PHP_EOL,
 	DiviOps_Test_Runner::$passed,
 	$failed,
+	$skip_summary,
 	PHP_EOL
 );
 exit( 1 );

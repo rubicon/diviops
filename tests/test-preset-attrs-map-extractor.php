@@ -353,6 +353,34 @@ foreach ( $cta_unset_paths as $unset_path ) {
  */
 $builder5 = getenv( 'DIVIOPS_DIVI_BUILDER5_PATH' );
 
+/*
+ * How many assertions the block below contains (#416). Declared as a literal so the skip can
+ * be COUNTED, and checked against the block's real contents so the literal cannot rot. See
+ * tests/test-shared-preset-attrs-map.php for the full reasoning; this is the second of the
+ * two files that guarded work behind this variable and reported nothing when it was unset.
+ */
+$extractor_divi_declared_skips = 10;
+
+// Sentinel-delimited, and the sentinel halves are concatenated, for the reason spelled out in
+// tests/test-shared-preset-attrs-map.php: a needle written whole finds the line searching for
+// it before it finds the block.
+$extractor_divi_src   = (string) file_get_contents( __FILE__ );
+$extractor_divi_begin = strpos( $extractor_divi_src, 'DIVI-TREE-BLOCK' . '-BEGIN' );
+$extractor_divi_end   = strpos( $extractor_divi_src, 'DIVI-TREE-BLOCK' . '-END' );
+assert_true(
+	false !== $extractor_divi_begin && false !== $extractor_divi_end && $extractor_divi_end > $extractor_divi_begin,
+	'both block sentinels are present and ordered — the positive control for the count below'
+);
+assert_same(
+	$extractor_divi_declared_skips,
+	preg_match_all(
+		'/\bassert_(?:same|true)\s*\(/',
+		substr( $extractor_divi_src, (int) $extractor_divi_begin, (int) $extractor_divi_end - (int) $extractor_divi_begin )
+	),
+	'the declared skip count matches the assertions actually inside the Divi-tree block'
+);
+
+// DIVI-TREE-BLOCK-BEGIN
 if ( is_string( $builder5 ) && '' !== $builder5 && is_dir( $builder5 . '/server/Packages/ModuleLibrary' ) ) {
 	$divi_packages = $builder5 . '/server/Packages';
 	$cta           = diviops_preset_attrs_map_resolve( $divi_packages, 'divi/cta' );
@@ -418,5 +446,11 @@ if ( is_string( $builder5 ) && '' !== $builder5 && is_dir( $builder5 . '/server/
 	assert_true(
 		isset( diviops_preset_attrs_map_index( $divi_packages )['divi/fullwidth-post-content'] ),
 		'the real index covers a Divi map file that serves two module names'
+	);
+	// DIVI-TREE-BLOCK-END
+} else {
+	diviops_skip(
+		'no Divi tree: DIVIOPS_DIVI_BUILDER5_PATH is unset or does not point at a directory containing server/Packages/ModuleLibrary',
+		$extractor_divi_declared_skips
 	);
 }
