@@ -125,7 +125,7 @@ class DiviOps_Agent {
 		'module_clone_backup', 'module_lock_backup', 'module_move_backup', 'module_unlock_backup', 'module_update_backup',
 		// page
 		'page_block_insert', 'page_create', 'page_duplicate', 'page_get', 'page_get_layout', 'page_list',
-		'page_trash', 'page_update_content', 'page_update_content_backup', 'page_update_meta', 'page_update_status',
+		'page_trash', 'page_update_content', 'page_update_content_backup', 'page_update_content_expected_checksum', 'page_update_meta', 'page_update_status',
 		// preset
 		'preset_audit', 'preset_audit_storage', 'preset_cleanup', 'preset_create', 'preset_delete', 'preset_inspect', 'preset_registry_doctor',
 		'preset_reassign', 'preset_scan_orphans', 'preset_set_default', 'preset_update',
@@ -1663,6 +1663,11 @@ class DiviOps_Agent {
 				'content' => [
 					'required' => true,
 					'type'     => 'string',
+				],
+				'expected_checksum' => [
+					'required' => false,
+					'type'     => 'string',
+					'pattern'  => '^sha256:[a-f0-9]{64}$',
 				],
 				'dry_run' => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
 				'backup'  => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
