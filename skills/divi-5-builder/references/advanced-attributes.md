@@ -130,7 +130,7 @@ or behavior configuration, out of this document's scope.
 | Elements | 1 | not a decoration family | Which sub-elements a module renders (`structure`). |
 | EmailService | 2 | not a decoration family | Email-provider account binding for opt-in modules. |
 | FieldDecoration | 209 | deferred | Form-field styling, absolute-path variant of FormField. |
-| Filters | 9 | documented — [Filters](#filters) | CSS filter stack plus blend mode. |
+| Filters | 12 | documented — [Filters](#filters) | CSS filter stack, backdrop-filter stack, plus blend mode. |
 | Fit | 2 | deferred | `object-fit` / `object-position` for media. |
 | Font | 44 | documented — [Font](#font) | Typography, plus delegated TextEffects and TextShadow. |
 | FontBody | 246 | deferred | The body-text font group: body/link/ul/ol/quote/dropCap sub-elements, each a full Font family. |
@@ -280,16 +280,26 @@ serialized shape — no rewrite, no dropped keys. Matches the documented path ex
 
 ## Filters
 
-9 subfields, from `module.decoration.filters__{blur,brightness,contrast,hueRotate,invert,opacity,saturate,sepia,blendMode}`
-*(VB-verified 2026-07-29)*.
+12 subfields, from `module.decoration.filters__{blur,brightness,contrast,hueRotate,invert,opacity,saturate,sepia,blendMode,backdropBlur,backdropInvert,backdropSepia}`
+*(the first nine VB-verified 2026-07-29; the three backdrop subfields source-verified
+on Divi 5.12.1, see below)*.
 
-`blur`/`brightness`/`contrast`/`hueRotate`/`invert`/`opacity`/`saturate`/`sepia` compose
-into a single CSS `filter` shorthand; `blendMode` is emitted as the separate CSS
-property `mix-blend-mode` (confirmed in
-`StyleLibrary/Declarations/Filters/Filters.php::style_declaration()` — `blendMode` is
-excluded from the `filter:` value-building loop and added via its own
-`$style_declarations->add( 'mix-blend-mode', ... )` call). All 9 still share the same
+Three CSS properties, not one. `blur`/`brightness`/`contrast`/`hueRotate`/`invert`/
+`opacity`/`saturate`/`sepia` compose into a single CSS `filter` shorthand.
+`backdropBlur`/`backdropInvert`/`backdropSepia` compose into a separate
+`backdrop-filter` shorthand — the property that blurs what is *behind* the element
+rather than the element itself, which is what a frosted-glass or glassmorphism panel
+needs. `blendMode` is emitted as `mix-blend-mode`. All three groups are built in
+`StyleLibrary/Declarations/Filters/Filters.php::style_declaration()`: the `filter:`
+value-building loop, then a second `self::value()` call over the three backdrop
+subfields mapped to bare `blur`/`invert`/`sepia` CSS functions, then `blendMode`'s own
+`$style_declarations->add( 'mix-blend-mode', ... )`. All 12 share the same
 `module.decoration.filters__*` subfield map and the same responsive/hover shape.
+
+The backdrop three arrived in Divi 5.11.1 ("Added backdrop blur, invert, and sepia
+controls to Divi 5 Filters options with matching builder/frontend CSS output"). Note the
+subfield names carry the `backdrop` prefix but the emitted CSS functions do not:
+`backdropBlur` becomes `blur(...)` inside `backdrop-filter`, not `backdrop-blur(...)`.
 
 The "Default" column below is the VB **control** default (`defaultAttr` shown when a
 user opens the field with no value set) — not a fallback value the renderer substitutes
@@ -298,7 +308,9 @@ the attr array entirely, so an omitted `saturate` key emits no `saturate(...)` t
 the `filter:` shorthand at all, rather than emitting `saturate(100%)`. Writing the
 default explicitly and omitting the key are only equivalent for the *rendered CSS
 output* in the specific case where the browser's own initial value for that filter
-function matches Divi's control default (true for all 8 numeric filter functions here).
+function matches Divi's control default (true for all 11 numeric filter functions here).
+The backdrop three are skipped the same way, and `backdrop-filter` is omitted entirely
+when none of them is set.
 
 | Path | Value shape | VB control default | Notes |
 |---|---|---|---|
@@ -310,15 +322,19 @@ function matches Divi's control default (true for all 8 numeric filter functions
 | `module.decoration.filters__opacity` | percentage, e.g. `"80%"` | `"100%"` | This is the CSS *filter* `opacity()` function (part of the `filter:` shorthand), not the module's own opacity/background-opacity setting. |
 | `module.decoration.filters__saturate` | percentage, e.g. `"150%"` | `"100%"` | `100%` = unchanged; `0%` = grayscale. |
 | `module.decoration.filters__sepia` | percentage, e.g. `"60%"` | `"0%"` | `100%` = full sepia tone. |
+| `module.decoration.filters__backdropBlur` | length, e.g. `"12px"` | `"0px"` | Emitted as `blur()` inside the separate `backdrop-filter` shorthand, so it blurs what shows through the element rather than the element's own content. Pair with a translucent background to get frosted glass. |
+| `module.decoration.filters__backdropInvert` | percentage, e.g. `"100%"` | `"0%"` | `invert()` inside `backdrop-filter`. |
+| `module.decoration.filters__backdropSepia` | percentage, e.g. `"60%"` | `"0%"` | `sepia()` inside `backdrop-filter`. |
 | `module.decoration.filters__blendMode` | enum (CSS `mix-blend-mode` keyword) | `"normal"` | `normal`, `multiply`, `screen`, `overlay`, `darken`, `lighten`, `color-dodge`, `color-burn`, `hard-light`, `soft-light`, `difference`, `exclusion`, `hue`, `saturation`, `color`, `luminosity`. This is Divi's own first-party option list for the field (a 16-entry labeled map — "Normal", "Multiply", "Screen", … — wired directly to the `blendMode` select in the Filters group definition in compiled `visual-builder/build/module.js`), not a generic CSS reference table; it happens to equal the full CSS `mix-blend-mode` keyword set. **No hover, no sticky**: the VB field config sets `features:{hover:false,sticky:false}` for this subfield specifically — the other 8 filter subfields don't carry that restriction. |
 
-**Units at a glance**: `blur` = length (`px`); `hueRotate` = angle (`deg`); everything
-else (`brightness`, `contrast`, `invert`, `opacity`, `saturate`, `sepia`) = percentage
-(`%`); `blendMode` = keyword enum, not a numeric unit at all.
+**Units at a glance**: `blur` and `backdropBlur` = length (`px`); `hueRotate` = angle
+(`deg`); everything else (`brightness`, `contrast`, `invert`, `opacity`, `saturate`,
+`sepia`, `backdropInvert`, `backdropSepia`) = percentage (`%`); `blendMode` = keyword
+enum, not a numeric unit at all.
 
 **Responsive + hover**: same shape as Box Shadow — `tablet`/`phone` siblings of
 `desktop`, hover under `desktop.hover`. **Exception**: `blendMode` supports neither
-hover nor sticky (see table above); the other 8 subfields support both. Filters' style
+hover nor sticky (see table above); the other 11 subfields support both. Filters' style
 declaration explicitly threads breakpoint/state through
 `ModuleUtils::use_attr_value(... mode: 'getAndInheritAll')` (`Filters.php:118-126`,
 same utility and mode as Box Shadow — not `StyleDeclarations`, which has no inheritance
@@ -363,13 +379,18 @@ cross-checked against `server/Packages/ModuleLibrary/Text/TextPresetAttrsMap.php
 Path list cross-verified against `php scripts/extract-decoration-paths.php <builder5> --shared`
 (see verification below).
 **VB round-trip** (2026-07-29, via the MCP write path, not a literal browser Visual
-Builder session): all 9 `desktop.value.*` subfields (`blur`, `brightness`, `contrast`,
+Builder session): the 9 `desktop.value.*` subfields that existed then (`blur`, `brightness`, `contrast`,
 `hueRotate`, `invert`, `opacity`, `saturate`, `sepia`, `blendMode`) plus a
 `desktop.hover.{saturate,brightness}` override written via `diviops_module_update` to
 a scratch Text module (page 900592, trashed after); `diviops_module_get` and an
 independent raw `wp post get --field=post_content` read both returned the identical
 serialized shape — no rewrite, no dropped keys, no renamed keys. Matches every
-documented path exactly.
+documented path exactly. **The three backdrop subfields are not in that round trip**:
+they are source-verified only, read from
+`server/Packages/StyleLibrary/Declarations/Filters/Filters.php` and from the
+`module.decoration.filters__backdrop{Blur,Invert,Sepia}` entries in a module's
+`PresetAttrsMap.php` on the Divi 5.12.1 reference install. Their paths and CSS emission
+are certain; their VB round trip is not measured.
 
 ---
 
