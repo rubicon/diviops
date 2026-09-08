@@ -512,6 +512,43 @@ Both sources are recorded here rather than reconciled: `@divi/types` describes t
 
 <!-- END GENERATED:types-index -->
 
+## Slider controls: the swipe bar (Divi 5.12.1, source-verified)
+
+The generated index below lists exactly one `pagination` advanced key for
+`divi/slider` — `show` — because it was dumped from Divi 5.11.1. Divi ships five more,
+and a builder who trusts the index alone concludes the swipe-controls bar has no
+authoring path and reaches for custom CSS.
+
+| Block attribute path | Values | Default | Purpose |
+|---|---|---|---|
+| `pagination.advanced.show.desktop.value` | `"on"` / `"off"` | — | Show Controls, the master toggle. Already in the index below. |
+| `pagination.advanced.style.desktop.value` | `"dot"` / `"swipe"` | `"dot"` | Controls Style. Dot navigation, or the swipe bar. |
+| `pagination.advanced.swipeText.desktop.value` | string | `""` | The swipe label's text. |
+| `pagination.advanced.showSwipeLabel.desktop.value` | `"on"` / `"off"` | `"on"` | Whether the swipe label renders. |
+| `pagination.advanced.showCounter.desktop.value` | `"on"` / `"off"` | `"on"` | Whether the slide counter renders. |
+| `pagination.advanced.color.desktop.value` | color | — | Text colour of the swipe bar's counter and label. |
+
+Read from Divi's own source on the reference install at 5.12.1:
+`SliderModule.php:70-72` and `:124-133` for the five paths and their `?? 'dot'` /
+`?? 'on'` fallbacks, and `SliderPresetAttrsMap.php:49-70` for the preset entries. The
+defaults column is the PHP renderer's fallback, not a VB control default, so an omitted
+`showCounter` renders the counter.
+
+Three cautions, all from the same reading:
+
+- The four swipe-specific fields declare no responsive, hover or sticky variants in
+  metadata. Write them at `desktop.value` only.
+- `swipeText`, `showSwipeLabel`, `showCounter` and `color` only matter when controls are
+  shown and `style` is `"swipe"`. They are inert under `"dot"`.
+- Divi 4 conversion writes `"dot"` into non-preset Slider content that has no style
+  (`SliderModule.php:576-577`), and the renderer falls back to `"dot"` besides. **Do not
+  rewrite existing Sliders to `"swipe"`** on the theory that it is the new default; it is
+  not, and old-dot preservation was not runtime-checked here.
+
+This is a source adoption. The paths and the fallbacks are certain; no Visual Builder
+round trip was run for the swipe bar, so treat authored swipe output as needing a look
+before it ships.
+
 ### About the generated index
 
 *This section is hand-maintained and sits outside the generated region on purpose —
