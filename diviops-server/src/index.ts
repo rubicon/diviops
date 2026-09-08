@@ -4207,7 +4207,7 @@ registerPluginTool(
   "diviops_tb_template_create",
   {
     description:
-      "Create a Theme Builder template with custom header and/or footer. Automatically creates layout posts, sets conditions, and links to Theme Builder. Pass condition=\"default\" (case-insensitive) or an empty string to register the template as the catch-all Default Website Template — the route writes the `_et_default = '1'` flag with an empty `_et_use_on`, matching the meta shape Divi's TB router gates the default route on; any other condition string lands in `_et_use_on` unchanged. Default Website Template is a singleton scoped to the active Theme Builder master: if the active master's `_et_template` linked list already names an et_template carrying `_et_default = '1'` (regardless of `_et_enabled` status — the router resolves by linked-list position before checking the enable-gate, so a disabled existing default linked ahead of the new one would still shadow it), the route rejects with code `tb_template.default_already_exists` (HTTP 409) and `error.data.existing_default_id` + `error.data.master_post_id`. Templates outside the active master's linked list (orphan defaults, library-cloned-master defaults) cannot shadow the router's pick and DO NOT block creation. Caller resolves a real conflict by trashing the existing default (diviops_tb_template_trash) or pinning this template to a specific condition; the route never silently flips the existing default's flag or proceeds with non-deterministic router state. If the Theme Builder master post is missing (fresh substrate that never opened Divi → Theme Builder in WP Admin), the route auto-bootstraps one with the same shape Divi creates on first admin visit and returns `data.master_post_bootstrapped: true` so callers can audit the side-effect. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; failures during master-post bootstrap or template/layout insert surface the underlying WP_Error code (commonly `db_insert_error`, `db_update_error`, or other slugs from the WordPress vocabulary), not a generic `wp_error` — branch on `error.code` against the WP slug, not against a hard-coded string. The literal `wp_error` slug only surfaces when the upstream WP_Error has an empty code." +
+      "Create a Theme Builder template with a custom header, body and/or footer. Automatically creates layout posts, sets conditions, and links to Theme Builder. Pass condition=\"default\" (case-insensitive) or an empty string to register the template as the catch-all Default Website Template — the route writes the `_et_default = '1'` flag with an empty `_et_use_on`, matching the meta shape Divi's TB router gates the default route on; any other condition string lands in `_et_use_on` unchanged. Default Website Template is a singleton scoped to the active Theme Builder master: if the active master's `_et_template` linked list already names an et_template carrying `_et_default = '1'` (regardless of `_et_enabled` status — the router resolves by linked-list position before checking the enable-gate, so a disabled existing default linked ahead of the new one would still shadow it), the route rejects with code `tb_template.default_already_exists` (HTTP 409) and `error.data.existing_default_id` + `error.data.master_post_id`. Templates outside the active master's linked list (orphan defaults, library-cloned-master defaults) cannot shadow the router's pick and DO NOT block creation. Caller resolves a real conflict by trashing the existing default (diviops_tb_template_trash) or pinning this template to a specific condition; the route never silently flips the existing default's flag or proceeds with non-deterministic router state. If the Theme Builder master post is missing (fresh substrate that never opened Divi → Theme Builder in WP Admin), the route auto-bootstraps one with the same shape Divi creates on first admin visit and returns `data.master_post_bootstrapped: true` so callers can audit the side-effect. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; failures during master-post bootstrap or template/layout insert surface the underlying WP_Error code (commonly `db_insert_error`, `db_update_error`, or other slugs from the WordPress vocabulary), not a generic `wp_error` — branch on `error.code` against the WP slug, not against a hard-coded string. The literal `wp_error` slug only surfaces when the upstream WP_Error has an empty code." +
       DRY_RUN_DESC_SUFFIX,
     inputSchema: {
       title: z.string().describe('Template name (e.g. "Landing Pages")'),
@@ -4230,18 +4230,33 @@ registerPluginTool(
         .describe(
           "Footer block markup (empty = inherit from default template)",
         ),
+      body_content: z
+        .string()
+        .optional()
+        .default("")
+        .describe(
+          "Body block markup (empty = the template keeps the default body slot, which is the pre-existing behavior). Nonempty content requires plugin capability tb_template_create_body and returns body_layout_id.",
+        ),
       dry_run: DRY_RUN_FIELD,
     },
     annotations: { idempotentHint: false },
     _meta: { idempotent: "false" },
   },
-  async ({ title, condition, header_content, footer_content, dry_run }) => {
+  async ({ title, condition, header_content, footer_content, body_content, dry_run }) => {
+    const bodyGate = conditionalCapabilityError(
+      "diviops_tb_template_create",
+      "tb_template_create_body",
+      body_content !== "",
+      "Alternatively, omit body_content to create a template with the default body slot.",
+    );
+    if (bodyGate) return bodyGate;
     const isolationGate = writerIsolationErrorResult(
       "diviops_tb_template_create",
-      { header_content, footer_content },
+      { header_content, footer_content, body_content },
     );
     if (isolationGate) return isolationGate;
     const body: Record<string, unknown> = { title, condition, header_content, footer_content };
+    if (body_content !== "") body.body_content = body_content;
     if (dry_run) body.dry_run = true;
     const result = await wp.requestEnveloped("/theme-builder/template/create", {
       method: "POST",
