@@ -274,7 +274,7 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 | `diviops_tb_layout_block_insert` | plugin | `layout_id`, `parent_selector?`, `parent_path?`, `position?`, `content`, `dry_run?`, `backup?` | conditional | Insert one or more serialized Divi blocks into an existing Theme Builder layout without replacing the whole layout. … |
 | `diviops_tb_layout_get` | plugin | `layout_id` | true | Get a Theme Builder layout's block markup content (header, body, or footer). … |
 | `diviops_tb_layout_update` | plugin | `layout_id`, `content`, `dry_run?`, `backup?` | conditional | Update a Theme Builder layout's block markup (header, body, or footer). … |
-| `diviops_tb_template_create` | plugin | `title`, `condition`, `header_content?`, `footer_content?`, `dry_run?` | false | Create a Theme Builder template with custom header and/or footer. … |
+| `diviops_tb_template_create` | plugin | `title`, `condition`, `header_content?`, `footer_content?`, `body_content?`, `dry_run?` | false | Create a Theme Builder template with a custom header, body and/or footer. … |
 | `diviops_tb_template_list` | plugin | `per_page?`, `page?` | true | List all Theme Builder templates with their conditions, layout IDs, and enabled status. … |
 | `diviops_tb_template_trash` | plugin | `template_id`, `force?`, `dry_run?` | conditional | Trash (or permanently delete) a Theme Builder template AND its linked header/body/footer layouts AND scrub the `_et_template` meta refs on the Theme Builder master post. … |
 | `diviops_template_get` | server-local | `template_name` | true | Get a specific Divi template with verified block markup, customizable variables, and usage notes. … |
