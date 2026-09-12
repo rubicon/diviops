@@ -3109,6 +3109,18 @@ trait DiviOps_Agent_Preset {
 	 * Recursively remove attrs from $inline that are deep-equal to the value in $preset at the same path.
 	 * Preserves unrelated branches. Top-level reserved keys (meta, modulePreset, etc.) are always preserved
 	 * so preset_reassign never strips identity/binding data even if a caller wrote matching values into the preset.
+	 *
+	 * List-shaped values are compared WHOLE and never walked per index (#415). Divi does not merge
+	 * list attrs positionally: `ArrayUtility::get_mergeable_array_fields()` declares
+	 * `module.decoration.attributes` mergeable on the unique-key pair (`name`, `targetElement`), and
+	 * `merge_array_by_unique_keys()` matches a module row to a preset row by that pair, never by index.
+	 * Walking the list by key therefore deletes whichever keys an inline row happens to share with the
+	 * unrelated preset row sitting at the same position — for a Custom Attributes CSS-class row that
+	 * pair is exactly `name` and `targetElement`, and a row with no `name` is dropped outright by
+	 * `AttributeUtils::separate_attributes_by_target_element()`, so the module's local class was lost
+	 * from storage and from the frontend. A partial strip also left a numeric gap, turning the list
+	 * into a JSON object. `merge_module_attr_value()` in trait-page.php refuses list merging for the
+	 * same reason; this is the read-side half of that rule.
 	 */
 	private static function _strip_redundant_inline_attrs( $inline, $preset, bool $is_root = true ) {
 		if ( ! is_array( $inline ) || ! is_array( $preset ) ) {
@@ -3123,6 +3135,12 @@ trait DiviOps_Agent_Preset {
 				continue;
 			}
 			if ( is_array( $val ) && is_array( $preset[ $key ] ) ) {
+				if ( self::is_list_like_array( $val ) || self::is_list_like_array( $preset[ $key ] ) ) {
+					if ( $val === $preset[ $key ] ) {
+						unset( $inline[ $key ] );
+					}
+					continue;
+				}
 				$inline[ $key ] = self::_strip_redundant_inline_attrs( $val, $preset[ $key ], false );
 				if ( is_array( $inline[ $key ] ) && empty( $inline[ $key ] ) ) {
 					unset( $inline[ $key ] );
