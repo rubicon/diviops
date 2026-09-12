@@ -1039,13 +1039,28 @@ trait DiviOps_Agent_Variable {
 			// get_customizer_color_count() for rationale.
 			$max_order = max( self::get_customizer_color_count(), $max_order );
 
-			$colors[ $id ] = [
-				'color'       => $color,
-				'status'      => 'active',
-				'label'       => $label,
-				'order'       => (string) ( $max_order + 1 ),
-				'lastUpdated' => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
-			];
+			// MERGE, never replace (#417) — the same defect global_color_upsert
+			// carried until #380, in a second writer to the same storage. Every
+			// one of the 103 live `gcid-*` records on staging carries `id`,
+			// `folder` and `usedInPosts`, none of which this literal enumerates,
+			// so an upsert onto an existing colour destroyed all three. Merging
+			// keeps them, and keeps whatever a future Divi release adds.
+			//
+			// `$existing_color` is [] for a create, so a new colour still starts
+			// clean rather than inheriting from a sibling. The five computed keys
+			// are this write's payload and deliberately win over the stored copy.
+			$existing_color = is_array( $colors[ $id ] ?? null ) ? $colors[ $id ] : [];
+
+			$colors[ $id ] = array_merge(
+				$existing_color,
+				[
+					'color'       => $color,
+					'status'      => 'active',
+					'label'       => $label,
+					'order'       => (string) ( $max_order + 1 ),
+					'lastUpdated' => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
+				]
+			);
 
 			$global_data['global_colors'] = $colors;
 			et_update_option( 'et_global_data', $global_data );
@@ -1122,15 +1137,33 @@ trait DiviOps_Agent_Variable {
 			);
 		}
 
-		$vars[ $type ][ $id ] = [
-			'id'          => $id,
-			'label'       => $label,
-			'value'       => $sanitized_value,
-			'order'       => $max_order + 1,
-			'status'      => 'active',
-			'lastUpdated' => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
-			'type'        => $type,
-		];
+		// MERGE, never replace (#417). The literal below does not enumerate
+		// `variableType`, which Divi's Visual Builder stamps on every global
+		// variable it stores — `global-data.js`'s reducer writes
+		// `variableType: <bucket>` — so an upsert onto a VB-made id stripped it.
+		// It is read back: `module-utils.js` gates image inlining on
+		// `"images" === e.variableType`, and `ai-agent.js` reports it in variable
+		// metadata. Divi's PHP never writes it, so nothing backfills it.
+		// Measured on staging (Divi 5.12.1): of 164 live `gvid-*` records, 53
+		// carry `variableType` and its value is always the bucket name.
+		//
+		// `$existing_var` is [] for a create, so a new variable starts clean.
+		// The payload keys win over the stored copy; everything else survives.
+		$existing_var = is_array( $vars[ $type ][ $id ] ?? null ) ? $vars[ $type ][ $id ] : [];
+
+		$vars[ $type ][ $id ] = array_merge(
+			$existing_var,
+			[
+				'id'           => $id,
+				'label'        => $label,
+				'value'        => $sanitized_value,
+				'order'        => $max_order + 1,
+				'status'       => 'active',
+				'lastUpdated'  => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
+				'type'         => $type,
+				'variableType' => $type,
+			]
+		);
 
 		self::write_divi_global_variables_registry( $vars );
 
@@ -1774,15 +1807,25 @@ trait DiviOps_Agent_Variable {
 				? (int) ( $existing_entry['order'] ?? ++$max_order )
 				: ++$max_order;
 
-			$vars['numbers'][ $id ] = [
-				'id'          => $id,
-				'label'       => $label,
-				'value'       => $value,
-				'order'       => $order,
-				'status'      => 'active',
-				'lastUpdated' => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
-				'type'        => 'numbers',
-			];
+			// MERGE, never replace, and stamp `variableType` (#417) — the same
+			// treatment variable_create's own write gets. This is the second
+			// writer into the identical `numbers` bucket, and an overwrite=true
+			// run onto a Visual-Builder-made id stripped every key not listed
+			// below, `variableType` included. `$existing_entry` is null for a
+			// create, so a fresh variable still inherits nothing.
+			$vars['numbers'][ $id ] = array_merge(
+				$exists ? $existing_entry : [],
+				[
+					'id'           => $id,
+					'label'        => $label,
+					'value'        => $value,
+					'order'        => $order,
+					'status'       => 'active',
+					'lastUpdated'  => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
+					'type'         => 'numbers',
+					'variableType' => 'numbers',
+				]
+			);
 			$created[] = [
 				'id'        => $id,
 				'value'     => $value,
