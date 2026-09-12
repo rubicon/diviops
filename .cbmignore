@@ -1,0 +1,17 @@
+# Files kept in the repository but kept OUT of the codebase-memory knowledge graph.
+#
+# This is not .gitignore. Everything here is tracked, shipped and needed at runtime; it simply
+# has no business being a queryable symbol. .gitignore is the wrong lever for that — these
+# files must stay in the repo.
+#
+# Minified third-party bundles (#431). plugins/diviops-design-library/assets/js/three.min.js
+# alone contributed 1,622 of the project's 7,970 graph nodes — 20.4% — from 603 KB on six
+# lines of minified Three.js. Minifier output has mangled identifiers (`t`, `e`, single
+# letters), so those nodes carry no meaning and compete in every BM25 and semantic ranking
+# against the real symbols. It degraded every query in the repository, not just queries about
+# the design library.
+#
+# Matched by pattern rather than by path so the next vendored bundle is excluded on arrival.
+# Deliberately NOT the whole assets/js/ folder: design-fx.js beside it is ours and stays
+# indexed.
+**/*.min.js
