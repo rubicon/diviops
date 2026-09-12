@@ -698,7 +698,7 @@ assert_true( ! isset( $refs['all_ids']['gvid-ignored'] ), 'buckets other than mo
 //
 // Every call here passes a `type`, because an unfiltered list reads the colours
 // bucket through the absent et_get_option(). The seven valid types come from
-// Divi's own store: GlobalData::get_global_variables() (GlobalData.php:921-929)
+// Divi's own store: GlobalData::get_global_variables() (GlobalData.php:922-930)
 // per variable-bindings.md's "Storage buckets" section.
 
 diviops_variable_reset();

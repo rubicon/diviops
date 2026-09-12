@@ -754,10 +754,10 @@ trait DiviOps_Agent_Preset {
 	 * Divi 5.3.0+ stores chain refs in two distinct shapes depending on the bucket:
 	 * - Module-bucket presets: TOP-LEVEL `preset.groupPresets.<slot>.presetId` (plural).
 	 *   Matches the REST schema at `GlobalPresetController.php:309` (declared as sibling of
-	 *   `attrs`/`renderAttrs`/`styleAttrs`) and the reader path in `GlobalPreset.php:1486, 2274`.
+	 *   `attrs`/`renderAttrs`/`styleAttrs`) and the reader path in `GlobalPreset.php:1626, 2414`.
 	 *   The VB bundle's `generateNewPreset` assigns `m.groupPresets = i` at the preset root.
 	 * - Group-bucket presets: NESTED `preset.attrs.groupPreset.<slot>.presetId` (singular).
-	 *   Matches the reader at `GlobalPreset.php:1510, 2394` and the VB bundle's
+	 *   Matches the reader at `GlobalPreset.php:1650, 2534` and the VB bundle's
 	 *   `extractGroupPresetsFromAttrs` which reads `e?.groupPreset` off the attrs bag.
 	 *
 	 * Without walking both shapes, every chain-only group preset (font, border, box-shadow,
@@ -3002,10 +3002,10 @@ trait DiviOps_Agent_Preset {
 	 * Parity with Divi's render path — matches `GlobalPreset::get_selected_group_presets()` +
 	 * `GlobalPreset::get_merged_attrs()`:
 	 *   - Runs runtime preset migration via `_maybe_runtime_migrate_preset_data` before constructing
-	 *     the item (Divi does this at both `GlobalPreset.php:2485` and `:2518`). Older-shape presets
+	 *     the item (Divi does this at both `GlobalPreset.php:2644` and `:2677`). Older-shape presets
 	 *     get migrated to canonical paths so strip compares against the actual rendered tree.
 	 *   - Merges all three bags — `styleAttrs + attrs + renderAttrs` — because `get_merged_attrs()`
-	 *     at `GlobalPreset.php:3179` merges group presets' renderAttrs into the final bag alongside
+	 *     at `GlobalPreset.php:3331` merges group presets' renderAttrs into the final bag alongside
 	 *     attrs; fields stored only in renderAttrs still override module inline and must be stripped.
 	 *
 	 * Results are cached per-request keyed by preset UUID + target module + slot — the resolver is
@@ -3040,7 +3040,7 @@ trait DiviOps_Agent_Preset {
 
 		try {
 			// Parity step 1 — runtime migration. Divi always runs this before constructing the item
-			// (see GlobalPreset.php:2485 and :2518). Skipping it would compare against stale paths on
+			// (see GlobalPreset.php:2644 and :2677). Skipping it would compare against stale paths on
 			// sites carrying pre-5.3.0 preset shapes (FocusFields, ComposibleOptions, PresetStack).
 			$migrated = $new_entry;
 			try {

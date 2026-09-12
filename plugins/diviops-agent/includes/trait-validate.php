@@ -499,7 +499,7 @@ trait DiviOps_Agent_Validate {
 
 			// ── flexType on the wrong decoration bucket (warning, any module) ──
 			// Canonical: module.decoration.sizing.desktop.value.flexType (Sizing subName,
-			//            verified at Packages/Module/Options/Sizing/SizingPresetAttrsMap.php:124-128).
+			//            verified at Packages/Module/Options/Sizing/SizingPresetAttrsMap.php:129-132).
 			// Wrong:     module.decoration.layout.{breakpoint}.value.flexType — Layout registers
 			//            no flexType subName, so the value is byte-stored but semantically dropped
 			//            at render. Applies on every breakpoint identically.
