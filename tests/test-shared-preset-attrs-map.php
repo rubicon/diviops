@@ -200,6 +200,45 @@ assert_true(
  */
 $shared_builder5 = getenv( 'DIVIOPS_DIVI_BUILDER5_PATH' );
 
+/*
+ * How many assertions the block below contains (#416).
+ *
+ * Declared as a literal so the skip can be COUNTED, and immediately checked against the
+ * block's real contents so the literal cannot rot. Before this, the guard simply did nothing
+ * when no Divi tree was present and `PASS N assertion(s)` read identically whether these ran
+ * or not — and these are the only assertions in the suite a Divi upgrade can break, so the
+ * suite was structurally incapable of noticing 5.12.0 -> 5.12.1.
+ *
+ * The check runs in BOTH branches, which is the point: it executes on CI, where the guarded
+ * block never does.
+ */
+$shared_divi_declared_skips = 11;
+
+/*
+ * The block is delimited by sentinel comments rather than by matching the `if` line itself.
+ * The first version searched for the `if` condition as a literal and counted 13 instead of
+ * 11, because the needle matched the line doing the searching before it reached the real
+ * statement — the block then began two assertions early and swallowed these very checks.
+ * The sentinel halves are concatenated below for the same reason: a whole needle written
+ * here would find itself.
+ */
+$shared_divi_src   = (string) file_get_contents( __FILE__ );
+$shared_divi_begin = strpos( $shared_divi_src, 'DIVI-TREE-BLOCK' . '-BEGIN' );
+$shared_divi_end   = strpos( $shared_divi_src, 'DIVI-TREE-BLOCK' . '-END' );
+assert_true(
+	false !== $shared_divi_begin && false !== $shared_divi_end && $shared_divi_end > $shared_divi_begin,
+	'both block sentinels are present and ordered — the positive control for the count below'
+);
+assert_same(
+	$shared_divi_declared_skips,
+	preg_match_all(
+		'/\bassert_(?:same|true)\s*\(/',
+		substr( $shared_divi_src, (int) $shared_divi_begin, (int) $shared_divi_end - (int) $shared_divi_begin )
+	),
+	'the declared skip count matches the assertions actually inside the Divi-tree block'
+);
+
+// DIVI-TREE-BLOCK-BEGIN
 if ( is_string( $shared_builder5 ) && '' !== $shared_builder5 && is_dir( $shared_builder5 . '/server/Packages/Module/Options' ) ) {
 	$shared_divi_packages = $shared_builder5 . '/server/Packages';
 	$shared_divi_index    = diviops_preset_attrs_map_shared_index( $shared_divi_packages );
@@ -329,5 +368,11 @@ if ( is_string( $shared_builder5 ) && '' !== $shared_builder5 && is_dir( $shared
 			'font__size'
 		),
 		'that delegated Font path is not spelled anywhere in ButtonPresetAttrsMap.php, so a text scan would miss it'
+	);
+	// DIVI-TREE-BLOCK-END
+} else {
+	diviops_skip(
+		'no Divi tree: DIVIOPS_DIVI_BUILDER5_PATH is unset or does not point at a directory containing server/Packages/Module/Options',
+		$shared_divi_declared_skips
 	);
 }
