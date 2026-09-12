@@ -10,6 +10,13 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.23.1](https://github.com/rubicon/diviops/compare/v1.23.0...v1.23.1) (2026-09-12)
+
+
+### Bug Fixes
+
+* **#416:** count and name the assertions a run did not make ([#429](https://github.com/rubicon/diviops/issues/429)) ([2ad8ac7](https://github.com/rubicon/diviops/commit/2ad8ac79817a85eed806d0366b2abe509f939916)), closes [#416](https://github.com/rubicon/diviops/issues/416)
+
 ## [1.23.0](https://github.com/rubicon/diviops/compare/v1.22.1...v1.23.0) (2026-09-08)
 
 
