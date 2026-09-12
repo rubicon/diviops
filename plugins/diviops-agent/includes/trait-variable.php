@@ -1254,14 +1254,19 @@ trait DiviOps_Agent_Variable {
 	 * Validate a caller-supplied name_prefix against the gvid- ID charset.
 	 *
 	 * Generated IDs follow `gvid-{namespace}-{prefix}-{n}` or
-	 * `gvid-{namespace}-size-{prefix}{n}`. Divi's ID resolution at
-	 * `GlobalData.php:760` strips any chars outside [a-z0-9-_] silently —
-	 * the variable is created in the registry but $variable() lookups fail
-	 * to resolve at render time. Reject up front rather than letting the
-	 * silent-render-failure ship.
+	 * `gvid-{namespace}-size-{prefix}{n}`. Divi resolves a `var(--gvid-…)`
+	 * reference with `/--(gvid-[a-z0-9\-]+)/i`
+	 * (`GlobalData::resolve_global_variable_value()`, `GlobalData.php:1281`;
+	 * the same pattern again at `GradientUtils.php:755`) and scans page content
+	 * for referenced IDs with `gvid-[0-9a-z-]*` (`DetectFeature.php:138`).
+	 * Anything outside `[a-z0-9-]` truncates the ID silently — the variable is
+	 * created in the registry but $variable() lookups fail to resolve at render
+	 * time. Reject up front rather than letting the silent-render-failure ship.
 	 *
-	 * Charset is [a-z0-9_-] — Divi's $variable() resolver at GlobalData.php:760
-	 * silently strips chars outside this set during ID extraction.
+	 * Accepted charset here is [a-z0-9_-], which is WIDER than either Divi
+	 * extraction class by the underscore. `trait-design-system.php` carries the
+	 * matching note for the colour side, where an underscore in a minted
+	 * `gcid-` truncated against the same character class.
 	 *
 	 * @return string The validated, lowercased prefix, or $default if input is null/empty.
 	 * @throws \InvalidArgumentException if the prefix contains disallowed chars.
@@ -2365,7 +2370,7 @@ trait DiviOps_Agent_Variable {
 	 * Detect numeric/font variable IDs (gvid-*) the page actually emits.
 	 *
 	 * Mirrors the same content-stack assembly Divi performs at frontend render
-	 * (FrontEnd.php:628-675) so the result matches the variable IDs Divi 5.4.0+
+	 * (FrontEnd.php:637-696) so the result matches the variable IDs Divi 5.4.0+
 	 * uses to scope selective `:root{--gvid-*}` emission via
 	 * `Style::get_global_numeric_and_fonts_vars_style($ids)`:
 	 *
@@ -2394,7 +2399,7 @@ trait DiviOps_Agent_Variable {
 	 * Canvas-portal IDs are extracted directly from the assembled stack with
 	 * `DynamicAssetsUtils::extract_canvas_portal_canvas_ids_from_content()`
 	 * because the same util's cached `canvas_portal_ids` field is also gated
-	 * on `is_cacheable_request` (DynamicAssetsUtils.php:2736-2772) and would
+	 * on `is_cacheable_request` (DynamicAssetsUtils.php:3017-3050) and would
 	 * be empty in REST.
 	 *
 	 * NOTE: gvid-* only. Color variables (gcid-*) are emitted via a separate
@@ -2438,9 +2443,9 @@ trait DiviOps_Agent_Variable {
 		}
 
 		// Build the combined main content: post_content + each TB template's
-		// post_content, space-joined. This matches `FrontEnd.php:640-653`
+		// post_content, space-joined. This matches `FrontEnd.php:655-668`
 		// exactly and is the same string Divi passes as `$main_content` to
-		// `get_all_appended_canvas_content_for_post_and_templates()` at line 658.
+		// `get_all_appended_canvas_content_for_post_and_templates()` at line 673.
 		// Critically, this combined string — not a per-owner one — is what
 		// every owner needs so interaction-target discovery is identical to
 		// the frontend, and so the canvas-data static cache gets seeded
@@ -2500,30 +2505,30 @@ trait DiviOps_Agent_Variable {
 		// per owner BEFORE any other canvas helper runs for that owner.
 		// `get_canvas_content_for_appended()` internally calls
 		// `get_all_canvas_data_for_post($owner_id)` with an empty main_content
-		// (OffCanvasHooks.php:2892), which would write the static cache
+		// (OffCanvasHooks.php:3364), which would write the static cache
 		// (keyed both by content-hash and by base "post_id_md5('')") with
 		// `interaction_targets => []` — empty seed, no targets discoverable.
 		// `get_canvas_content_for_targets()` later reads the same base key
 		// (it also passes empty main_content) and would find no targets.
 		// Seeding first with the same combined main Divi uses populates the
 		// cache with `interaction_targets` so the later targets call works.
-		// See DynamicAssetsUtils.php:2937-2965 (interaction_targets build) and
-		// :2990-2995 (dual-key cache write).
+		// See DynamicAssetsUtils.php:3219-3242 (interaction_targets build) and
+		// :3269-3274 (dual-key cache write).
 		//
 		// Canvas portal IDs need to be extracted ourselves: that same util's
 		// `canvas_portal_ids` field is also gated behind `is_cacheable_request`
-		// (DynamicAssetsUtils.php:2736-2772), so the cached `canvas_data`
+		// (DynamicAssetsUtils.php:3017-3050), so the cached `canvas_data`
 		// returns an empty array for that field in REST. We walk the combined
 		// main content with `extract_canvas_portal_canvas_ids_from_content()`
 		// + recursive expansion via `get_canvas_content_for_canvas_portals()`,
-		// matching the full pipeline at OffCanvasHooks.php:3004-3047 (incl.
-		// the 10-iteration safety cap for nested portals).
+		// matching the full pipeline at OffCanvasHooks.php:3476-3519 (incl.
+		// the 10-iteration safety cap for nested portals at :3492-3502).
 		//
 		// Interaction targets are extracted from `$combined_main` (matching
-		// what Divi passes at OffCanvasHooks.php:3070/3087 — same combined
+		// what Divi passes at OffCanvasHooks.php:3542/3559 — same combined
 		// string for every owner) and filtered through
 		// `canvas_block_content_contains_target` to drop targets already
-		// satisfied on the main canvas (matches OffCanvasHooks.php:2980-3002).
+		// satisfied on the main canvas (matches OffCanvasHooks.php:3452-3474).
 		if ( class_exists( '\\ET\\Builder\\VisualBuilder\\OffCanvas\\OffCanvasHooks' ) ) {
 			$canvas_owner_ids = array_values( array_unique( array_merge( [ $post_id ], $tb_template_ids ) ) );
 
@@ -2544,7 +2549,7 @@ trait DiviOps_Agent_Variable {
 
 			// Pre-seed the portal IDs that come from the combined main content
 			// (matches Divi's `canvas_data['canvas_portal_ids']` which is built
-			// from main + TB content at DynamicAssetsUtils.php:2749-2771). Same
+			// from main + TB content at DynamicAssetsUtils.php:3026-3049). Same
 			// for every owner since the main is the same.
 			$shared_portal_ids_from_main = [];
 			if ( false !== strpos( $combined_main, 'canvas-portal' ) ) {
@@ -2558,10 +2563,10 @@ trait DiviOps_Agent_Variable {
 				\ET\Builder\FrontEnd\Assets\DynamicAssetsUtils::get_all_canvas_data_for_post( $owner_id, $combined_main );
 
 				// Per-owner local buffer — Divi's `get_all_appended_canvas_content`
-				// uses a fresh `$all_canvas_content` per owner (line 2969) and
+				// uses a fresh `$all_canvas_content` per owner (line 3441) and
 				// expands portals only from THAT buffer + the canvas_data's main-
 				// derived portal IDs, calling `get_canvas_content_for_canvas_portals(
-				// $ids, $owner_id)` against THIS owner's $post_id (line 3033).
+				// $ids, $owner_id)` against THIS owner's $post_id (line 3505).
 				// Sharing portal-ID extraction across owners via the global
 				// $content_stack would resolve a same-named portal ID against the
 				// wrong owner and over-include canvases the frontend would not
@@ -2585,7 +2590,7 @@ trait DiviOps_Agent_Variable {
 				// Canvas-portal expansion (recursive, capped). Seed from the
 				// shared main-derived IDs + portals discovered inside this
 				// OWNER's local appended/interaction buffer — matches the
-				// merge at OffCanvasHooks.php:3009-3017.
+				// merge at OffCanvasHooks.php:3481-3489.
 				$portal_ids_from_owner_buffer = [];
 				if ( '' !== $owner_canvas_content && false !== strpos( $owner_canvas_content, 'canvas-portal' ) ) {
 					$portal_ids_from_owner_buffer = \ET\Builder\FrontEnd\Assets\DynamicAssetsUtils::extract_canvas_portal_canvas_ids_from_content( $owner_canvas_content );

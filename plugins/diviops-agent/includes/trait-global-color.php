@@ -309,7 +309,7 @@ trait DiviOps_Agent_GlobalColor {
 	 * The 5 customizer-bound default global color IDs. These are managed
 	 * via WP Customizer and writing to them through the registry creates
 	 * an entry that Divi's customizer-merge path then hides from registry
-	 * reads (see GlobalData::get_global_colors at GlobalData.php:341 — it
+	 * reads (see GlobalData::get_global_colors at GlobalData.php:349 — it
 	 * removes customizer-bound colors from the returned set). A write to
 	 * one of these via MCP would silently no-op from a UI perspective.
 	 */
@@ -330,12 +330,12 @@ trait DiviOps_Agent_GlobalColor {
 	 * Auto-prefixes `gcid-` if missing (caller convenience). Then enforces
 	 * Divi's downstream regex constraints:
 	 *
-	 * - GlobalData.php:760 extracts IDs via `/--gcid-([0-9a-z-]*)/` so
+	 * - GlobalData.php:778 extracts IDs via `/--gcid-([0-9a-z-]*)/` so
 	 *   anything outside `[0-9a-z-]` after the prefix breaks CSS-variable
 	 *   resolution silently (id stored, $variable() lookup fails).
-	 * - Style.php:935 emits CSS variable names directly from the ID so a
-	 *   long ID generates a long var name; cap at 80 chars (matches the
-	 *   uuid4 default).
+	 * - FrontEnd/Module/Style.php:1232 emits CSS variable names directly
+	 *   from the ID so a long ID generates a long var name; cap at 80
+	 *   chars (matches the uuid4 default).
 	 * - Customizer-bound defaults (see customizer_locked_color_ids) are
 	 *   rejected to prevent the silent registry-vs-customizer mismatch
 	 *   between Divi's $variable() resolver and the Theme Customizer.
@@ -365,7 +365,7 @@ trait DiviOps_Agent_GlobalColor {
 		if ( ! preg_match( '/^[0-9a-z-]{1,80}$/', $suffix ) ) {
 			return new WP_Error(
 				'invalid_id',
-				sprintf( "Color ID '%s' contains characters outside the allowed [0-9a-z-] set, or exceeds 80 chars after the 'gcid-' prefix. Divi's CSS-variable resolution at GlobalData.php:760 strips non-matching IDs silently.", $id ),
+				sprintf( "Color ID '%s' contains characters outside the allowed [0-9a-z-] set, or exceeds 80 chars after the 'gcid-' prefix. Divi's CSS-variable resolution at GlobalData.php:778 strips non-matching IDs silently.", $id ),
 				[ 'status' => 400 ]
 			);
 		}
