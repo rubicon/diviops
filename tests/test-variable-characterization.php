@@ -1425,14 +1425,22 @@ assert_same(
 	'a variable create reports a site-wide cache result'
 );
 $record = diviops_variable_record( 'strings', 'gvid-tag' );
+// Eight keys since #417, not the seven this line pinned before it. `variableType`
+// is Divi's own field — the Visual Builder's global-data.js reducer writes
+// `variableType: <bucket>` onto every global variable it stores, and Divi reads it
+// back in module-utils.js (image inlining) and ai-agent.js (variable metadata) —
+// and this handler never set it, so every variable the fork made was missing a key
+// Divi's PHP does not backfill. The expectation below is the deliberate update that
+// marker anticipates, not a regression.
 assert_same(
-	array( 'id', 'label', 'value', 'order', 'status', 'lastUpdated', 'type' ),
+	array( 'id', 'label', 'value', 'order', 'status', 'lastUpdated', 'type', 'variableType' ),
 	array_keys( (array) $record ),
-	'the stored record carries seven keys in this order'
+	'the stored record carries eight keys in this order (#417)'
 );
 assert_same( 1, $record['order'], 'the first entry in an empty bucket is order 1' );
 assert_same( 'active', $record['status'], 'a created variable is active' );
 assert_same( 'strings', $record['type'], 'the record carries its bucket as `type`, redundantly with the array key' );
+assert_same( 'strings', $record['variableType'], "the record also carries Divi's own variableType, which the VB reads (#417)" );
 assert_true(
 	1 === preg_match( '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/', (string) $record['lastUpdated'] ),
 	'lastUpdated is an ISO-8601 UTC stamp with milliseconds'
