@@ -1047,8 +1047,16 @@ trait DiviOps_Agent_Variable {
 			// keeps them, and keeps whatever a future Divi release adds.
 			//
 			// `$existing_color` is [] for a create, so a new colour still starts
-			// clean rather than inheriting from a sibling. The five computed keys
+			// clean rather than inheriting from a sibling. The computed keys below
 			// are this write's payload and deliberately win over the stored copy.
+			//
+			// `order` is the exception (#437). It is the colour's sort position in
+			// the Variable Manager, not this write's data, so an upsert keeps the
+			// stored value and only a genuine create mints max(order)+1. Recomputing
+			// it moved every edited colour to the end of the palette, and the tool
+			// exposes no `order` parameter to put it back. Cast to string because
+			// Divi's colour store holds it as one: all 103 live `gcid-*` records on
+			// staging carry a string `order`.
 			$existing_color = is_array( $colors[ $id ] ?? null ) ? $colors[ $id ] : [];
 
 			$colors[ $id ] = array_merge(
@@ -1057,7 +1065,7 @@ trait DiviOps_Agent_Variable {
 					'color'       => $color,
 					'status'      => 'active',
 					'label'       => $label,
-					'order'       => (string) ( $max_order + 1 ),
+					'order'       => (string) ( $existing_color['order'] ?? $max_order + 1 ),
 					'lastUpdated' => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
 				]
 			);
@@ -1149,6 +1157,11 @@ trait DiviOps_Agent_Variable {
 		//
 		// `$existing_var` is [] for a create, so a new variable starts clean.
 		// The payload keys win over the stored copy; everything else survives.
+		//
+		// `order` is the exception (#437), for the reason the colour branch above
+		// gives. This is the same shape variable_create_fluid_system already wrote
+		// into the identical `numbers` bucket — `(int) ( $existing_entry['order']
+		// ?? … )` — so the two writers into this storage now agree on the field.
 		$existing_var = is_array( $vars[ $type ][ $id ] ?? null ) ? $vars[ $type ][ $id ] : [];
 
 		$vars[ $type ][ $id ] = array_merge(
@@ -1157,7 +1170,7 @@ trait DiviOps_Agent_Variable {
 				'id'           => $id,
 				'label'        => $label,
 				'value'        => $sanitized_value,
-				'order'        => $max_order + 1,
+				'order'        => (int) ( $existing_var['order'] ?? $max_order + 1 ),
 				'status'       => 'active',
 				'lastUpdated'  => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
 				'type'         => $type,

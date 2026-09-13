@@ -41,13 +41,16 @@
  *
  * ## What is deliberately NOT covered
  *
- * The `order` recomputation on an upsert is pinned as a marked DEFECT rather
- * than fixed: it is the same damage #380 described (a variable that loses its
- * place sorts to the end of the palette), but it is a different key from #417's
- * subject and fixing it needs its own issue. The colour branch's failure to mint
- * `id` / `folder` / `usedInPosts` on a genuinely new colour is likewise recorded
- * and not fixed — `global_color_upsert` does not mint them either, so changing
- * it here would put the two writers out of step.
+ * The `order` recomputation on an upsert was pinned here as a marked DEFECT under
+ * #417, because `order` is a different key from that issue's subject. #437 fixed
+ * it and deliberately inverted both marked assertions rather than deleting them,
+ * as CONTRIBUTING.md requires; the create path is asserted alongside each
+ * inversion so that `max(order)+1` does not become uncovered in the process.
+ *
+ * The colour branch's failure to mint `id` / `folder` / `usedInPosts` on a
+ * genuinely new colour is still recorded and not fixed — `global_color_upsert`
+ * does not mint them either, so changing it here would put the two writers out of
+ * step.
  *
  * @package DiviOps
  */
@@ -165,12 +168,15 @@ assert_true(
 	'lastUpdated is restamped on write, not merged through from the stored entry'
 );
 
-// DEFECT, pinned as-is and deliberately NOT fixed under #417. `order` is in the
-// write payload, so an upsert recomputes it as max(order)+1 and moves an existing
-// variable to the end of the bucket — the same damage #380 described for colours.
-// The seed stores order "7" as its own max, so the recomputed value is 8. A later
-// issue that preserves order on an upsert must update this line on purpose.
-assert_same( 8, $after['order'] ?? null, 'DEFECT: an upsert recomputes order and moves the variable to the end' );
+// #437 deliberately inverts the DEFECT this line pinned under #417. An upsert now
+// keeps the stored order instead of recomputing it as max(order)+1, so a variable
+// edited through this handler no longer jumps to the end of its bucket. `order`
+// drives Variable Manager sort position (#380) and the tool exposes no `order`
+// parameter, so a caller could not put back what the write moved.
+//
+// Int 7 from the seeded string "7": the cast is the handler's, matching the shape
+// variable_create_fluid_system already wrote — `(int) ( $existing_entry['order'] ?? … )`.
+assert_same( 7, $after['order'] ?? null, 'an upsert keeps the stored order rather than moving the variable to the end (#437)' );
 
 // ---------------------------------------------------------------------------
 // A brand-new non-colour variable is stamped with Divi's canonical variableType.
@@ -191,6 +197,11 @@ assert_same(
 	'a newly created numbers variable carries variableType, as the VB reducer writes it (#417)'
 );
 assert_same( '24px', $fresh['value'] ?? null, 'the new variable is written' );
+// The create path is unchanged by #437: a genuinely new variable still gets
+// max(order)+1. The seed's lone record carries order "7", so this is 8 — the value
+// the upsert assertion above pinned before #437 inverted it. Asserting it here is
+// what stops the inversion from leaving the create path uncovered.
+assert_same( 8, $fresh['order'] ?? null, 'a brand-new variable still gets max(order)+1 (#437)' );
 assert_true(
 	! isset( $fresh['customField'] ),
 	'a new entry inherits nothing from its siblings'
@@ -282,10 +293,28 @@ assert_same( array( 900390 ), $color_after['usedInPosts'] ?? null, 'a colour kee
 assert_same( '#FAFAFA', $color_after['color'] ?? null, 'a provided colour value overwrites the stored one' );
 assert_same( 'Off White', $color_after['label'] ?? null, 'a provided colour label overwrites the stored one' );
 
-// DEFECT, same shape as the numbers case above and equally out of #417's scope.
-// get_customizer_color_count() floors the order at Divi's customizer-bound count,
-// so the recomputed value is max( customizer_count, 24 ) + 1 = 25.
-assert_same( '25', $color_after['order'] ?? null, 'DEFECT: an upsert recomputes a colour order too' );
+// #437 inverts this DEFECT alongside the numbers case above. String "24", the
+// seeded value verbatim: Divi's colour store holds `order` as a string — all 103
+// live `gcid-*` records on staging do — and the write keeps that shape with an
+// explicit (string) cast rather than handing the store an int.
+assert_same( '24', $color_after['order'] ?? null, 'an upsert keeps the stored colour order (#437)' );
+
+// The (string) cast is not decoration. The transcribed fixture above already holds
+// a string, so it cannot observe the cast on the preserve path; this seeds an int
+// order — a shape no live `gcid-*` record carries — to pin that what the write
+// preserves is normalized to the store's own shape rather than passed through.
+diviops_t417_seed_color( array( 'order' => 24 ) );
+diviops_t417_create( array(
+	'type'  => 'colors',
+	'id'    => 'gcid-t417',
+	'label' => 'Off White',
+	'value' => '#FAFAFA',
+) );
+assert_same(
+	'24',
+	diviops_t417_stored_color()['order'] ?? null,
+	'a preserved colour order is normalized to the string shape Divi\'s colour store uses (#437)'
+);
 
 // A brand-new colour must NOT be given variableType: zero of the 103 live
 // `gcid-*` records on staging carry it, and Divi's colour storage is a different
@@ -300,6 +329,14 @@ diviops_t417_create( array(
 $fresh_color = diviops_t417_stored_color( 'gcid-t417-new' );
 
 assert_same( '#0D2240', $fresh_color['color'] ?? null, 'a brand-new colour is written' );
+// The colour create path is unchanged by #437, floor included: a new colour's order
+// is max( get_customizer_color_count(), 24 ) + 1. This file does not load
+// variable-characterization-stubs.php, so Divi's GlobalData class is absent, the
+// count is 0 and the floor branch is inert here — a legitimate runtime shape, and
+// the count's own value is pinned in tests/test-variable-characterization.php
+// ("Divi 5 defines five customizer-bound colours"). What this line proves is that
+// the create path still mints max+1 after the upsert path stopped doing so.
+assert_same( '25', $fresh_color['order'] ?? null, 'a brand-new colour still gets max(order)+1 (#437)' );
 assert_true(
 	! array_key_exists( 'variableType', $fresh_color ),
 	'a new colour is not given variableType — no live gcid-* record carries it'
