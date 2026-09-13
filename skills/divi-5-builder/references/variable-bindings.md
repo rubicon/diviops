@@ -128,7 +128,7 @@ Grammar rules, each load-bearing:
 
 | Rule | Why |
 |---|---|
-| Opens with `$variable(` and closes with `)$` | Both extraction regexes require it: `DynamicData::get_variable_values()` uses `/\$variable\((.+?)\)\$/` (`DynamicData.php:391-395`); `Utils::resolve_dynamic_variable()` uses the same (`Utils.php:97-98`). Drop the trailing `$` and the token is never matched — it emits into the page as literal text. |
+| Opens with `$variable(` and closes with `)$` | Both extraction regexes require it: `DynamicData::get_variable_values()` uses `/\$variable\((.+?)\)\$/` (`DynamicData.php:403`); `Utils::resolve_dynamic_variable()` uses the same (`Utils.php:97-98`). Drop the trailing `$` and the token is never matched — it emits into the page as literal text. |
 | Payload is a JSON **object**, never a bare id | `$variable(gvid-abc)$` decodes to `null`, `value.name` is absent, and both resolvers return the original string unchanged. |
 | `settings` is cast to a JSON **object** | `(object) $settings` — empty settings must serialize as `{}`, not `[]`. A hand-built `[]` is what `json_encode` produces from an empty PHP array, and it is the single most common hand-authoring defect. |
 | `JSON_UNESCAPED_UNICODE` | Divi does not `\u`-escape non-ASCII in the payload. Matching this matters for byte-identical round-trips. |
@@ -244,7 +244,7 @@ Settings are carried verbatim into the token *(verified 2026-08-14)*:
 `value` may also carry a sibling `post_id` alongside `name`/`settings` — Divi's own VB
 emits that for loop-scoped meta options, and `DynamicData` injects the ambient
 `$post_id` into `value` when the token does not already carry one
-(`DynamicData.php:296-297`). Observed live on this site as
+(`DynamicData.php:307-309`). Observed live on this site as
 `{"name":"post_link_url_page","settings":{"post_id":"306"}}`, i.e. the same idea
 expressed inside `settings` for that option *(verified 2026-08-14)*.
 
@@ -319,10 +319,10 @@ via that class's `render_callback()` instead.
 
 ### Storage buckets and what each resolves to
 
-Divi's global-variable store (`GlobalData::get_global_variables()`, `GlobalData.php:921-929`)
+Divi's global-variable store (`GlobalData::get_global_variables()`, `GlobalData.php:922-930`)
 has seven buckets: `numbers`, `strings`, `images`, `links`, `colors`, `fonts`,
 `gradients`. The import validator accepts six of them —
-`[ 'numbers', 'strings', 'images', 'links', 'fonts', 'gradients' ]` (`GlobalData.php:1112`) —
+`[ 'numbers', 'strings', 'images', 'links', 'fonts', 'gradients' ]` (`GlobalData.php:1113`) —
 `colors` being handled by the separate `gcid-` path.
 
 `DynamicContentGlobalVariableOptions::get_variable_value_by_id()` (`:81-100` in that
@@ -363,7 +363,7 @@ public static $customizer_fonts = [
 
 Both resolvers handle the leading `--` explicitly:
 
-- Content path: `DynamicData.php:301-302` short-circuits *before* the type dispatch and
+- Content path: `DynamicData.php:311-313` short-circuits *before* the type dispatch and
   returns `sprintf( 'var(%s)', $name )` for exactly those two names.
 - Style path: `Utils.php:120-123` strips a leading `--` with
   `preg_replace( '/^--/', '', $name )` "to prevent double-prefix (e.g. `var(----name)`)"
@@ -460,7 +460,7 @@ The one shape that omits `name` entirely:
 "$variable({\"type\":\"shortcode\",\"value\":{\"content\":\"[my_shortcode]\",\"post_id\":306}})$"
 ```
 
-`DynamicData.php:306-322` runs `value.content` through
+`DynamicData.php:317-333` runs `value.content` through
 `ShortcodeUtils::get_processed_embed_shortcode()` and then `do_shortcode()`, inside the
 post context named by `value.post_id` (falling back to the ambient `$post_id`). Divi's own
 comment says it is "Used by the Visual Builder when loop items contain shortcodes in their
@@ -485,9 +485,9 @@ depends on whether the attribute feeds **content** or **CSS**.
 
 ### Content path — `DynamicData::get_processed_dynamic_data()`
 
-`Packages/Module/Layout/Components/DynamicData/DynamicData.php:226-377`. Extracts every
+`Packages/Module/Layout/Components/DynamicData/DynamicData.php:237-388`. Extracts every
 token with `/\$variable\((.+?)\)\$/`, decodes, then dispatches in this exact order
-(`:301-330`):
+(`:311-341`):
 
 1. `name` is `--et_global_body_font` or `--et_global_heading_font` → `var(<name>)` (before any type check)
 2. `type === 'content'` → `DynamicContentUtils::get_processed_dynamic_content()`
@@ -501,7 +501,7 @@ field emits as literal text instead of resolving: this path has no branch for it
 types belong on CSS-bearing attributes.
 
 The results are memoized in a static `$cache` keyed by the token string plus post/loop
-context (`DynamicData.php:235`, `:246-280`). Each *freshly computed* resolution passes
+context (`DynamicData.php:246`, `:258-291`). Each *freshly computed* resolution passes
 through the `divi_module_dynamic_data_resolved_value` filter; a cache hit returns early
 and skips it, so a filter callback must not be relied on to fire once per occurrence.
 
@@ -764,13 +764,13 @@ writing a hand-authored token; the write path is not a linter and was never mean
 |---|---|---|
 | Token text appears verbatim on the frontend | Missing trailing `$`, or a bare-id payload (`$variable(gvid-x)$`) | Use the full JSON payload and both delimiters. Neither extraction regex matches otherwise |
 | Attr value silently falls back to the property's initial value | Foreign `var(--alias)` written instead of a canonical token | [module-formats.md](module-formats.md#design-token-references-in-attrs-canonical-variable-only) |
-| Token resolves in CSS but emits literally in a content field | `type` is `gradient`/`image` on a content-bearing attribute | The content path has no branch for those types (`DynamicData.php:301-330`). Move the binding to a CSS-bearing attr |
+| Token resolves in CSS but emits literally in a content field | `type` is `gradient`/`image` on a content-bearing attribute | The content path has no branch for those types (`DynamicData.php:311-341`). Move the binding to a CSS-bearing attr |
 | `settings` serialized as `[]` instead of `{}` | Hand-built from an empty PHP/JS array | Divi's encoder casts `(object) $settings`. Use `diviops_dynamic_content_build` |
 | Literal `0022` leaks into emitted CSS; token loses its effect | Over-escaped or slash-stripped storage bytes | [presets.md → Variable Tokens](presets.md#variable-tokens) — 3082 such payloads exist on this fork's reference site today |
 | Only the first of several tokens in one field survives a VB save | More than one token per attribute value | One token per field |
 | A token in a `before`/`after` setting never resolves | Nested tokens are not resolved | Resolve the value ahead of time, or split the binding |
 | Validator says `unknown_option` for a token that renders fine | It is a design token, not dynamic content | Expected. Check the `name` prefix before believing the error |
-| Token still shows the previous value after editing the variable | Both resolvers memoize per request (`Utils.php:87`, `DynamicData.php:235`) | Flush Divi's cache (`diviops_meta_flush_cache`) and hard-refresh |
+| Token still shows the previous value after editing the variable | Both resolvers memoize per request (`Utils.php:87`, `DynamicData.php:246`) | Flush Divi's cache (`diviops_meta_flush_cache`) and hard-refresh |
 
 ---
 
@@ -784,13 +784,13 @@ writing a hand-authored token; the write path is not a linter and was never mean
 | Global variables use `type:"content"` with `gvid-` | *(verified 2026-08-14)* | `DynamicContentGlobalVariableOptions.php:32-34`, `Utils.php:77-78`; 2786 live occurrences in stored content |
 | Design tokens are deliberately absent from the dynamic-content registry | *(verified 2026-08-14)* | `DynamicContentGlobalVariableOptions.php:66-70`; live `dynamic_content_validate` returning `unknown_option` for a valid `gvid-` token |
 | Color `settings` are an HSL state transform, `opacity:100` is not a no-op | *(verified 2026-08-14)* | `GlobalData.php:181-222` read directly |
-| Two customizer font ids, `--` prefix asymmetry vs. the weight ids | *(verified 2026-08-14)* | `GlobalData.php:93-104`, `DynamicData.php:301-302`, `Utils.php:120-123`; 116 live occurrences across both spellings |
+| Two customizer font ids, `--` prefix asymmetry vs. the weight ids | *(verified 2026-08-14)* | `GlobalData.php:93-104`, `DynamicData.php:311-313`, `Utils.php:120-123`; 116 live occurrences across both spellings |
 | Gradient definition form (`name:"gradient"`) | *(verified 2026-08-14)* | Live `diviops_variable_list { type: "gradients" }` on this fork's reference site |
 | Gradient reference form (`name:"gvid-*"`) | *(verified 2026-08-14)*, source + prior stamp | `GradientUtils.php:752-774`; prior *(VB-verified 2026-06-15)* stamp in presets.md. **Zero occurrences in this site's stored content** |
 | `type:"image"` | `<!-- UNVERIFIED -->` | `Utils.php:223-267` and VB bundles only. No live occurrence, no render exercised |
-| `type:"shortcode"` (no `value.name`) | `<!-- UNVERIFIED -->` | `DynamicData.php:306-322` and VB bundles only. No live occurrence, no render exercised |
+| `type:"shortcode"` (no `value.name`) | `<!-- UNVERIFIED -->` | `DynamicData.php:317-333` and VB bundles only. No live occurrence, no render exercised |
 | `gfid-` is a DiviOps namespace Divi only guards against | *(verified 2026-08-14)* | One occurrence in `visual-builder/build/module-utils.js`; zero in Divi's server PHP |
-| Two-resolver dispatch (content vs style) and the `null` fall-through | *(verified 2026-08-14)* | `DynamicData.php:301-330`, `Utils.php:86-141` read directly |
+| Two-resolver dispatch (content vs style) and the `null` fall-through | *(verified 2026-08-14)* | `DynamicData.php:311-341`, `Utils.php:86-141` read directly |
 | Live census figures (192 posts, per-shape counts, 3082 corrupt payloads, 0 `@ET-DC@`) | *(verified 2026-08-14)* | Read-only `$wpdb` census over the whole `wp_posts` table on this fork's reference site, Divi 5.9.0 |
 | Registry size (91 options) and group breakdown | *(verified 2026-08-14)* | Live `diviops_dynamic_content_list` at `post_id=0, context=edit`. Site-specific by construction |
 | Write-path guard fails open on `malformed_token` | *(verified 2026-08-14)* | `dynamic_content_write_path_rejection()` in `trait-dynamic-content.php`; live validator output for a token missing its trailing `$` |
