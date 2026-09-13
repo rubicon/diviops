@@ -495,7 +495,7 @@ trait DiviOps_Agent_Meta {
 				//   timestamp path). Writing .cache-cleared-at would
 				//   immediately invalidate the `-vb-*` files we just
 				//   kept in phase 1: is_file_stale() checks file mtime
-				//   against that timestamp (PageResource.php:1604-1610)
+				//   against that timestamp (PageResource.php:1819)
 				//   and any file older than the stamp is stale, including
 				//   our preserved VB runtime CSS. That would defeat the
 				//   whole point of the preserve-VB logic and unstyle an
@@ -528,7 +528,7 @@ trait DiviOps_Agent_Meta {
 				// Match Divi's post-clear behavior: write the
 				// DONOTCACHEPAGE sentinel so page-cache plugins / CDNs
 				// skip caching the first request while CSS regenerates
-				// (PageResource.php:1367-1368 writes the same file).
+				// (PageResource.php:1592-1594 writes the same file).
 				if ( is_dir( $cache_root ) ) {
 					$wpfs->put_contents( $cache_root . '/DONOTCACHEPAGE', '' );
 				}
@@ -616,10 +616,10 @@ trait DiviOps_Agent_Meta {
 			// Single-pass WP_Filesystem sweep of the whole et-cache tree,
 			// filtering by file mtime > $after_ts. Replaces the prior
 			// per-matched-post ET_Core_PageResource::remove_static_resources
-			// loop — each of those calls does ~7 glob() scans of the cache
-			// tree (PageResource.php:1268-1285), so runtime grew as
-			// O(#matched × #total_files). The sweep runs in a single
-			// O(#total_files) walk regardless of match count, which is the
+			// loop — each of those calls does 13 glob() scans of the cache
+			// tree, 19 when clearing everything (PageResource.php:1492-1524),
+			// so runtime grew as O(#matched × #total_files). The sweep runs in
+			// a single O(#total_files) walk regardless of match count, which is the
 			// behavior the `all` phase-1 path already uses.
 			//
 			// Semantic shift from the prior native path: the previous
@@ -693,7 +693,7 @@ trait DiviOps_Agent_Meta {
 
 			// Write the DONOTCACHEPAGE sentinel once when anything was
 			// actually flushed — matches Divi's post-clear behavior
-			// (PageResource.php:1367-1368) so page-cache plugins / CDNs
+			// (PageResource.php:1592-1594) so page-cache plugins / CDNs
 			// skip caching the first regenerated request. Gate on
 			// `files > 0` rather than `post_ids` non-empty: the sweep
 			// also covers non-post subtrees (archive/taxonomy/home/
@@ -1329,7 +1329,7 @@ trait DiviOps_Agent_Meta {
 	 * WITHOUT writing the .cache-cleared-at global timestamp.
 	 *
 	 * Why split: .cache-cleared-at immediately invalidates any file with
-	 * older mtime via is_file_stale() (PageResource.php:1604-1610),
+	 * older mtime via is_file_stale() (PageResource.php:1819),
 	 * including the `-vb-*` runtime CSS we deliberately keep in the
 	 * native `all` phase-1 sweep. Writing the timestamp would silently
 	 * undo the VB preservation and unstyle an open Visual Builder

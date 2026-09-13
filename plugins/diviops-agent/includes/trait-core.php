@@ -1352,7 +1352,7 @@ trait DiviOps_Agent_Core {
 	// agent NEVER writes to `_ng` and NEVER uses it as a D5 READ fallback.
 	// AUDIT surfaces non-empty `_ng` content with `provenance: "legacy_d4_ng"`
 	// (distinct from any D5 provenance) so consumers cannot confuse it with
-	// canonical D5 entries. Source: GlobalPreset.php:461, 921 (D5 side) +
+	// canonical D5 entries. Source: GlobalPreset.php:491, 991, 1061 (D5 side) +
 	// includes/builder/feature/global-presets/Settings.php (D4 side). Runtime
 	// corroboration: 5.5.1→5.5.2 migration test confirms `_ng` byte-
 	// identical-empty across the transition (see #719 comment thread).
