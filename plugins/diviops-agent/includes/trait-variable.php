@@ -1066,12 +1066,17 @@ trait DiviOps_Agent_Variable {
 
 		// Non-color types.
 		$raw_id = $request->get_param( 'id' );
+		// Whether the server minted the ID, tracked structurally rather than by
+		// comparing against the 'gvid-<auto>' placeholder later — a caller can send
+		// that literal string, and a guard that recognised it by value would hand
+		// them the exemption.
+		$server_minted = '' === (string) $raw_id;
 		// strtolower on the generated half is not cosmetic: wp_generate_password()
 		// draws from [a-zA-Z0-9] even with $special_chars=false (WP core,
 		// wp-includes/pluggable.php), and DetectFeature's page scan is
 		// case-sensitive, so a mixed-case ID is emitted into the registry and then
 		// dropped from the page's :root block (#443).
-		$id = '' !== (string) $raw_id ? sanitize_text_field( $raw_id ) : ( $dry_run ? 'gvid-<auto>' : 'gvid-' . strtolower( wp_generate_password( 8, false ) ) );
+		$id = ! $server_minted ? sanitize_text_field( $raw_id ) : ( $dry_run ? 'gvid-<auto>' : 'gvid-' . strtolower( wp_generate_password( 8, false ) ) );
 		if ( 0 !== strpos( $id, 'gvid-' ) ) {
 			return self::envelope_error(
 				'invalid_input',
@@ -1083,9 +1088,11 @@ trait DiviOps_Agent_Variable {
 		}
 		// Charset + length, held to the same contract the colour and font writers
 		// enforce. The prefix check above is deliberately kept separate: it carries
-		// the more specific message for the commonest mistake. The dry-run
-		// placeholder is exempt because it is never stored.
-		if ( 'gvid-<auto>' !== $id ) {
+		// the more specific message for the commonest mistake. The only exemption is
+		// the dry-run placeholder this handler mints for itself, which is never
+		// stored; a caller-supplied ID is checked whether or not this is a dry run,
+		// so the plan cannot report an ID the real write would refuse.
+		if ( ! ( $server_minted && $dry_run ) ) {
 			$checked_id = self::validate_global_variable_id( $id );
 			if ( is_wp_error( $checked_id ) ) {
 				return self::envelope_error(

@@ -248,6 +248,46 @@ $diviops_vic_resp = diviops_call( 'variable_create', array( diviops_vic_request(
 assert_same( true, $diviops_vic_resp->get_data()['ok'] ?? null, 'a legal caller-supplied id is written' );
 assert_true( isset( diviops_vic_registry()['numbers']['gvid-brand-space-1'] ), 'and it lands under the id the caller asked for' );
 
+// ── variable_create: the dry-run placeholder is not a hole ────────────────
+//
+// A dry run with no `id` mints the literal placeholder `gvid-<auto>`, which is not
+// a legal id and is never stored, so it has to be exempt from the charset check.
+// The exemption is keyed on the handler having minted the id itself, not on
+// recognising that string: `sanitize_text_field()` is what would strip the angle
+// brackets off a caller who sent it, and the harness's own model of that primitive
+// does not strip tags. Keying on the value would hand the caller the exemption.
+
+diviops_vic_reset();
+
+$diviops_vic_resp = diviops_call( 'variable_create', array( diviops_vic_request( array(
+	'type'    => 'numbers',
+	'label'   => 'Planned',
+	'value'   => '10px',
+	'dry_run' => true,
+) ) ) );
+assert_same( true, $diviops_vic_resp->get_data()['ok'] ?? null, 'a dry run with no id still plans' );
+assert_same( array(), diviops_vic_registry(), 'and a dry run writes nothing' );
+
+$diviops_vic_resp = diviops_call( 'variable_create', array( diviops_vic_request( array(
+	'type'    => 'numbers',
+	'label'   => 'Crafted',
+	'value'   => '10px',
+	'id'      => 'gvid-<auto>',
+	'dry_run' => true,
+) ) ) );
+assert_same( 'invalid_input', $diviops_vic_resp->get_data()['error']['code'] ?? null, 'a caller sending the placeholder string verbatim does not inherit its exemption' );
+
+// A dry run is a rehearsal, so it must refuse what the real write would refuse —
+// otherwise the plan reports an id the caller cannot actually have.
+$diviops_vic_resp = diviops_call( 'variable_create', array( diviops_vic_request( array(
+	'type'    => 'numbers',
+	'label'   => 'Planned badly',
+	'value'   => '10px',
+	'id'      => 'gvid-my_brand-x',
+	'dry_run' => true,
+) ) ) );
+assert_same( 'invalid_input', $diviops_vic_resp->get_data()['error']['code'] ?? null, 'a dry run refuses an illegal caller-supplied id rather than planning it' );
+
 // ── variable_create: the auto-generated id ────────────────────────────────
 //
 // wp_generate_password( 8, false ) draws from core's
