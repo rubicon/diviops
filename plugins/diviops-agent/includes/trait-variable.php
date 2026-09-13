@@ -1059,14 +1059,32 @@ trait DiviOps_Agent_Variable {
 			// staging carry a string `order`.
 			$existing_color = is_array( $colors[ $id ] ?? null ) ? $colors[ $id ] : [];
 
+			// The remaining three keys complete Divi's eight-key colour record (#444).
+			// The five above matched no Divi writer: all three of Divi's PHP colour writers
+			// emit `folder` and `usedInPosts` (GlobalData.php:155-165, :402-410, :500-521),
+			// and design_system_apply() already mints all eight. Nothing reads `id` back off
+			// the record — every reader derives it from the array key — so this is shape
+			// parity with the sibling writers, not a fix for anything observable (#438).
+			//
+			// `folder` and `usedInPosts` are read forward from the stored record rather than
+			// seeded flat. A payload key wins over `$existing_color`, so a flat `''` would
+			// blank a Divi-written folder and a flat `[]` would destroy Divi's reference
+			// index on every upsert — #380 reintroduced through the keys added for parity.
+			// `usedInPosts` must stay an array, not merely present: Divi's
+			// sanitize_global_colors_data() runs array_map() over that key unconditionally.
 			$colors[ $id ] = array_merge(
 				$existing_color,
 				[
+					'id'          => $id,
 					'color'       => $color,
 					'status'      => 'active',
 					'label'       => $label,
 					'order'       => (string) ( $existing_color['order'] ?? $max_order + 1 ),
 					'lastUpdated' => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
+					'folder'      => $existing_color['folder'] ?? '',
+					'usedInPosts' => isset( $existing_color['usedInPosts'] ) && is_array( $existing_color['usedInPosts'] )
+						? $existing_color['usedInPosts']
+						: [],
 				]
 			);
 
