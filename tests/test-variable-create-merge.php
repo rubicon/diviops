@@ -112,6 +112,9 @@ function diviops_t417_seed_color( array $overrides = array() ): void {
 			'status'      => 'active',
 			'folder'      => 'brand',
 			'usedInPosts' => array( 900390 ),
+			// Stands in for any key a future Divi release adds, mirroring the
+			// non-colour seed's own `customField`. A new colour must not inherit it.
+			'customField' => 'divi-may-add-this',
 		),
 		$overrides
 	);
@@ -341,9 +344,27 @@ assert_true(
 	! array_key_exists( 'variableType', $fresh_color ),
 	'a new colour is not given variableType — no live gcid-* record carries it'
 );
+// Inheritance is probed with an unknown key and with the two Divi-owned fields' VALUES,
+// not with their absence (#444). This assertion used to read `! isset( usedInPosts )`,
+// which conflated "inherits nothing" with "mints nothing"; once the create path started
+// minting the full eight-key record that probe could no longer distinguish the two. The
+// seed carries `folder => 'brand'` and `usedInPosts => [ 900390 ]`, so asserting the new
+// colour holds the empty defaults instead is a strictly sharper test of the same
+// property than the absence check it replaces — and it matches how the non-colour
+// sibling above probes inheritance, with a key the seed carries and the writer does not.
 assert_true(
-	! isset( $fresh_color['usedInPosts'] ),
+	! isset( $fresh_color['customField'] ),
 	'a new colour inherits nothing from its siblings'
+);
+assert_same(
+	'',
+	$fresh_color['folder'] ?? null,
+	"and its folder is minted empty rather than inherited from the sibling's 'brand' (#444)"
+);
+assert_same(
+	array(),
+	$fresh_color['usedInPosts'] ?? null,
+	"and its usedInPosts is minted empty rather than inheriting the sibling's post ids (#444)"
 );
 assert_same(
 	array( 900390 ),

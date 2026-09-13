@@ -1,8 +1,8 @@
 <?php
 // SPDX-License-Identifier: MIT
 /**
- * The three writers into `global_colors` mint three different NEW-colour shapes,
- * and Divi cannot observe the difference (#438).
+ * The three writers into `global_colors` mint NEW-colour shapes Divi cannot tell
+ * apart (#438); one of the three is unified onto Divi's full record (#444).
  *
  * `variable_create()` (type=colors), `global_color_upsert()` and
  * `design_system_apply()` all write into `et_divi.et_global_data.global_colors`,
@@ -11,12 +11,18 @@
  * nothing to merge, so each handler's key literal is the whole record, and the
  * three literals differ.
  *
- * This file pins all three shapes as `DELIBERATE`. They are not being unified,
- * because every key one of them omits is defaulted or derived by every read path
- * in Divi. The investigation is in #438; the decision is recorded in `FORK.md`
- * under "Deliberately unchanged: the new-colour key set". What this file exists
- * to do is stop any of the three drifting silently afterwards, and to carry the
- * citations so nobody has to re-derive them.
+ * #438 established that every key one of them omits is defaulted or derived by
+ * every read path in Divi, so none of this is a defect. Two of the three shapes
+ * are therefore pinned as `DELIBERATE` and left alone: `global_color_upsert()`
+ * because its six keys ARE Divi's own PHP writer record, and
+ * `design_system_apply()` because it already mints all eight.
+ *
+ * `variable_create()`'s colour branch was the third, and the owner chose to unify
+ * it (#444). It was the only one of the three matching no Divi writer at all. The
+ * assertions covering it were deliberately updated rather than deleted, which is
+ * what the `DELIBERATE` marker exists for. The decision and its rationale are in
+ * `FORK.md`. What this file exists to do is stop any of the three drifting
+ * silently, and to carry the citations so nobody has to re-derive them.
  *
  * ## Where the expected values come from
  *
@@ -70,9 +76,12 @@
  *
  * ## What this file does NOT cover
  *
- * The merge path on an existing colour. `tests/test-global-color-upsert-merge.php`
- * covers it for `global_color_upsert()` and #417 covers it for `variable_create()`.
- * Every assertion here is about a genuinely new id.
+ * The merge path on an existing colour in general.
+ * `tests/test-global-color-upsert-merge.php` covers it for `global_color_upsert()`
+ * and `tests/test-variable-create-merge.php` covers it for `variable_create()`.
+ * The two upsert assertions here are narrower than that: they exist only to stop
+ * the three keys #444 adds from being seeded flat, which would reintroduce #380
+ * through the very keys added for parity.
  *
  * @package DiviOps
  */
@@ -132,20 +141,89 @@ assert_same( true, $resp->get_data()['ok'] ?? null, 'variable_create makes a col
 
 $vc = diviops_gcs_palette()['gcid-probe-one'] ?? array();
 
-// DELIBERATE (#438), pinned as-is. This is the only one of the three shapes that
-// matches no Divi writer at all: Divi's PHP writers all emit `folder` and
-// `usedInPosts`, and so does the VB's ADD_GLOBAL_COLOR reducer. It is still inert
-// — see the docblock — but it is the outlier, and if any of the three is ever
-// unified onto the eight-key shape it should be this one first.
+// Unified onto the eight-key shape (#444). This branch was the only one of the three
+// matching no Divi writer at all — Divi's three PHP colour writers all emit `folder`
+// and `usedInPosts`, and so does the VB's ADD_GLOBAL_COLOR reducer — so it is the one
+// the owner chose to bring into line. #438 established the omission was inert, so this
+// is a consistency decision rather than a defect fix, which is why the other two shapes
+// below stay pinned exactly as they are. The DELIBERATE assertions this replaces were
+// updated rather than deleted, which is what that marker is for.
 assert_same(
-	array( 'color', 'status', 'label', 'order', 'lastUpdated' ),
+	array( 'id', 'color', 'status', 'label', 'order', 'lastUpdated', 'folder', 'usedInPosts' ),
 	array_keys( $vc ),
-	'DELIBERATE: variable_create mints five keys for a new colour, in this order'
+	'variable_create mints all eight keys for a new colour, in this order (#444)'
 );
 assert_same(
-	array( 'folder', 'id', 'usedInPosts' ),
+	array(),
 	array_values( array_diff( $diviops_gcs_live_signature, array_keys( $vc ) ) ),
-	'DELIBERATE: and omits folder, id and usedInPosts, which all 103 live records carry'
+	'and so omits nothing the 103 live records carry'
+);
+assert_same( 'gcid-probe-one', $vc['id'] ?? null, 'the minted id is the record\'s own gcid' );
+assert_same( '', $vc['folder'] ?? null, 'a new colour is foldered at the root, as every Divi writer seeds it' );
+assert_same( array(), $vc['usedInPosts'] ?? null, 'and its usedInPosts index starts empty rather than absent' );
+
+// The three added keys must be MINTED on a create and PRESERVED on an upsert. Seeding
+// them flat would reintroduce #380 through the very keys added for parity: `'folder' => ''`
+// blanks a Divi-written folder and `'usedInPosts' => []` destroys Divi's reference index.
+// The fixture carries non-default values for both, because a fixture holding only the
+// empty defaults cannot tell a preserved value from a freshly seeded one.
+et_update_option( 'et_global_data', array( 'global_colors' => array(
+	'gcid-probe-one' => array(
+		'id'          => 'gcid-probe-one',
+		'color'       => '#3a7a6a',
+		'status'      => 'active',
+		'label'       => 'Probe',
+		'order'       => '7',
+		'lastUpdated' => '2026-09-13T00:00:00.000Z',
+		'folder'      => 'brand',
+		'usedInPosts' => array( 900390 ),
+	),
+) ) );
+diviops_call( 'variable_create', array( diviops_gcs_request( array(
+	'type'  => 'colors',
+	'label' => 'Probe renamed',
+	'value' => '#ffffff',
+	'id'    => 'gcid-probe-one',
+) ) ) );
+$vc_again = diviops_gcs_palette()['gcid-probe-one'] ?? array();
+
+assert_same( '#ffffff', $vc_again['color'] ?? null, 'an upsert still writes the requested colour' );
+assert_same( 'brand', $vc_again['folder'] ?? null, 'and does not blank a folder it did not set (#444)' );
+assert_same(
+	array( 900390 ),
+	$vc_again['usedInPosts'] ?? null,
+	"and does not destroy Divi's usedInPosts index (#444)"
+);
+
+// `usedInPosts` has to come back an ARRAY, not merely come back. Divi's
+// sanitize_global_colors_data() runs `array_map( 'sanitize_text_field', $param_value )`
+// over that key with no type check (GlobalData.php:627), so carrying a scalar forward
+// would fatal inside Divi rather than here — a failure this plugin's own suite could
+// never see. Reading it forward with `?? []` alone is not enough for that reason: the
+// guard has to be `is_array`, and this fixture is what makes the difference observable.
+et_update_option( 'et_global_data', array( 'global_colors' => array(
+	'gcid-probe-scalar' => array(
+		'color'       => '#101010',
+		'status'      => 'active',
+		'label'       => 'Corrupt index',
+		'order'       => '9',
+		'lastUpdated' => '2026-09-13T00:00:00.000Z',
+		'folder'      => '',
+		'usedInPosts' => '900390',
+	),
+) ) );
+diviops_call( 'variable_create', array( diviops_gcs_request( array(
+	'type'  => 'colors',
+	'label' => 'Corrupt index',
+	'value' => '#202020',
+	'id'    => 'gcid-probe-scalar',
+) ) ) );
+$vc_scalar = diviops_gcs_palette()['gcid-probe-scalar'] ?? array();
+
+assert_same(
+	array(),
+	$vc_scalar['usedInPosts'] ?? null,
+	'a non-array usedInPosts is replaced with an empty array, never carried forward (#444)'
 );
 
 // ---------------------------------------------------------------------------
