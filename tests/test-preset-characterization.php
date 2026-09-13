@@ -1261,6 +1261,161 @@ $emptied = diviops_call_static(
 );
 assert_same( array(), $emptied, 'a nested branch that strips to empty is unset, not left as an empty array' );
 
+// ── _strip_redundant_inline_attrs over LIST-shaped attrs (#415) ─────────
+//
+// Not characterization: these pin the FIXED behaviour, because the bug they
+// cover destroyed stored data rather than mis-rendering it. Everything above in
+// this section is still characterization.
+//
+// Divi stores Custom Attributes as a wrapped LIST at
+// `module.decoration.attributes.<breakpoint>.value.attributes`, each row an
+// associative array of `id` / `name` / `value` / `adminLabel` / `targetElement`
+// (Divi 5.11.1, `Packages/Module/Options/Attributes/AttributeUtils.php`:
+// `separate_attributes_by_target_element()` reads
+// `$data['desktop']['value']['attributes']`).
+//
+// Divi does NOT merge that list positionally. `ArrayUtility` declares it a
+// mergeable field keyed on (`name`, `targetElement`) — `get_mergeable_array_fields()`
+// — and `merge_array_by_unique_keys()` matches rows by that pair, so a module row
+// and a preset row line up by identity, never by index. Recursing into the list by
+// index therefore deletes exactly the keys an unrelated row happens to share with
+// whatever preset row landed at the same position, and for a CSS-class row that
+// pair IS `name` + `targetElement`. A row left without a `name` is then dropped
+// outright — `separate_attributes_by_target_element()` does
+// `if ( empty( $name ) ... ) continue;` — so the module's local class disappears
+// from storage and from the frontend.
+//
+// The rule that closes it: a list is compared whole. Strip it only when it is
+// wholly redundant; otherwise leave every row alone. That mirrors
+// `merge_module_attr_value()` in trait-page.php, which already refuses to merge
+// list-shaped attrs key-by-key for the same reason.
+
+$diviops_pcz_attr_rows = function ( array $rows ): array {
+	return array( 'module' => array( 'decoration' => array( 'attributes' => array( 'desktop' => array( 'value' => array( 'attributes' => $rows ) ) ) ) ) );
+};
+
+// Read the row list back defensively. A regression here deletes intermediate
+// levels, and chaining straight into the path fatals on the missing key —
+// which aborts the whole file and credits no assertion at all, so the mutation
+// that caused it reads identically to a survivor (CONTRIBUTING, "a fatal is not
+// a kill"). Missing path returns array(), which fails the assertion loudly.
+$diviops_pcz_rows_of = function ( $result ): array {
+	foreach ( array( 'module', 'decoration', 'attributes', 'desktop', 'value', 'attributes' ) as $step ) {
+		if ( ! is_array( $result ) || ! array_key_exists( $step, $result ) ) {
+			return array();
+		}
+		$result = $result[ $step ];
+	}
+	return is_array( $result ) ? $result : array();
+};
+
+$diviops_pcz_local_row = array(
+	'id'            => 'local-row',
+	'name'          => 'class',
+	'value'         => 'lions-hero',
+	'adminLabel'    => 'class lions-hero',
+	'targetElement' => 'main',
+);
+$diviops_pcz_preset_row = array(
+	'id'            => 'preset-row',
+	'name'          => 'class',
+	'value'         => 'preset-card',
+	'adminLabel'    => 'class preset-card',
+	'targetElement' => 'main',
+);
+
+// The reported case: one local Custom Attributes row, one preset row, same
+// `name` and `targetElement`, different `value`. Every key of the local row must
+// survive — losing `name` is what deletes the module's local CSS class.
+$diviops_pcz_kept = diviops_call_static(
+	'_strip_redundant_inline_attrs',
+	array(
+		$diviops_pcz_attr_rows( array( $diviops_pcz_local_row ) ),
+		$diviops_pcz_attr_rows( array( $diviops_pcz_preset_row ) ),
+	)
+);
+$diviops_pcz_kept_rows = $diviops_pcz_rows_of( $diviops_pcz_kept );
+assert_same(
+	array( $diviops_pcz_local_row ),
+	$diviops_pcz_kept_rows,
+	'a Custom Attributes row sharing name and targetElement with the preset row survives strip with every key intact'
+);
+
+// Same fixture, stated as the consequence rather than the shape, so a failure
+// names the damage: a row whose `name` was stripped renders as nothing.
+assert_same(
+	'class',
+	$diviops_pcz_kept_rows[0]['name'] ?? null,
+	'the local row keeps its name, without which Divi drops the row and the local CSS class is gone'
+);
+
+// A list whose rows are not all redundant is kept WHOLE, keys and order intact.
+// Under per-index recursion the first row strips to empty and is unset, leaving
+// a gap — `array( 1 => ... )`, which json_encodes as an object, not a list.
+$diviops_pcz_two = diviops_call_static(
+	'_strip_redundant_inline_attrs',
+	array(
+		$diviops_pcz_attr_rows( array( $diviops_pcz_preset_row, $diviops_pcz_local_row ) ),
+		$diviops_pcz_attr_rows( array( $diviops_pcz_preset_row ) ),
+	)
+);
+$diviops_pcz_two_rows = $diviops_pcz_rows_of( $diviops_pcz_two );
+assert_same(
+	array( $diviops_pcz_preset_row, $diviops_pcz_local_row ),
+	$diviops_pcz_two_rows,
+	'a partly-redundant list is kept whole rather than stripped row by row'
+);
+assert_same(
+	array( 0, 1 ),
+	array_keys( $diviops_pcz_two_rows ),
+	'the surviving list keeps sequential keys, so it still serializes as a JSON array'
+);
+
+// The strip that IS safe still happens: an identical list adds nothing the
+// preset does not already supply, so the whole branch goes.
+$diviops_pcz_identical = diviops_call_static(
+	'_strip_redundant_inline_attrs',
+	array(
+		$diviops_pcz_attr_rows( array( $diviops_pcz_preset_row ) ),
+		$diviops_pcz_attr_rows( array( $diviops_pcz_preset_row ) ),
+	)
+);
+assert_same( array(), $diviops_pcz_identical, 'a list identical to the preset list is stripped whole' );
+
+// Shape mismatch — inline list against a preset map at the same path — is left
+// alone rather than walked by key. This is the shape an already-corrupted
+// attributes array takes after a gap-producing unset, and re-walking it would
+// compound the damage.
+$diviops_pcz_mismatch = diviops_call_static(
+	'_strip_redundant_inline_attrs',
+	array(
+		$diviops_pcz_attr_rows( array( $diviops_pcz_local_row ) ),
+		$diviops_pcz_attr_rows( array( '0' => $diviops_pcz_local_row, 'stray' => true ) ),
+	)
+);
+assert_same(
+	array( $diviops_pcz_local_row ),
+	$diviops_pcz_rows_of( $diviops_pcz_mismatch ),
+	'a list is not walked against a map at the same path'
+);
+
+// The mirror case, and the one a second reassign run actually hits: the inline
+// side is the gapped array a previous partial strip produced, so it is no longer
+// a list while the preset side still is. Walking it by key would resume the
+// per-index damage on the rows that survived the first run.
+$diviops_pcz_gapped = diviops_call_static(
+	'_strip_redundant_inline_attrs',
+	array(
+		$diviops_pcz_attr_rows( array( 0 => $diviops_pcz_local_row, 2 => $diviops_pcz_local_row ) ),
+		$diviops_pcz_attr_rows( array( $diviops_pcz_preset_row, $diviops_pcz_preset_row, $diviops_pcz_preset_row ) ),
+	)
+);
+assert_same(
+	array( 0 => $diviops_pcz_local_row, 2 => $diviops_pcz_local_row ),
+	$diviops_pcz_rows_of( $diviops_pcz_gapped ),
+	'an already-gapped attributes array is left alone rather than walked against the preset list'
+);
+
 // ── preset_scope_warnings ───────────────────────────────────────────────
 //
 // Any key literally named layout/position/sizing/transform anywhere in a bag is
