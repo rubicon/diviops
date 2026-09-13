@@ -1,16 +1,18 @@
 <?php
 // SPDX-License-Identifier: MIT
 /**
- * Two class stubs tests/test-variable-characterization.php needs and
- * tests/wp-shim.php does not carry.
+ * The stubs the variable suites need and tests/wp-shim.php does not carry.
+ *
+ * Two class stubs for tests/test-variable-characterization.php, plus core's
+ * `wp_generate_password()` for tests/test-variable-id-charset.php.
  *
  * These live here rather than in the shared shim on purpose. The shim is edited
  * concurrently by other work, and a suite that widens the shared harness to make
  * its own assertions reachable produces a green that outlives the reason for it.
- * Both stubs below are *class* definitions, so they are process-wide once this
- * file is required — the reasoning for why that is safe is recorded per stub.
+ * The two class definitions are process-wide once this file is required — the
+ * reasoning for why that is safe is recorded per stub.
  *
- * Neither stub stands in for behaviour under test. `WP_Post` is a data carrier
+ * No stub stands in for behaviour under test. `WP_Post` is a data carrier
  * that only has to satisfy an `instanceof`; `GlobalData` is consulted for one
  * public static array whose contents are copied from Divi's own source. Anything
  * that would mean writing the behaviour being characterized —
@@ -81,6 +83,44 @@ namespace {
 					$this->$key = $value;
 				}
 			}
+		}
+	}
+
+	if ( ! function_exists( 'wp_generate_password' ) ) {
+		/**
+		 * Model WP core's wp_generate_password().
+		 *
+		 * `variable_create()` mints its auto-generated id as
+		 * `'gvid-' . wp_generate_password( 8, false )`, so the charset this returns
+		 * IS the behaviour tests/test-variable-id-charset.php inspects. Transcribed
+		 * from core at wp-includes/pluggable.php:2965, where the alphabet is
+		 * 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789' and
+		 * `$special_chars = false` suppresses only the '!@#$%^&*()' set — not the
+		 * uppercase half. Narrowing it here to lowercase would model the fix rather
+		 * than core, and the test would pass against unfixed code.
+		 *
+		 * tests/preset-characterization-stubs.php carries an identical copy for the
+		 * same reason; whichever file the runner loads first wins, and both are
+		 * core-faithful, so the order does not change any result.
+		 *
+		 * @param int  $length              Password length.
+		 * @param bool $special_chars       Append the standard special characters.
+		 * @param bool $extra_special_chars Append the salt/key punctuation set.
+		 * @return string
+		 */
+		function wp_generate_password( $length = 12, $special_chars = true, $extra_special_chars = false ) {
+			$chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+			if ( $special_chars ) {
+				$chars .= '!@#$%^&*()';
+			}
+			if ( $extra_special_chars ) {
+				$chars .= '-_ []{}<>~`+=,.;:/?|';
+			}
+			$password = '';
+			for ( $index = 0; $index < (int) $length; $index++ ) {
+				$password .= $chars[ random_int( 0, strlen( $chars ) - 1 ) ];
+			}
+			return $password;
 		}
 	}
 

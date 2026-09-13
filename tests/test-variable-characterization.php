@@ -992,7 +992,18 @@ function diviops_variable_prefix( $input, string $field, string $default ): stri
 assert_same( 'h', diviops_variable_prefix( null, 'typography.name_prefix', 'h' ), 'a null prefix falls back to the default' );
 assert_same( 'h', diviops_variable_prefix( '', 'typography.name_prefix', 'h' ), 'an empty prefix falls back to the default' );
 assert_same( 'hd', diviops_variable_prefix( 'HD', 'typography.name_prefix', 'h' ), 'a prefix is lowercased, because Divi lowercases when it resolves ids' );
-assert_same( 'a_b-c9', diviops_variable_prefix( 'a_b-c9', 'x', 'h' ), 'underscore, hyphen and digits are all inside the accepted charset' );
+assert_same( 'a-b-c9', diviops_variable_prefix( 'a-b-c9', 'x', 'h' ), 'hyphen and digits are inside the accepted charset' );
+// Deliberately changed by #443, not a regression. This line read `a_b-c9` and pinned
+// `_` as accepted, which was accurate characterization of a defect: the underscore
+// landed inside the minted id and both of Divi's extractors cut the id there, so the
+// variable was stored and never rendered. tests/test-variable-id-charset.php is the
+// gate for the tightened charset; this assertion is kept as the neighbouring positive
+// case so a future widening of the charset still reports here.
+assert_same(
+	"refused: x 'a_b-c9' contains characters outside [a-z0-9-]. Divi's \$variable() resolver strips disallowed chars silently, so the generated IDs would be created in the registry but fail to resolve at render time. Use only [a-z0-9-].",
+	diviops_variable_prefix( 'a_b-c9', 'x', 'h' ),
+	'an underscore is outside it'
+);
 $prefix_error = null;
 try {
 	diviops_call( 'validate_name_prefix', array( 'has space', 'typography.name_prefix', 'h' ) );
@@ -1001,7 +1012,7 @@ try {
 }
 assert_true( $prefix_error instanceof DiviOps_Variable_Input_Exception, 'an out-of-charset prefix is an input-shape rejection' );
 assert_true(
-	false !== strpos( diviops_variable_error_text( $prefix_error ), "typography.name_prefix 'has space' contains characters outside [a-z0-9-_]" ),
+	false !== strpos( diviops_variable_error_text( $prefix_error ), "typography.name_prefix 'has space' contains characters outside [a-z0-9-]" ),
 	'the charset rejection names both the field and the offending value'
 );
 $prefix_error = null;
@@ -1501,7 +1512,9 @@ $resp = diviops_call( 'variable_create_fluid_system', array( diviops_variable_re
 $data = $resp->get_data();
 assert_same( 'invalid_input', $data['error']['code'], 'a namespace outside the id charset is refused, not silently sanitized' );
 assert_same( 'namespace', $data['error']['data']['field'], 'the namespace refusal names the field' );
-assert_same( '[a-z0-9_-]+', $data['error']['data']['expected'], 'the namespace refusal documents the charset' );
+// Charset tightened by #443 — `_` mints an id Divi truncates. See
+// tests/test-variable-id-charset.php.
+assert_same( '[a-z0-9-]+', $data['error']['data']['expected'], 'the namespace refusal documents the charset' );
 assert_same( 'my ns', $data['error']['data']['received'], 'the namespace refusal echoes the raw input' );
 
 $resp = diviops_call( 'variable_create_fluid_system', array( diviops_variable_request( array() ) ) );
