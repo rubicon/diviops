@@ -181,6 +181,53 @@ on the reference install that carry `difl/*` or `d5bgo/*` blocks, every one also
 contains a `<!-- wp:divi/` marker and every one opens with a `divi/` block, because
 third-party modules nest inside Divi sections rather than replacing them.
 
+### Deliberately unchanged: the new-colour key set
+
+Three handlers write into `et_divi.et_global_data.global_colors`, and each mints a
+different key set for a genuinely **new** colour. `variable_create()`'s colour branch
+mints five keys (`color`, `status`, `label`, `order`, `lastUpdated`),
+`global_color_upsert()` mints six (adding `folder` and `usedInPosts`), and
+`design_system_apply()` mints all eight. All three already merge into an existing
+record, so the difference exists only on create.
+
+They are intentionally left disagreeing. Every key one of them omits is defaulted or
+derived by every read path in Divi 5.13, so the difference is unobservable, and the
+drift #380 warned about is a maintainability concern here rather than a defect.
+
+`id` and `order` are minted by no Divi writer at all. Divi's own three PHP colour
+writers each emit the same six keys `color, folder, label, lastUpdated, status,
+usedInPosts` — `GlobalData::convert_global_colors_data()` at
+`includes/builder-5/server/Packages/GlobalData/GlobalData.php:155-165`,
+`get_customizer_colors()` at `:402-410`, and `get_imported_global_colors()` at
+`:500-521` — which is `global_color_upsert()`'s shape exactly, so that handler matches
+Divi's PHP canon rather than diverging from it. The Visual Builder's `ADD_GLOBAL_COLOR`
+reducer writes `{id, color, status, lastUpdated, usedInPosts, label?}` and mints neither
+`folder` nor `order`.
+
+Readers derive the id from the map key instead of the record. The colour-to-variable
+bridge in `includes/builder-5/visual-builder/build/global-data.js` pushes `{id:t, ...}`
+where `t` is the key, the colour-picker list does
+`Object.entries(T).map(([e,t])=>({id:e,...}))`, and the export selector
+`getGlobalColorsToExport` emits `[key,{color,status,label}]` pairs, reading three fields
+and never `record.id`. The one reader that does touch `record.id` — the AI Agent's
+value deduplicator in `visual-builder/build/ai-agent.js` — backfills it as
+`{...a,id:a.id??s}` from the map key. `order` is read as `order:a||l+1`, `folder` as
+`getIn([...,"folder"],"")` passed to a helper for which `undefined` and `''` return the
+identical object, and `usedInPosts` only behind `?.asMutable()??[]`. On the PHP side
+`sanitize_global_colors_data()` at `:602` iterates whatever keys are present and gates
+only on a `gcid-` prefix and a non-empty `color`; the `isset($variable_data['type'],
+$variable_data['id'])` gate at `:1121` that does require an id is the global variables
+path, not colours.
+
+Measured read-only on staging under Divi 5.13: 103 `gcid-*` records, all carrying the
+same eight keys, and both handlers' shapes pass Divi's own sanitizer with every key
+intact while the positive control (a record with no `color`) is dropped.
+`tests/test-global-colour-create-shape.php` pins all three shapes so none of them can
+drift silently, and asserts against this fork's own reader that a record whose stored
+`id` disagrees with its map key is reported under the key. The one shape worth revisiting
+first, if the three are ever unified, is `variable_create()`'s: it is the only one
+matching no Divi writer, because every Divi writer emits `folder` and `usedInPosts`.
+
 ## Upstream tracking
 
 ```bash
