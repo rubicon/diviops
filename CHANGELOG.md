@@ -10,6 +10,13 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.24.0](https://github.com/rubicon/diviops/compare/v1.23.2...v1.24.0) (2026-09-14)
+
+
+### Features
+
+* **#451:** adopt upstream v1.5.60's admin dashboard refresh ([#452](https://github.com/rubicon/diviops/issues/452)) ([e1298ba](https://github.com/rubicon/diviops/commit/e1298ba8f4780af680725d07dc0b0b7e3263f27f))
+
 ## [1.23.2](https://github.com/rubicon/diviops/compare/v1.23.1...v1.23.2) (2026-09-14)
 
 
