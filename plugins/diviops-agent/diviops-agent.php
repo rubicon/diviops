@@ -251,6 +251,7 @@ class DiviOps_Agent {
 		add_filter( 'rest_pre_dispatch', [ __CLASS__, 'check_rate_limit' ], 10, 3 );
 		add_filter( 'rest_post_dispatch', [ __CLASS__, 'wrap_rest_framework_validation_errors' ], 10, 3 );
 		add_action( 'admin_menu', [ __CLASS__, 'register_admin_page' ] );
+		add_action( 'admin_enqueue_scripts', [ __CLASS__, 'enqueue_admin_styles' ] );
 	}
 
 	/**
@@ -2342,8 +2343,24 @@ class DiviOps_Agent {
 
 	// ── Admin Settings Page ─────────────────────────────────────
 
+	/**
+	 * The admin screen's hook suffix, as add_menu_page() reported it.
+	 *
+	 * Captured rather than reconstructed: `toplevel_page_diviops` is what the
+	 * suffix happens to be today, and hardcoding it would silently stop matching
+	 * if the menu position or the slug's sanitisation ever changed, leaving the
+	 * stylesheet enqueued nowhere with no error.
+	 *
+	 * `false` when add_menu_page() refused the registration on its capability
+	 * check, which is why enqueue_admin_styles() tests it for truthiness before
+	 * comparing: a falsy stored hook must never match a screen.
+	 *
+	 * @var string|false
+	 */
+	private static $admin_page_hook = '';
+
 	public static function register_admin_page() {
-		add_menu_page(
+		self::$admin_page_hook = add_menu_page(
 			'DiviOps',
 			'DiviOps',
 			'manage_options',
@@ -2352,6 +2369,23 @@ class DiviOps_Agent {
 			self::admin_menu_icon(),
 			81
 		);
+	}
+
+	/**
+	 * Load the dashboard stylesheet, on the dashboard only.
+	 *
+	 * `admin_enqueue_scripts` fires on every admin screen, so the hook-suffix
+	 * comparison is what keeps this plugin's CSS off other people's pages.
+	 * `self::VERSION` is the cache-buster; `dashicons` is a dependency because
+	 * the snapshot cards and the support list draw their icons from it.
+	 *
+	 * @param string $hook Current admin screen's hook suffix.
+	 */
+	public static function enqueue_admin_styles( $hook ): void {
+		if ( ! self::$admin_page_hook || self::$admin_page_hook !== $hook ) {
+			return;
+		}
+		wp_enqueue_style( 'diviops-agent-admin', plugins_url( 'assets/admin.css', __FILE__ ), [ 'dashicons' ], self::VERSION );
 	}
 
 	private static function admin_menu_icon(): string {
@@ -2367,31 +2401,41 @@ class DiviOps_Agent {
 		return 'data:image/svg+xml;base64,' . base64_encode( $svg );
 	}
 
-	private static function admin_rollback_snapshot_badge_style( array $snapshot ): string {
+	/**
+	 * Status-tone class for a snapshot badge.
+	 *
+	 * The tones live in `assets/admin.css` rather than in inline style attributes,
+	 * so the same five names are what the stylesheet and this branch table agree
+	 * on. The branch order is load-bearing and unchanged: a deleted snapshot reads
+	 * as deleted even when it was restored first.
+	 *
+	 * @param array<string, mixed> $snapshot Summary row.
+	 */
+	private static function admin_rollback_snapshot_badge_class( array $snapshot ): string {
 		if ( ! empty( $snapshot['cleanup']['deleted_at'] ) ) {
-			return 'background:rgb(240,240,241);color:rgb(80,87,94);border:1px solid rgb(195,196,199);';
+			return 'diviops-status--neutral';
 		}
 		if ( ! empty( $snapshot['restore']['restored_at'] ) ) {
-			return 'background:#e7f5ea;color:#0a6b24;border:1px solid #8bd19a;';
+			return 'diviops-status--success';
 		}
 		if ( ! empty( $snapshot['expired'] ) ) {
-			return 'background:#fcf0f1;color:#8a2424;border:1px solid #e0a4a4;';
+			return 'diviops-status--error';
 		}
 		if ( ! empty( $snapshot['interrupted'] ) ) {
-			return 'background:#fff8e5;color:#7a5600;border:1px solid #e5c46b;';
+			return 'diviops-status--warning';
 		}
 
 		$status = sanitize_key( (string) ( $snapshot['status'] ?? '' ) );
 		if ( 'write_applied' === $status ) {
-			return 'background:#e7f5ea;color:#0a6b24;border:1px solid #8bd19a;';
+			return 'diviops-status--success';
 		}
 		if ( 'write_failed_restored' === $status ) {
-			return 'background:rgb(232,240,254);color:rgb(23,78,166);border:1px solid rgb(158,192,255);';
+			return 'diviops-status--info';
 		}
 		if ( 'aborted_before_write' === $status ) {
-			return 'background:#f6f7f7;color:#3c434a;border:1px solid #c3c4c7;';
+			return 'diviops-status--neutral';
 		}
-		return 'background:#fff8e5;color:#7a5600;border:1px solid #e5c46b;';
+		return 'diviops-status--warning';
 	}
 
 	private static function admin_rollback_snapshot_badge_label( array $snapshot ): string {
@@ -2408,15 +2452,6 @@ class DiviOps_Agent {
 			return __( 'interrupted', 'diviops-agent' );
 		}
 		return str_replace( '_', ' ', sanitize_key( (string) ( $snapshot['status'] ?? 'created' ) ) );
-	}
-
-	private static function admin_rollback_snapshot_short_checksum( array $snapshot, string $phase ): string {
-		$checksum = (string) ( $snapshot[ $phase ]['checksum'] ?? '' );
-		if ( '' === $checksum ) {
-			return '—';
-		}
-		$checksum = preg_replace( '/^sha256:/', '', $checksum );
-		return substr( (string) $checksum, 0, 12 ) . '…';
 	}
 
 	private static function admin_rollback_snapshot_format_datetime( $value ): string {
@@ -2436,93 +2471,95 @@ class DiviOps_Agent {
 		return wp_date( $format, $timestamp );
 	}
 
+	/**
+	 * Read-only list of rollback snapshots visible to the current user.
+	 *
+	 * A `<details>` card per snapshot rather than a wide table: the eight-column
+	 * table needed a 980px minimum width and horizontal scrolling to show fields
+	 * most readers never look at, and the truncated checksums it did show were not
+	 * comparable against anything. The summary row carries the three facts worth
+	 * scanning; everything else, checksums in full, opens on demand.
+	 *
+	 * @param array<int, array<string, mixed>> $snapshots Summary rows.
+	 */
 	private static function render_admin_rollback_snapshots_card( array $snapshots ): void {
 		?>
-		<div class="card" style="padding:16px 20px;grid-column:1/-1;">
-			<h2 style="margin-top:0;"><?php esc_html_e( 'Rollback Backups', 'diviops-agent' ); ?></h2>
-			<p class="description" style="margin-top:-4px;">
-				<?php esc_html_e( 'Temporary rollback snapshots created by backup-enabled DiviOps content writes. These are not full site backups and this dashboard is read-only.', 'diviops-agent' ); ?>
-			</p>
+		<section class="diviops-snapshots" aria-labelledby="diviops-snapshots-title">
+			<div class="diviops-section-heading">
+				<h2 id="diviops-snapshots-title"><?php esc_html_e( 'Rollback Backups', 'diviops-agent' ); ?></h2>
+				<small>
+					<?php
+					/* translators: %d: number of snapshots visible to the current user. */
+					echo esc_html( sprintf( __( '%d visible / latest 8 maximum', 'diviops-agent' ), count( $snapshots ) ) );
+					?>
+				</small>
+			</div>
+			<p class="diviops-muted"><?php esc_html_e( 'Temporary rollback snapshots created by backup-enabled DiviOps content writes. These are not full site backups and this dashboard is read-only.', 'diviops-agent' ); ?></p>
 			<?php if ( empty( $snapshots ) ) : ?>
-				<p style="margin:14px 0 0;"><?php esc_html_e( 'No rollback snapshots are currently visible for this user.', 'diviops-agent' ); ?></p>
+				<p class="diviops-empty"><?php esc_html_e( 'No rollback snapshots are currently visible for this user.', 'diviops-agent' ); ?></p>
 			<?php else : ?>
-				<div style="overflow-x:auto;margin-top:12px;">
-					<table class="widefat striped" style="min-width:980px;">
-						<thead>
-							<tr>
-								<th><?php esc_html_e( 'Snapshot', 'diviops-agent' ); ?></th>
-								<th><?php esc_html_e( 'Target', 'diviops-agent' ); ?></th>
-								<th><?php esc_html_e( 'Operation', 'diviops-agent' ); ?></th>
-								<th><?php esc_html_e( 'Status', 'diviops-agent' ); ?></th>
-								<th><?php esc_html_e( 'Created / Expires', 'diviops-agent' ); ?></th>
-								<th><?php esc_html_e( 'Created By', 'diviops-agent' ); ?></th>
-								<th><?php esc_html_e( 'Checksums', 'diviops-agent' ); ?></th>
-								<th><?php esc_html_e( 'State', 'diviops-agent' ); ?></th>
-							</tr>
-						</thead>
-						<tbody>
-							<?php foreach ( $snapshots as $snapshot ) : ?>
-								<?php
-								$operation = self::rollback_snapshot_as_array( $snapshot['operation'] ?? [] );
-								$target    = self::rollback_snapshot_as_array( $snapshot['target'] ?? [] );
-								$created_by = self::rollback_snapshot_as_array( $snapshot['created_by'] ?? [] );
-								// #199: a run chunk carries `targets`, not a singular `target`,
-								// so the formatting below would render it as a phantom "#0".
-								$target_label = self::rollback_snapshot_display_label( $snapshot );
-								$operation_label = (string) ( $operation['tool_operation'] ?? $snapshot['tool'] ?? '' );
-								if ( '' === $operation_label ) {
-									$operation_label = '—';
-								}
-								$state_bits = [];
-								if ( false === ( $target['exists'] ?? true ) ) {
-									$state_bits[] = __( 'target missing', 'diviops-agent' );
-								}
-								if ( ! empty( $snapshot['restore']['restorable'] ) ) {
-									$state_bits[] = __( 'restorable', 'diviops-agent' );
-								}
-								if ( ! empty( $snapshot['restore']['restored_at'] ) ) {
-									$state_bits[] = __( 'restored', 'diviops-agent' );
-								}
-								if ( ! empty( $snapshot['cleanup']['deleted_at'] ) ) {
-									$state_bits[] = __( 'deleted', 'diviops-agent' );
-								}
-								?>
-								<tr>
-									<td><code><?php echo esc_html( (string) ( $snapshot['snapshot_id'] ?? '' ) ); ?></code></td>
-									<td><?php echo esc_html( $target_label ); ?></td>
-									<td>
-										<code><?php echo esc_html( $operation_label ); ?></code>
-										<?php if ( ! empty( $snapshot['tool'] ) ) : ?>
-											<br><span class="description"><?php echo esc_html( (string) $snapshot['tool'] ); ?></span>
-										<?php endif; ?>
-									</td>
-									<td>
-										<span style="display:inline-block;padding:2px 8px;border-radius:999px;<?php echo esc_attr( self::admin_rollback_snapshot_badge_style( $snapshot ) ); ?>">
-											<?php echo esc_html( self::admin_rollback_snapshot_badge_label( $snapshot ) ); ?>
-										</span>
-									</td>
-									<td>
-										<?php echo esc_html( self::admin_rollback_snapshot_format_datetime( $snapshot['created_at'] ?? '' ) ); ?>
-										<br><span class="description"><?php echo esc_html( self::admin_rollback_snapshot_format_datetime( $snapshot['expires_at'] ?? '' ) ); ?></span>
-									</td>
-									<td>
-										<?php echo esc_html( (string) ( $created_by['login'] ?? '' ) ); ?>
-										<?php if ( ! empty( $created_by['user_id'] ) ) : ?>
-											<br><span class="description">#<?php echo esc_html( (string) absint( $created_by['user_id'] ) ); ?></span>
-										<?php endif; ?>
-									</td>
-									<td>
-										<span class="description"><?php esc_html_e( 'before', 'diviops-agent' ); ?></span> <code><?php echo esc_html( self::admin_rollback_snapshot_short_checksum( $snapshot, 'before' ) ); ?></code>
-										<br><span class="description"><?php esc_html_e( 'after', 'diviops-agent' ); ?></span> <code><?php echo esc_html( self::admin_rollback_snapshot_short_checksum( $snapshot, 'after' ) ); ?></code>
-									</td>
-									<td><?php echo esc_html( empty( $state_bits ) ? __( 'active', 'diviops-agent' ) : implode( ', ', $state_bits ) ); ?></td>
-								</tr>
-							<?php endforeach; ?>
-						</tbody>
-					</table>
+				<div class="diviops-snapshot-columns" aria-hidden="true">
+					<span><?php esc_html_e( 'Target / snapshot', 'diviops-agent' ); ?></span>
+					<span><?php esc_html_e( 'Created', 'diviops-agent' ); ?></span>
+					<span><?php esc_html_e( 'Status', 'diviops-agent' ); ?></span>
 				</div>
+				<?php foreach ( $snapshots as $snapshot ) : ?>
+					<?php
+					$operation  = self::rollback_snapshot_as_array( $snapshot['operation'] ?? [] );
+					$target     = self::rollback_snapshot_as_array( $snapshot['target'] ?? [] );
+					$created_by = self::rollback_snapshot_as_array( $snapshot['created_by'] ?? [] );
+					// #199: a run chunk carries `targets`, not a singular `target`, so the
+					// plain "post_type #id" formatting renders it as a phantom "#0".
+					$target_label    = self::rollback_snapshot_display_label( $snapshot );
+					$operation_label = (string) ( $operation['tool_operation'] ?? $snapshot['tool'] ?? '' );
+					$state_bits      = [];
+					if ( false === ( $target['exists'] ?? true ) ) {
+						$state_bits[] = __( 'target missing', 'diviops-agent' );
+					}
+					if ( ! empty( $snapshot['restore']['restorable'] ) ) {
+						$state_bits[] = __( 'restorable', 'diviops-agent' );
+					}
+					if ( ! empty( $snapshot['restore']['restored_at'] ) ) {
+						$state_bits[] = __( 'restored', 'diviops-agent' );
+					}
+					if ( ! empty( $snapshot['cleanup']['deleted_at'] ) ) {
+						$state_bits[] = __( 'deleted', 'diviops-agent' );
+					}
+					$metadata = [
+						[ __( 'Snapshot ID', 'diviops-agent' ), (string) ( $snapshot['snapshot_id'] ?? '' ) ],
+						[ __( 'Target', 'diviops-agent' ), $target_label ],
+						[ __( 'Operation', 'diviops-agent' ), $operation_label ],
+						[ __( 'Tool', 'diviops-agent' ), (string) ( $snapshot['tool'] ?? '' ) ],
+						[ __( 'Status', 'diviops-agent' ), self::admin_rollback_snapshot_badge_label( $snapshot ) . ' (' . (string) ( $snapshot['status'] ?? 'created' ) . ')' ],
+						[ __( 'State', 'diviops-agent' ), empty( $state_bits ) ? __( 'active', 'diviops-agent' ) : implode( ', ', $state_bits ) ],
+						[ __( 'Created', 'diviops-agent' ), self::admin_rollback_snapshot_format_datetime( $snapshot['created_at'] ?? '' ) ],
+						[ __( 'Expires', 'diviops-agent' ), self::admin_rollback_snapshot_format_datetime( $snapshot['expires_at'] ?? '' ) ],
+						[ __( 'Created by', 'diviops-agent' ), (string) ( $created_by['login'] ?? '' ) . ( ! empty( $created_by['user_id'] ) ? ' / #' . absint( $created_by['user_id'] ) : '' ) ],
+						[ __( 'Before checksum', 'diviops-agent' ), (string) ( $snapshot['before']['checksum'] ?? '' ) ],
+						[ __( 'After checksum', 'diviops-agent' ), (string) ( $snapshot['after']['checksum'] ?? '' ) ],
+					];
+					?>
+					<details class="diviops-snapshot">
+						<summary>
+							<span class="diviops-snapshot-title">
+								<span class="dashicons dashicons-arrow-right-alt2" aria-hidden="true"></span>
+								<span><strong><?php echo esc_html( $target_label ); ?></strong><code><?php echo esc_html( (string) ( $snapshot['snapshot_id'] ?? '' ) ); ?></code></span>
+							</span>
+							<span class="diviops-snapshot-time"><?php echo esc_html( self::admin_rollback_snapshot_format_datetime( $snapshot['created_at'] ?? '' ) ); ?></span>
+							<span class="diviops-status <?php echo esc_attr( self::admin_rollback_snapshot_badge_class( $snapshot ) ); ?>"><?php echo esc_html( self::admin_rollback_snapshot_badge_label( $snapshot ) ); ?></span>
+						</summary>
+						<dl class="diviops-snapshot-meta">
+							<?php foreach ( $metadata as $entry ) : ?>
+								<div>
+									<dt><?php echo esc_html( $entry[0] ); ?></dt>
+									<dd><?php echo esc_html( '' !== $entry[1] ? $entry[1] : __( 'Not recorded', 'diviops-agent' ) ); ?></dd>
+								</div>
+							<?php endforeach; ?>
+						</dl>
+					</details>
+				<?php endforeach; ?>
 			<?php endif; ?>
-		</div>
+		</section>
 		<?php
 	}
 
@@ -2679,206 +2716,143 @@ class DiviOps_Agent {
 		};
 		$rollback_snapshots = self::rollback_snapshot_filtered_summaries( $snapshot_request );
 
+		// Client-reported runtime (#123). Read here and rendered apart from the
+		// Divi-backed support list below, because it is a different kind of claim:
+		// that list is what this plugin provides, this is what an MCP client told us
+		// about its own environment. Three states — "unknown" is shown when nobody
+		// has reported yet, which is emphatically not the same as "broken".
+		$wp_cli = self::dashboard_client_runtime()['wp_cli'];
 		?>
 		<div class="wrap">
 			<h1 class="screen-reader-text"><?php esc_html_e( 'DiviOps Agent', 'diviops-agent' ); ?></h1>
-			<div style="clear:both;margin:20px 0 24px;max-width:1120px;">
-				<img src="<?php echo esc_url( $brand_logo_url ); ?>" alt="<?php esc_attr_e( 'DiviOps', 'diviops-agent' ); ?>" width="166" height="42" style="display:block;width:166px;max-width:100%;height:auto;" />
-				<p style="margin:12px 0 0;max-width:760px;"><?php esc_html_e( 'AI agent bridge for Divi 5 — connects Claude Code, Codex, and other MCP clients to your WordPress site.', 'diviops-agent' ); ?></p>
-				<p class="description" style="margin:8px 0 0;max-width:760px;"><?php esc_html_e( 'Divi is a registered trademark of Elegant Themes, Inc. DiviOps Agent is not affiliated with or endorsed by Elegant Themes.', 'diviops-agent' ); ?></p>
-			</div>
-
-			<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:20px;margin-top:20px;">
-
-				<?php // ── Connection Status ── ?>
-				<div class="card" style="padding:16px 20px;">
-					<h2 style="margin-top:0;">Connection Status</h2>
-					<table class="widefat striped" style="border:0;">
-						<tbody>
-							<tr>
-								<td><strong>Plugin Version</strong></td>
-								<td><?php echo esc_html( self::VERSION ); ?></td>
-							</tr>
-							<tr>
-								<td><strong>Divi Theme</strong></td>
-								<td>
-									<?php if ( $divi_active ) : ?>
-										<span style="color:#46b450;">&#10003;</span> Active
-										<?php echo $divi_version ? '(v' . esc_html( $divi_version ) . ')' : ''; ?>
-									<?php else : ?>
-										<span style="color:#dc3232;">&#10007;</span> Not active &mdash; activate Divi to use MCP tools
-									<?php endif; ?>
-								</td>
-							</tr>
-							<tr>
-								<td><strong>REST Namespace</strong></td>
-								<td><code><?php echo esc_html( self::REST_NAMESPACE ); ?></code></td>
-							</tr>
-							<tr>
-								<td><strong>REST URL</strong></td>
-								<td><code style="word-break:break-all;"><?php echo esc_url( $rest_url ); ?></code></td>
-							</tr>
-						</tbody>
-					</table>
-				</div>
-
-				<?php // ── Rate Limiting ── ?>
-				<div class="card" style="padding:16px 20px;">
-					<h2 style="margin-top:0;">Rate Limiting</h2>
-					<table class="widefat striped" style="border:0;">
-						<tbody>
-							<tr>
-								<td><strong>Status</strong></td>
-								<td>
-									<?php if ( $rate_disabled ) : ?>
-										<span style="color:#f0b849;">&#9888;</span> Disabled
-									<?php else : ?>
-										<span style="color:#46b450;">&#10003;</span> Active
-									<?php endif; ?>
-								</td>
-							</tr>
+			<div class="diviops-admin">
+				<header class="diviops-header">
+					<div>
+						<div class="diviops-brand">
+							<img src="<?php echo esc_url( $brand_logo_url ); ?>" alt="<?php esc_attr_e( 'DiviOps', 'diviops-agent' ); ?>" width="166" height="42" />
+							<span class="diviops-edition"><?php echo esc_html( $pro_active ? __( 'Free + Pro', 'diviops-agent' ) : __( 'Free', 'diviops-agent' ) ); ?></span>
+						</div>
+						<p><?php esc_html_e( 'AI agent bridge for Divi 5 — connects Claude Code, Codex, and other MCP clients to your WordPress site.', 'diviops-agent' ); ?></p>
+					</div>
+					<a href="<?php echo esc_url( $docs_url ); ?>" target="_blank" rel="noopener noreferrer" class="button button-primary"><span class="dashicons dashicons-book" aria-hidden="true"></span><?php esc_html_e( 'Setup Guide', 'diviops-agent' ); ?></a>
+				</header>
+				<?php if ( $pro_active ) : ?>
+					<nav class="diviops-nav" aria-label="<?php esc_attr_e( 'DiviOps pages', 'diviops-agent' ); ?>">
+						<a href="<?php echo esc_url( admin_url( 'admin.php?page=diviops' ) ); ?>" aria-current="page"><?php esc_html_e( 'Overview', 'diviops-agent' ); ?></a>
+						<a href="<?php echo esc_url( $pro_url ); ?>"><?php esc_html_e( 'Pro License', 'diviops-agent' ); ?></a>
+					</nav>
+				<?php endif; ?>
+				<div class="diviops-content">
+					<div class="diviops-intro">
+						<h2><?php esc_html_e( 'Installation overview', 'diviops-agent' ); ?></h2>
+						<p><?php esc_html_e( 'Installed components and local configuration. MCP client connectivity is not verified here.', 'diviops-agent' ); ?></p>
+					</div>
+					<?php if ( ! $divi_active ) : ?>
+						<p class="diviops-callout"><?php esc_html_e( 'Divi is not active. Activate the Divi theme to use Divi-dependent MCP tools.', 'diviops-agent' ); ?></p>
+					<?php endif; ?>
+					<section aria-labelledby="diviops-installation-title">
+						<h2 id="diviops-installation-title"><?php esc_html_e( 'Installed components & endpoint', 'diviops-agent' ); ?></h2>
+						<dl class="diviops-facts diviops-installation-facts">
+							<div><dt><?php esc_html_e( 'Plugin version', 'diviops-agent' ); ?></dt><dd><?php echo esc_html( self::VERSION ); ?> <span class="diviops-muted"><?php esc_html_e( 'Free', 'diviops-agent' ); ?></span></dd></div>
+							<div><dt><?php esc_html_e( 'Divi theme', 'diviops-agent' ); ?></dt><dd><span class="diviops-status <?php echo $divi_active ? 'diviops-status--success' : 'diviops-status--warning'; ?>"><?php echo esc_html( $divi_active ? __( 'Active', 'diviops-agent' ) : __( 'Not active', 'diviops-agent' ) ); ?></span> <?php echo esc_html( $divi_version ? $divi_version : '' ); ?></dd></div>
+							<div><dt><?php esc_html_e( 'REST namespace', 'diviops-agent' ); ?></dt><dd><code><?php echo esc_html( self::REST_NAMESPACE ); ?></code></dd></div>
+							<div><dt><?php esc_html_e( 'REST URL', 'diviops-agent' ); ?></dt><dd><code><?php echo esc_url( $rest_url ); ?></code></dd></div>
+						</dl>
+					</section>
+					<?php self::render_admin_rollback_snapshots_card( $rollback_snapshots ); ?>
+					<div class="diviops-overview-grid">
+						<section aria-labelledby="diviops-rate-title">
+							<div class="diviops-section-heading">
+								<h2 id="diviops-rate-title"><?php esc_html_e( 'Rate limiting', 'diviops-agent' ); ?></h2>
+								<span class="diviops-status <?php echo $rate_disabled ? 'diviops-status--warning' : 'diviops-status--success'; ?>"><?php echo esc_html( $rate_disabled ? __( 'Disabled', 'diviops-agent' ) : __( 'Active', 'diviops-agent' ) ); ?></span>
+							</div>
 							<?php if ( ! $rate_disabled ) : ?>
-							<tr>
-								<td><strong>Read Limit</strong></td>
-								<td><?php echo esc_html( $read_limit ); ?> requests/minute</td>
-							</tr>
-							<tr>
-								<td><strong>Write Limit</strong></td>
-								<td><?php echo esc_html( $write_limit ); ?> requests/minute</td>
-							</tr>
+								<div class="diviops-rate-values">
+									<div><strong><?php echo esc_html( $read_limit ); ?></strong> <span class="diviops-muted"><?php esc_html_e( '/ min', 'diviops-agent' ); ?></span><small><?php esc_html_e( 'Read requests', 'diviops-agent' ); ?></small></div>
+									<div><strong><?php echo esc_html( $write_limit ); ?></strong> <span class="diviops-muted"><?php esc_html_e( '/ min', 'diviops-agent' ); ?></span><small><?php esc_html_e( 'Write requests', 'diviops-agent' ); ?></small></div>
+								</div>
 							<?php endif; ?>
-						</tbody>
-					</table>
-					<p class="description" style="margin-top:10px;">
-						Configure via <code>DIVIOPS_RATE_LIMIT_READ</code> / <code>DIVIOPS_RATE_LIMIT_WRITE</code> constants or the <code>diviops_rate_limits</code> filter.
-					</p>
-				</div>
-
-				<?php // ── Capabilities ── ?>
-				<div class="card" style="padding:16px 20px;">
-					<h2 style="margin-top:0;">Capabilities</h2>
-					<?php $caps = self::dashboard_capabilities( $divi_active ); ?>
-					<ul style="margin:0;padding:0;list-style:none;">
-						<?php foreach ( $caps as $name => $ok ) : ?>
-						<li style="padding:4px 0;">
-							<?php echo $ok ? '<span style="color:#46b450;">&#10003;</span>' : '<span style="color:#dc3232;">&#10007;</span>'; ?>
-							<?php echo esc_html( $name ); ?>
-						</li>
-						<?php endforeach; ?>
-					</ul>
-
-					<?php
-					// Client-reported runtime (#123). Rendered apart from the
-					// list above because it is a different kind of claim: the
-					// list is what this plugin provides, this is what an MCP
-					// client told us about its own environment. Three states —
-					// "unknown" is shown when nobody has reported yet, which is
-					// emphatically not the same as "broken".
-					$runtime = self::dashboard_client_runtime();
-					$wp_cli  = $runtime['wp_cli'];
-					?>
-					<h3 style="margin:16px 0 4px;font-size:13px;">Reported by MCP client</h3>
-					<ul style="margin:0;padding:0;list-style:none;">
-						<li style="padding:4px 0;">
-							<?php
-							if ( 'available' === $wp_cli['state'] ) {
-								echo '<span style="color:#46b450;">&#10003;</span> ';
-							} elseif ( 'unavailable' === $wp_cli['state'] ) {
-								echo '<span style="color:#dc3232;">&#10007;</span> ';
-							} else {
-								echo '<span style="color:#888;">&#8211;</span> ';
-							}
-							?>
-							WP-CLI
-							<?php if ( 'unknown' === $wp_cli['state'] ) : ?>
-								<span class="description">— not reported yet; connect an MCP client</span>
-							<?php else : ?>
-								<span class="description">
-									—
+							<p class="diviops-muted">
+								<?php
+								/* translators: 1: read limit constant, 2: write limit constant, 3: filter name. */
+								echo sprintf( esc_html__( 'Configure via %1$s / %2$s constants or the %3$s filter.', 'diviops-agent' ), '<code>DIVIOPS_RATE_LIMIT_READ</code>', '<code>DIVIOPS_RATE_LIMIT_WRITE</code>', '<code>diviops_rate_limits</code>' );
+								?>
+							</p>
+							<h2 class="diviops-support-title"><?php esc_html_e( 'Installed Divi support', 'diviops-agent' ); ?></h2>
+							<ul class="diviops-support-list">
+								<?php foreach ( self::dashboard_capabilities( $divi_active ) as $name => $ok ) : ?>
+									<li><span class="dashicons <?php echo $ok ? 'dashicons-yes diviops-status--success' : 'dashicons-minus diviops-status--neutral'; ?>" aria-hidden="true"></span><?php echo esc_html( $name ); ?></li>
+								<?php endforeach; ?>
+							</ul>
+							<p class="diviops-muted"><?php echo esc_html( $divi_active ? __( 'Divi is installed and active. Individual operations still require permission and compatibility checks.', 'diviops-agent' ) : __( 'Divi-dependent support requires an active Divi theme.', 'diviops-agent' ) ); ?></p>
+							<h2 class="diviops-support-title"><?php esc_html_e( 'Reported by MCP client', 'diviops-agent' ); ?></h2>
+							<ul class="diviops-support-list">
+								<li>
+									<?php if ( 'available' === $wp_cli['state'] ) : ?>
+										<span class="dashicons dashicons-yes diviops-status--success" aria-hidden="true"></span>
+									<?php elseif ( 'unavailable' === $wp_cli['state'] ) : ?>
+										<span class="dashicons dashicons-no-alt diviops-status--error" aria-hidden="true"></span>
+									<?php else : ?>
+										<span class="dashicons dashicons-minus diviops-status--neutral" aria-hidden="true"></span>
+									<?php endif; ?>
+									<?php esc_html_e( 'WP-CLI', 'diviops-agent' ); ?>
+								</li>
+							</ul>
+							<p class="diviops-muted">
+								<?php if ( 'unknown' === $wp_cli['state'] ) : ?>
+									<?php esc_html_e( 'Not reported yet; connect an MCP client.', 'diviops-agent' ); ?>
+								<?php else : ?>
 									<?php
 									echo esc_html(
 										sprintf(
 											/* translators: 1: human-readable time difference, 2: MCP server version */
-											'reported %1$s ago by MCP server %2$s',
+											__( 'Reported %1$s ago by MCP server %2$s.', 'diviops-agent' ),
 											human_time_diff( (int) $wp_cli['reported_at'] ),
-											$wp_cli['mcp_server_version'] ? $wp_cli['mcp_server_version'] : 'unknown'
+											$wp_cli['mcp_server_version'] ? $wp_cli['mcp_server_version'] : __( 'unknown', 'diviops-agent' )
 										)
 									);
 									?>
-								</span>
-							<?php endif; ?>
-						</li>
-					</ul>
-					<p class="description" style="margin-top:8px;">
-						WP-CLI is executed by the MCP server, not this plugin, so its
-						availability can only be reported by the client. See
-						<code>diviops_meta_info</code> for the full allowlist.
-					</p>
+								<?php endif; ?>
+							</p>
+							<p class="diviops-muted">
+								<?php
+								/* translators: %s: the MCP tool that reports the full WP-CLI allowlist. */
+								echo sprintf( esc_html__( 'WP-CLI is executed by the MCP server, not this plugin, so its availability can only be reported by the client. See %s for the full allowlist.', 'diviops-agent' ), '<code>diviops_meta_info</code>' );
+								?>
+							</p>
+						</section>
+						<section aria-labelledby="diviops-addons-title">
+							<h2 id="diviops-addons-title"><?php esc_html_e( 'Add-ons', 'diviops-agent' ); ?></h2>
+							<div class="diviops-addon">
+								<div class="diviops-section-heading"><h3><?php esc_html_e( 'DiviOps Pro', 'diviops-agent' ); ?></h3><span class="diviops-status <?php echo $pro_active ? 'diviops-status--success' : 'diviops-status--neutral'; ?>"><?php echo esc_html( $pro_active ? __( 'Active', 'diviops-agent' ) : __( 'Not installed', 'diviops-agent' ) ); ?></span></div>
+								<?php if ( $pro_version ) : ?>
+									<p><?php /* translators: %s: installed plugin version. */ echo esc_html( sprintf( __( 'Version %s', 'diviops-agent' ), $pro_version ) ); ?></p>
+								<?php endif; ?>
+								<p><?php echo esc_html( $pro_active ? __( 'Pro coverage slices and update/support licensing are managed separately.', 'diviops-agent' ) : __( 'Optional Pro plugin for paid coverage slices and Pro update access.', 'diviops-agent' ) ); ?></p>
+								<?php if ( $pro_active ) : ?>
+									<a href="<?php echo esc_url( $pro_url ); ?>"><?php esc_html_e( 'Manage Pro License', 'diviops-agent' ); ?></a>
+								<?php endif; ?>
+							</div>
+							<div class="diviops-addon">
+								<div class="diviops-section-heading"><h3><?php esc_html_e( 'Design Library', 'diviops-agent' ); ?></h3><span class="diviops-status <?php echo $ddl_active ? 'diviops-status--success' : 'diviops-status--neutral'; ?>"><?php echo esc_html( $ddl_active ? __( 'Active', 'diviops-agent' ) : __( 'Not installed', 'diviops-agent' ) ); ?></span></div>
+								<?php if ( $ddl_version ) : ?>
+									<p><?php /* translators: %s: installed plugin version. */ echo esc_html( sprintf( __( 'Version %s', 'diviops-agent' ), $ddl_version ) ); ?></p>
+								<?php endif; ?>
+								<p><?php echo esc_html( $ddl_active ? __( 'CSS animations, glass effects, Three.js WebGL shaders.', 'diviops-agent' ) : __( 'Optional plugin for CSS entrance animations and Three.js WebGL shader backgrounds.', 'diviops-agent' ) ); ?></p>
+							</div>
+						</section>
+					</div>
+					<section class="diviops-updates" aria-labelledby="diviops-updates-title">
+						<h2 id="diviops-updates-title"><?php esc_html_e( 'Updates & setup', 'diviops-agent' ); ?></h2>
+						<div>
+							<p><?php esc_html_e( 'Free plugin updates are delivered by WordPress through the normal plugin update flow. Keep your Application Password and MCP client configuration unchanged.', 'diviops-agent' ); ?></p>
+							<p><?php esc_html_e( 'The npm MCP server updates separately through npm or npx. Pro updates and support are managed under Pro License.', 'diviops-agent' ); ?></p>
+							<p><?php esc_html_e( 'For first-time setup, install the DiviOps skill bundle for your AI client, register the MCP server, then ask it to run diviops_meta_ping to verify the connection:', 'diviops-agent' ); ?></p>
+							<p><code>claude mcp add diviops-mysite --env WP_URL=https://example.com --env WP_USER=admin --env WP_APP_PASSWORD=xxxxXXXXxxxxXXXXxxxxXXXX -- npx -y --package @rubicontv/diviops-mcp diviops-mcp</code></p>
+						</div>
+					</section>
 				</div>
-
-				<?php // ── Design Library ── ?>
-				<div class="card" style="padding:16px 20px;">
-					<h2 style="margin-top:0;">Design Library</h2>
-					<?php if ( $ddl_active ) : ?>
-						<p><span style="color:#46b450;">&#10003;</span> Active<?php echo $ddl_version ? ' (v' . esc_html( $ddl_version ) . ')' : ''; ?></p>
-						<p class="description">CSS animations, glass effects, Three.js WebGL shaders.</p>
-					<?php else : ?>
-						<p><span style="color:#999;">&#8212;</span> Not installed</p>
-						<p class="description">Optional plugin for CSS entrance animations (<code>ddl-fade-up</code>, <code>ddl-scale-in</code>) and Three.js WebGL shader backgrounds.</p>
-					<?php endif; ?>
-				</div>
-
-				<?php // ── Pro ── ?>
-				<div class="card" style="padding:16px 20px;">
-					<h2 style="margin-top:0;"><?php esc_html_e( 'DiviOps Pro', 'diviops-agent' ); ?></h2>
-					<?php if ( $pro_active ) : ?>
-						<p><span style="color:#46b450;">&#10003;</span> <?php esc_html_e( 'Active', 'diviops-agent' ); ?><?php echo $pro_version ? ' (v' . esc_html( $pro_version ) . ')' : ''; ?></p>
-						<p class="description"><?php esc_html_e( 'Pro coverage slices and update/support licensing are managed separately.', 'diviops-agent' ); ?></p>
-						<p><a href="<?php echo esc_url( $pro_url ); ?>" class="button button-secondary"><?php esc_html_e( 'Manage Pro License', 'diviops-agent' ); ?></a></p>
-					<?php else : ?>
-						<p><span style="color:#999;">&#8212;</span> <?php esc_html_e( 'Not installed', 'diviops-agent' ); ?></p>
-						<p class="description"><?php esc_html_e( 'Optional Pro plugin for paid coverage slices and Pro update access.', 'diviops-agent' ); ?></p>
-					<?php endif; ?>
-				</div>
-
-				<?php // ── Updates ── ?>
-				<div class="card" style="padding:16px 20px;">
-					<h2 style="margin-top:0;"><?php esc_html_e( 'Free Plugin Updates', 'diviops-agent' ); ?></h2>
-					<p><?php esc_html_e( 'Once the Free plugin is published on WordPress.org, WordPress delivers updates through the normal plugin update flow.', 'diviops-agent' ); ?></p>
-					<ol style="margin-left:18px;">
-						<li><?php esc_html_e( 'Open Dashboard → Updates or Plugins in WordPress admin.', 'diviops-agent' ); ?></li>
-						<li><?php esc_html_e( 'Apply the available DiviOps Agent update.', 'diviops-agent' ); ?></li>
-						<li><?php esc_html_e( 'Keep your Application Password and MCP client configuration unchanged.', 'diviops-agent' ); ?></li>
-					</ol>
-					<p>
-						<a href="<?php echo esc_url( $docs_url ); ?>" target="_blank" rel="noopener noreferrer" class="button"><?php esc_html_e( 'Setup Guide', 'diviops-agent' ); ?></a>
-					</p>
-					<p class="description"><?php esc_html_e( 'The npm MCP server updates separately through npm or npx. Pro update and license access are managed by the Pro plugin.', 'diviops-agent' ); ?></p>
-				</div>
-
-				<?php self::render_admin_rollback_snapshots_card( $rollback_snapshots ); ?>
-
-			</div>
-
-			<div style="margin-top:24px;">
-				<h2><?php esc_html_e( 'Getting Started', 'diviops-agent' ); ?></h2>
-				<p>
-					<?php esc_html_e( 'DiviOps works through the MCP server. Install the server from npm, connect it with a WordPress Application Password, then test the connection from your AI client.', 'diviops-agent' ); ?>
-				</p>
-				<ol>
-					<li><?php esc_html_e( 'Install the DiviOps skill bundle for your AI client.', 'diviops-agent' ); ?></li>
-					<li>
-						<?php esc_html_e( 'Register the MCP server:', 'diviops-agent' ); ?>
-						<code>claude mcp add diviops-mysite --env WP_URL=https://example.com --env WP_USER=admin --env WP_APP_PASSWORD=xxxxXXXXxxxxXXXXxxxxXXXX -- npx -y --package @rubicontv/diviops-mcp diviops-mcp</code>
-					</li>
-					<li>
-						<?php esc_html_e( 'Test: ask Claude Code to', 'diviops-agent' ); ?>
-						<em>&ldquo;Use diviops_meta_ping to verify the MCP is working&rdquo;</em>
-					</li>
-				</ol>
-				<p>
-					<a href="https://diviops.com/docs/" target="_blank" rel="noopener noreferrer" class="button button-secondary"><?php esc_html_e( 'Documentation & Setup Guide', 'diviops-agent' ); ?></a>
-				</p>
+				<footer class="diviops-footer"><?php esc_html_e( 'Divi is a registered trademark of Elegant Themes, Inc. DiviOps Agent is not affiliated with or endorsed by Elegant Themes.', 'diviops-agent' ); ?></footer>
 			</div>
 		</div>
 		<?php
