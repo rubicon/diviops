@@ -10,6 +10,17 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.23.2](https://github.com/rubicon/diviops/compare/v1.23.1...v1.23.2) (2026-09-14)
+
+
+### Bug Fixes
+
+* **#415:** compare list-shaped attrs whole in preset_reassign's strip_inline ([#434](https://github.com/rubicon/diviops/issues/434)) ([cab067c](https://github.com/rubicon/diviops/commit/cab067c5792a764eea79a32d4edcc81dcfe37847))
+* **#417:** merge into the stored variable record and stamp Divi's variableType ([#435](https://github.com/rubicon/diviops/issues/435)) ([6f84c18](https://github.com/rubicon/diviops/commit/6f84c18375c1ed7f06de969287191cbb7723cd6c)), closes [#417](https://github.com/rubicon/diviops/issues/417)
+* **#437:** preserve a variable's order on an upsert instead of recomputing it ([#439](https://github.com/rubicon/diviops/issues/439)) ([ab161aa](https://github.com/rubicon/diviops/commit/ab161aab03cad258ea3c6ff8f66c0965abb435cf)), closes [#437](https://github.com/rubicon/diviops/issues/437)
+* **#443:** hold every gvid- mint and accept point to the charset Divi resolves ([#446](https://github.com/rubicon/diviops/issues/446)) ([5d6fbbc](https://github.com/rubicon/diviops/commit/5d6fbbcaf226abc13a3b936da031429eadab9af9))
+* **#444:** unify variable_create's colour branch onto Divi's eight-key record ([#441](https://github.com/rubicon/diviops/issues/441)) ([386bf03](https://github.com/rubicon/diviops/commit/386bf03bf1dc00c6d6a0da55ac2f95ce7241f111)), closes [#444](https://github.com/rubicon/diviops/issues/444)
+
 ## [1.23.1](https://github.com/rubicon/diviops/compare/v1.23.0...v1.23.1) (2026-09-12)
 
 
