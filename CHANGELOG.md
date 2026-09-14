@@ -10,6 +10,13 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.25.0](https://github.com/rubicon/diviops/compare/v1.24.0...v1.25.0) (2026-09-14)
+
+
+### Features
+
+* **#454:** give render_admin_page() its own manage_options guard ([#456](https://github.com/rubicon/diviops/issues/456)) ([1e14d07](https://github.com/rubicon/diviops/commit/1e14d0778cac8579b6380ab1e0bb94b08082f95d)), closes [#454](https://github.com/rubicon/diviops/issues/454)
+
 ## [1.24.0](https://github.com/rubicon/diviops/compare/v1.23.2...v1.24.0) (2026-09-14)
 
 
