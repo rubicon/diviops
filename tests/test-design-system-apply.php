@@ -323,10 +323,15 @@ assert_same( '4', $kept['gcid-acme-kept']['order'] ?? null, 'and order survives 
 
 et_update_option( 'et_global_data', array( 'global_colors' => array() ) );
 
-// validate_name_prefix() is the gvid-* charset and permits '_'. A gcid may not contain one:
-// Divi's own scanner (DetectFeature.php:138, gcid-[0-9a-z-]*) truncates gcid-my_brand-primary
-// to gcid-my, so the :root custom property is never emitted and the colour silently does not
-// render. Nothing errors anywhere, which is why this has to be refused at write time.
+// A gcid may not contain '_': Divi's own scanner (DetectFeature.php:138,
+// gcid-[0-9a-z-]*) truncates gcid-my_brand-primary to gcid-my, so the :root custom
+// property is never emitted and the colour silently does not render. Nothing errors
+// anywhere, which is why this has to be refused at write time.
+//
+// Since #443 the refusal fires one step earlier — validate_name_prefix() no longer
+// permits '_' either — so this now pins belt-and-braces rather than the only guard.
+// The post-mint validate_global_color_id() check below it is still what catches the
+// 80-char ceiling and the reserved ids, neither of which the namespace check sees.
 $under = diviops_ds_apply( array( 'namespace' => 'my_brand', 'colors' => array(
 	array( 'name' => 'primary', 'value' => '#1B4D8F' ),
 ) ) );

@@ -1107,7 +1107,17 @@ trait DiviOps_Agent_Variable {
 
 		// Non-color types.
 		$raw_id = $request->get_param( 'id' );
-		$id     = '' !== (string) $raw_id ? sanitize_text_field( $raw_id ) : ( $dry_run ? 'gvid-<auto>' : 'gvid-' . wp_generate_password( 8, false ) );
+		// Whether the server minted the ID, tracked structurally rather than by
+		// comparing against the 'gvid-<auto>' placeholder later — a caller can send
+		// that literal string, and a guard that recognised it by value would hand
+		// them the exemption.
+		$server_minted = '' === (string) $raw_id;
+		// strtolower on the generated half is not cosmetic: wp_generate_password()
+		// draws from [a-zA-Z0-9] even with $special_chars=false (WP core,
+		// wp-includes/pluggable.php), and DetectFeature's page scan is
+		// case-sensitive, so a mixed-case ID is emitted into the registry and then
+		// dropped from the page's :root block (#443).
+		$id = ! $server_minted ? sanitize_text_field( $raw_id ) : ( $dry_run ? 'gvid-<auto>' : 'gvid-' . strtolower( wp_generate_password( 8, false ) ) );
 		if ( 0 !== strpos( $id, 'gvid-' ) ) {
 			return self::envelope_error(
 				'invalid_input',
@@ -1116,6 +1126,25 @@ trait DiviOps_Agent_Variable {
 				400,
 				[ 'field' => 'id', 'expected' => "string starting with 'gvid-'", 'received' => $id ]
 			);
+		}
+		// Charset + length, held to the same contract the colour and font writers
+		// enforce. The prefix check above is deliberately kept separate: it carries
+		// the more specific message for the commonest mistake. The only exemption is
+		// the dry-run placeholder this handler mints for itself, which is never
+		// stored; a caller-supplied ID is checked whether or not this is a dry run,
+		// so the plan cannot report an ID the real write would refuse.
+		if ( ! ( $server_minted && $dry_run ) ) {
+			$checked_id = self::validate_global_variable_id( $id );
+			if ( is_wp_error( $checked_id ) ) {
+				return self::envelope_error(
+					'invalid_input',
+					$checked_id->get_error_message(),
+					'Use only [0-9a-z-] after the gvid- prefix, or omit `id` and let the server mint one.',
+					400,
+					[ 'field' => 'id', 'expected' => 'gvid-[0-9a-z-]{1,80}', 'received' => $id ]
+				);
+			}
+			$id = $checked_id;
 		}
 
 		$vars = self::read_divi_global_variables_registry();
@@ -1318,19 +1347,25 @@ trait DiviOps_Agent_Variable {
 	 * Validate a caller-supplied name_prefix against the gvid- ID charset.
 	 *
 	 * Generated IDs follow `gvid-{namespace}-{prefix}-{n}` or
-	 * `gvid-{namespace}-size-{prefix}{n}`. Divi resolves a `var(--gvid-…)`
-	 * reference with `/--(gvid-[a-z0-9\-]+)/i`
-	 * (`GlobalData::resolve_global_variable_value()`, `GlobalData.php:1281`;
-	 * the same pattern again at `GradientUtils.php:755`) and scans page content
-	 * for referenced IDs with `gvid-[0-9a-z-]*` (`DetectFeature.php:138`).
-	 * Anything outside `[a-z0-9-]` truncates the ID silently — the variable is
-	 * created in the registry but $variable() lookups fail to resolve at render
-	 * time. Reject up front rather than letting the silent-render-failure ship.
+	 * `gvid-{namespace}-size-{prefix}{n}`, so whatever this accepts lands
+	 * inside the ID. Divi's extraction strips any chars outside [a-z0-9-]
+	 * silently — the variable is created in the registry but $variable()
+	 * lookups fail to resolve at render time. Reject up front rather than
+	 * letting the silent-render-failure ship.
 	 *
-	 * Accepted charset here is [a-z0-9_-], which is WIDER than either Divi
-	 * extraction class by the underscore. `trait-design-system.php` carries the
-	 * matching note for the colour side, where an underscore in a minted
-	 * `gcid-` truncated against the same character class.
+	 * Charset is [a-z0-9-], matching the suffix rule the sibling writers
+	 * enforce. `_` was accepted until #443 and is not resolvable: see
+	 * `validate_global_variable_id()` for the two Divi extraction sites and
+	 * their measured patterns; `GradientUtils.php:755` is a third reference
+	 * site, a `var(--gvid-` prefix check rather than the same regex. Rejecting rather than normalising `_` to `-`
+	 * is deliberate, for the same reason the namespace guard in
+	 * `variable_create_fluid_system()` states — a silently rewritten name
+	 * aliases one token set onto another, and under overwrite=true rewrites
+	 * tokens the caller never named.
+	 *
+	 * This caps charset only, not length. The 80-char ceiling is enforced on
+	 * the minted ID instead, because it is reached by concatenating namespace
+	 * and prefix and no check on either part alone can see it.
 	 *
 	 * @return string The validated, lowercased prefix, or $default if input is null/empty.
 	 * @throws \InvalidArgumentException if the prefix contains disallowed chars.
@@ -1348,16 +1383,67 @@ trait DiviOps_Agent_Variable {
 			// phpcs:enable WordPress.Security.EscapeOutput.ExceptionNotEscaped
 		}
 		$lower = strtolower( $input );
-		if ( ! preg_match( '/^[a-z0-9_-]+$/', $lower ) ) {
+		if ( ! preg_match( '/^[a-z0-9-]+$/', $lower ) ) {
 			// phpcs:disable WordPress.Security.EscapeOutput.ExceptionNotEscaped -- Exception messages are plain text; dynamic fragments are normalized for log/API readability before interpolation.
 			throw new \DiviOps_Variable_Input_Exception( sprintf(
-				"%s '%s' contains characters outside [a-z0-9-_]. Divi's \$variable() resolver strips disallowed chars silently, so the generated IDs would be created in the registry but fail to resolve at render time. Use only [a-z0-9-_].",
+				"%s '%s' contains characters outside [a-z0-9-]. Divi's \$variable() resolver strips disallowed chars silently, so the generated IDs would be created in the registry but fail to resolve at render time. Use only [a-z0-9-].",
 				self::plain_exception_value( $field_name ),
 				self::plain_exception_value( $input )
 			) );
 			// phpcs:enable WordPress.Security.EscapeOutput.ExceptionNotEscaped
 		}
 		return $lower;
+	}
+
+	/**
+	 * Validate a `gvid-` ID against the charset Divi can actually resolve.
+	 *
+	 * The variable counterpart to `validate_global_color_id()` and
+	 * `validate_global_font_id()`, and deliberately the same suffix rule —
+	 * `[0-9a-z-]{1,80}` — so the three writers into these parallel registries
+	 * cannot disagree about what a legal ID is.
+	 *
+	 * Divi extracts a gvid at two sites, and BOTH have to succeed for the
+	 * variable to render (measured on Divi 5.13):
+	 *
+	 *   - `DetectFeature::_get_global_ids_by_prefix()` builds
+	 *     `'(' . preg_quote( $prefix, '~' ) . '[0-9a-z-]*)'`
+	 *     (FrontEnd/Assets/DetectFeature.php:138) and decides which
+	 *     `:root{--gvid-*}` custom properties the page emits at all.
+	 *   - `GlobalData::resolve_global_variable_value()` matches
+	 *     `/--(gvid-[a-z0-9\-]+)/i` (Packages/GlobalData/GlobalData.php:1281)
+	 *     and resolves the property to its stored value. GradientUtils.php:756
+	 *     carries the identical pattern.
+	 *
+	 * Neither charset contains `_`, and DetectFeature's carries no `/i`, so it
+	 * is case-sensitive where the resolver is not. An out-of-charset ID is cut
+	 * at the first offending character rather than rejected: `gvid-my_brand-x`
+	 * becomes `gvid-my`, which matches no record. Nothing errors — the variable
+	 * is written, reported as created, and never renders. Refusing at write
+	 * time is the only place that failure is visible.
+	 *
+	 * Unlike the two siblings this does NOT auto-prefix a bare suffix.
+	 * `variable_create()` already refuses a missing `gvid-` with its own, more
+	 * specific message, and auto-prefixing here would widen what that handler
+	 * accepts rather than narrowing it.
+	 *
+	 * @param mixed $raw Candidate ID.
+	 * @return string|WP_Error The ID unchanged, or a 400 explaining the refusal.
+	 */
+	private static function validate_global_variable_id( $raw ) {
+		$id     = sanitize_text_field( (string) $raw );
+		$suffix = ( 0 === strpos( $id, 'gvid-' ) ) ? substr( $id, 5 ) : '';
+		if ( ! preg_match( '/^[0-9a-z-]{1,80}$/', $suffix ) ) {
+			return new WP_Error(
+				'invalid_id',
+				sprintf(
+					"Variable ID '%s' must be 'gvid-' followed by 1-80 chars from [0-9a-z-]. Divi's extraction (GlobalData.php:1281, DetectFeature.php:138) truncates anything else silently, so the variable would be stored but never resolve at render time.",
+					$id
+				),
+				[ 'status' => 400 ]
+			);
+		}
+		return $id;
 	}
 
 	/**
@@ -1669,7 +1755,7 @@ trait DiviOps_Agent_Variable {
 				$e->getMessage(),
 				null,
 				400,
-				[ 'field' => 'namespace', 'expected' => '[a-z0-9_-]+', 'received' => $namespace_raw ]
+				[ 'field' => 'namespace', 'expected' => '[a-z0-9-]+', 'received' => $namespace_raw ]
 			);
 		}
 
@@ -1779,6 +1865,23 @@ trait DiviOps_Agent_Variable {
 		// shape: { field, received, conflict, allowed }.
 		$seen = [];
 		foreach ( $plan as $entry ) {
+			// Hold the minted ID to the same contract every other writer into these
+			// registries enforces, rather than trusting that concatenation produced a
+			// legal one — the reasoning design_system_apply() already records for
+			// gcid-. Charset is covered by validate_name_prefix() on each part, but
+			// the 80-char ceiling is reached by joining them and is invisible to any
+			// check on a part alone: a 60-char namespace with a 30-char name_prefix
+			// mints a 93-char suffix (#443).
+			$checked_id = self::validate_global_variable_id( $entry['id'] );
+			if ( is_wp_error( $checked_id ) ) {
+				return self::envelope_error(
+					'invalid_input',
+					$checked_id->get_error_message(),
+					'The ID is derived from namespace + name_prefix + step; shorten either so the result matches gvid-[0-9a-z-]{1,80}.',
+					400,
+					[ 'field' => 'namespace', 'expected' => 'gvid-[0-9a-z-]{1,80}', 'received' => $entry['id'] ]
+				);
+			}
 			if ( isset( $seen[ $entry['id'] ] ) ) {
 				return self::envelope_error(
 					'invalid_input',

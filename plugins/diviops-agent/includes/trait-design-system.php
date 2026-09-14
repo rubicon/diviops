@@ -478,13 +478,14 @@ trait DiviOps_Agent_DesignSystem {
 			// than trusting that concatenation produced a legal one. Two writers to one
 			// registry must not disagree about what a valid id is.
 			//
-			// This catches what the name-level slug cannot: `namespace` is validated by
-			// validate_name_prefix(), which is the gvid-* charset and permits `_`. A
-			// namespace of "my_brand" minted `gcid-my_brand-primary`, which Divi's own
-			// gcid scanner (DetectFeature.php:138, `gcid-[0-9a-z-]*`) truncates to
-			// `gcid-my` — so the :root custom property is never emitted and the colour
-			// silently fails to render. It also enforces the 80-char suffix cap and the
-			// customizer-locked reserved ids, both of which were writable here.
+			// This catches what the name-level slug cannot. A namespace of "my_brand"
+			// minted `gcid-my_brand-primary`, which Divi's own gcid scanner
+			// (DetectFeature.php:138, `gcid-[0-9a-z-]*`) truncates to `gcid-my` — so the
+			// :root custom property is never emitted and the colour silently fails to
+			// render. Since #443 `validate_name_prefix()` refuses `_` too, so that case
+			// is now caught upstream of here; this remains the only check that enforces
+			// the 80-char suffix cap (reached by concatenation, invisible to a check on
+			// either part) and the customizer-locked reserved ids.
 			$checked = self::validate_global_color_id( $id );
 			if ( is_wp_error( $checked ) ) {
 				$err_data = (array) $checked->get_error_data();
