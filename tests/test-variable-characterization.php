@@ -698,7 +698,7 @@ assert_true( ! isset( $refs['all_ids']['gvid-ignored'] ), 'buckets other than mo
 //
 // Every call here passes a `type`, because an unfiltered list reads the colours
 // bucket through the absent et_get_option(). The seven valid types come from
-// Divi's own store: GlobalData::get_global_variables() (GlobalData.php:921-929)
+// Divi's own store: GlobalData::get_global_variables() (GlobalData.php:922-930)
 // per variable-bindings.md's "Storage buckets" section.
 
 diviops_variable_reset();
@@ -1436,14 +1436,22 @@ assert_same(
 	'a variable create reports a site-wide cache result'
 );
 $record = diviops_variable_record( 'strings', 'gvid-tag' );
+// Eight keys since #417, not the seven this line pinned before it. `variableType`
+// is Divi's own field — the Visual Builder's global-data.js reducer writes
+// `variableType: <bucket>` onto every global variable it stores, and Divi reads it
+// back in module-utils.js (image inlining) and ai-agent.js (variable metadata) —
+// and this handler never set it, so every variable the fork made was missing a key
+// Divi's PHP does not backfill. The expectation below is the deliberate update that
+// marker anticipates, not a regression.
 assert_same(
-	array( 'id', 'label', 'value', 'order', 'status', 'lastUpdated', 'type' ),
+	array( 'id', 'label', 'value', 'order', 'status', 'lastUpdated', 'type', 'variableType' ),
 	array_keys( (array) $record ),
-	'the stored record carries seven keys in this order'
+	'the stored record carries eight keys in this order (#417)'
 );
 assert_same( 1, $record['order'], 'the first entry in an empty bucket is order 1' );
 assert_same( 'active', $record['status'], 'a created variable is active' );
 assert_same( 'strings', $record['type'], 'the record carries its bucket as `type`, redundantly with the array key' );
+assert_same( 'strings', $record['variableType'], "the record also carries Divi's own variableType, which the VB reads (#417)" );
 assert_true(
 	1 === preg_match( '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/', (string) $record['lastUpdated'] ),
 	'lastUpdated is an ISO-8601 UTC stamp with milliseconds'
@@ -1493,16 +1501,21 @@ assert_same( true, $data['ok'], 'a structured gradient creates without a `value`
 assert_true( false !== strpos( (string) $data['data']['value'], '"name":"gradient"' ), 'the stored gradient value is the definition-form token' );
 
 // QUIRK: create is an unconditional upsert. An id that already exists is
-// overwritten with no conflict, and its `order` is reassigned to max+1 rather
-// than preserved — the behaviour that motivated variable_update (#25). Every
-// other create-shaped handler in this plugin reports a conflict instead.
+// overwritten with no conflict — the behaviour that motivated variable_update
+// (#25). Every other create-shaped handler in this plugin reports a conflict
+// instead.
+//
+// `order` is no longer part of that quirk. #437 made the upsert keep the stored
+// position, deliberately inverting the assertion below, which pinned the
+// reassignment as-is. The `gvid-other` sibling seeded at order 9 is what gives
+// the assertion its teeth: preserving reports 1, recomputing reports max+1 = 10.
 diviops_variable_reset();
 diviops_variable_seed( 'strings', 'gvid-dup', array( 'label' => 'Original', 'value' => 'first', 'order' => 1 ) );
 diviops_variable_seed( 'strings', 'gvid-other', array( 'label' => 'Other', 'value' => 'x', 'order' => 9 ) );
 $resp = diviops_call( 'variable_create', array( diviops_variable_request( array( 'type' => 'strings', 'label' => 'Replacement', 'value' => 'second', 'id' => 'gvid-dup' ) ) ) );
 assert_same( true, $resp->get_data()['ok'], 'QUIRK: creating an existing id succeeds instead of reporting a conflict' );
 assert_same( 'second', diviops_variable_record( 'strings', 'gvid-dup' )['value'] ?? null, 'QUIRK: the existing record is overwritten' );
-assert_same( 10, diviops_variable_record( 'strings', 'gvid-dup' )['order'] ?? null, 'QUIRK: the overwrite reassigns order to max+1, losing the original position' );
+assert_same( 1, diviops_variable_record( 'strings', 'gvid-dup' )['order'] ?? null, 'the overwrite keeps the original position instead of reassigning order to max+1 (#437)' );
 
 // ── variable_create_fluid_system ──────────────────────────────────────────
 

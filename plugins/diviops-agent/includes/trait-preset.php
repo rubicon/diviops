@@ -754,10 +754,10 @@ trait DiviOps_Agent_Preset {
 	 * Divi 5.3.0+ stores chain refs in two distinct shapes depending on the bucket:
 	 * - Module-bucket presets: TOP-LEVEL `preset.groupPresets.<slot>.presetId` (plural).
 	 *   Matches the REST schema at `GlobalPresetController.php:309` (declared as sibling of
-	 *   `attrs`/`renderAttrs`/`styleAttrs`) and the reader path in `GlobalPreset.php:1486, 2274`.
+	 *   `attrs`/`renderAttrs`/`styleAttrs`) and the reader path in `GlobalPreset.php:1626, 2414`.
 	 *   The VB bundle's `generateNewPreset` assigns `m.groupPresets = i` at the preset root.
 	 * - Group-bucket presets: NESTED `preset.attrs.groupPreset.<slot>.presetId` (singular).
-	 *   Matches the reader at `GlobalPreset.php:1510, 2394` and the VB bundle's
+	 *   Matches the reader at `GlobalPreset.php:1650, 2534` and the VB bundle's
 	 *   `extractGroupPresetsFromAttrs` which reads `e?.groupPreset` off the attrs bag.
 	 *
 	 * Without walking both shapes, every chain-only group preset (font, border, box-shadow,
@@ -3002,10 +3002,10 @@ trait DiviOps_Agent_Preset {
 	 * Parity with Divi's render path — matches `GlobalPreset::get_selected_group_presets()` +
 	 * `GlobalPreset::get_merged_attrs()`:
 	 *   - Runs runtime preset migration via `_maybe_runtime_migrate_preset_data` before constructing
-	 *     the item (Divi does this at both `GlobalPreset.php:2485` and `:2518`). Older-shape presets
+	 *     the item (Divi does this at both `GlobalPreset.php:2644` and `:2677`). Older-shape presets
 	 *     get migrated to canonical paths so strip compares against the actual rendered tree.
 	 *   - Merges all three bags — `styleAttrs + attrs + renderAttrs` — because `get_merged_attrs()`
-	 *     at `GlobalPreset.php:3179` merges group presets' renderAttrs into the final bag alongside
+	 *     at `GlobalPreset.php:3331` merges group presets' renderAttrs into the final bag alongside
 	 *     attrs; fields stored only in renderAttrs still override module inline and must be stripped.
 	 *
 	 * Results are cached per-request keyed by preset UUID + target module + slot — the resolver is
@@ -3040,7 +3040,7 @@ trait DiviOps_Agent_Preset {
 
 		try {
 			// Parity step 1 — runtime migration. Divi always runs this before constructing the item
-			// (see GlobalPreset.php:2485 and :2518). Skipping it would compare against stale paths on
+			// (see GlobalPreset.php:2644 and :2677). Skipping it would compare against stale paths on
 			// sites carrying pre-5.3.0 preset shapes (FocusFields, ComposibleOptions, PresetStack).
 			$migrated = $new_entry;
 			try {
@@ -3109,6 +3109,18 @@ trait DiviOps_Agent_Preset {
 	 * Recursively remove attrs from $inline that are deep-equal to the value in $preset at the same path.
 	 * Preserves unrelated branches. Top-level reserved keys (meta, modulePreset, etc.) are always preserved
 	 * so preset_reassign never strips identity/binding data even if a caller wrote matching values into the preset.
+	 *
+	 * List-shaped values are compared WHOLE and never walked per index (#415). Divi does not merge
+	 * list attrs positionally: `ArrayUtility::get_mergeable_array_fields()` declares
+	 * `module.decoration.attributes` mergeable on the unique-key pair (`name`, `targetElement`), and
+	 * `merge_array_by_unique_keys()` matches a module row to a preset row by that pair, never by index.
+	 * Walking the list by key therefore deletes whichever keys an inline row happens to share with the
+	 * unrelated preset row sitting at the same position — for a Custom Attributes CSS-class row that
+	 * pair is exactly `name` and `targetElement`, and a row with no `name` is dropped outright by
+	 * `AttributeUtils::separate_attributes_by_target_element()`, so the module's local class was lost
+	 * from storage and from the frontend. A partial strip also left a numeric gap, turning the list
+	 * into a JSON object. `merge_module_attr_value()` in trait-page.php refuses list merging for the
+	 * same reason; this is the read-side half of that rule.
 	 */
 	private static function _strip_redundant_inline_attrs( $inline, $preset, bool $is_root = true ) {
 		if ( ! is_array( $inline ) || ! is_array( $preset ) ) {
@@ -3123,6 +3135,12 @@ trait DiviOps_Agent_Preset {
 				continue;
 			}
 			if ( is_array( $val ) && is_array( $preset[ $key ] ) ) {
+				if ( self::is_list_like_array( $val ) || self::is_list_like_array( $preset[ $key ] ) ) {
+					if ( $val === $preset[ $key ] ) {
+						unset( $inline[ $key ] );
+					}
+					continue;
+				}
 				$inline[ $key ] = self::_strip_redundant_inline_attrs( $val, $preset[ $key ], false );
 				if ( is_array( $inline[ $key ] ) && empty( $inline[ $key ] ) ) {
 					unset( $inline[ $key ] );

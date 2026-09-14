@@ -1112,7 +1112,7 @@ assert_same(
 // This predicate decides what the cache sweeps are allowed to unlink, so a
 // change that widens it deletes files Divi did not write. It mirrors Divi's own
 // ET_Core_PageResource::_is_valid_divi_css_file, which reads (verbatim, from
-// wp-content/themes/Divi/core/components/PageResource.php:1694-1696):
+// wp-content/themes/Divi/core/components/PageResource.php:1699-1700):
 //
 //     $basename = basename( $file_path );
 //     return strpos( $basename, 'et-' ) === 0
@@ -1151,7 +1151,7 @@ foreach ( $css_cases as $basename => $expected ) {
 		$expected,
 		diviops_call_static( 'is_divi_css_basename', array( $basename ) ),
 		sprintf(
-			'is_divi_css_basename(%s) is %s, matching Divi\'s _is_valid_divi_css_file (PageResource.php:1694)',
+			'is_divi_css_basename(%s) is %s, matching Divi\'s _is_valid_divi_css_file (PageResource.php:1698)',
 			var_export( $basename, true ),
 			$expected ? 'true' : 'false'
 		)
@@ -1161,7 +1161,7 @@ foreach ( $css_cases as $basename => $expected ) {
 // ══ F. dynamic_assets_postmeta_keys — the opt-in second key ══════════════
 //
 // Both key names are Divi's, listed together in
-// ET_Core_PageResource::clear_post_meta_caches (PageResource.php:1622-1631).
+// ET_Core_PageResource::clear_post_meta_caches (PageResource.php:1627-1635).
 // The plugin deletes only the first by default because the canvas key is only
 // appropriate when canvas / off-canvas references are affected.
 

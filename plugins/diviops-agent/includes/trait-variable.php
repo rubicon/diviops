@@ -1039,13 +1039,54 @@ trait DiviOps_Agent_Variable {
 			// get_customizer_color_count() for rationale.
 			$max_order = max( self::get_customizer_color_count(), $max_order );
 
-			$colors[ $id ] = [
-				'color'       => $color,
-				'status'      => 'active',
-				'label'       => $label,
-				'order'       => (string) ( $max_order + 1 ),
-				'lastUpdated' => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
-			];
+			// MERGE, never replace (#417) — the same defect global_color_upsert
+			// carried until #380, in a second writer to the same storage. Every
+			// one of the 103 live `gcid-*` records on staging carries `id`,
+			// `folder` and `usedInPosts`, none of which this literal enumerates,
+			// so an upsert onto an existing colour destroyed all three. Merging
+			// keeps them, and keeps whatever a future Divi release adds.
+			//
+			// `$existing_color` is [] for a create, so a new colour still starts
+			// clean rather than inheriting from a sibling. The computed keys below
+			// are this write's payload and deliberately win over the stored copy.
+			//
+			// `order` is the exception (#437). It is the colour's sort position in
+			// the Variable Manager, not this write's data, so an upsert keeps the
+			// stored value and only a genuine create mints max(order)+1. Recomputing
+			// it moved every edited colour to the end of the palette, and the tool
+			// exposes no `order` parameter to put it back. Cast to string because
+			// Divi's colour store holds it as one: all 103 live `gcid-*` records on
+			// staging carry a string `order`.
+			$existing_color = is_array( $colors[ $id ] ?? null ) ? $colors[ $id ] : [];
+
+			// The remaining three keys complete Divi's eight-key colour record (#444).
+			// The five above matched no Divi writer: all three of Divi's PHP colour writers
+			// emit `folder` and `usedInPosts` (GlobalData.php:155-165, :402-410, :500-521),
+			// and design_system_apply() already mints all eight. Nothing reads `id` back off
+			// the record — every reader derives it from the array key — so this is shape
+			// parity with the sibling writers, not a fix for anything observable (#438).
+			//
+			// `folder` and `usedInPosts` are read forward from the stored record rather than
+			// seeded flat. A payload key wins over `$existing_color`, so a flat `''` would
+			// blank a Divi-written folder and a flat `[]` would destroy Divi's reference
+			// index on every upsert — #380 reintroduced through the keys added for parity.
+			// `usedInPosts` must stay an array, not merely present: Divi's
+			// sanitize_global_colors_data() runs array_map() over that key unconditionally.
+			$colors[ $id ] = array_merge(
+				$existing_color,
+				[
+					'id'          => $id,
+					'color'       => $color,
+					'status'      => 'active',
+					'label'       => $label,
+					'order'       => (string) ( $existing_color['order'] ?? $max_order + 1 ),
+					'lastUpdated' => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
+					'folder'      => $existing_color['folder'] ?? '',
+					'usedInPosts' => isset( $existing_color['usedInPosts'] ) && is_array( $existing_color['usedInPosts'] )
+						? $existing_color['usedInPosts']
+						: [],
+				]
+			);
 
 			$global_data['global_colors'] = $colors;
 			et_update_option( 'et_global_data', $global_data );
@@ -1151,15 +1192,38 @@ trait DiviOps_Agent_Variable {
 			);
 		}
 
-		$vars[ $type ][ $id ] = [
-			'id'          => $id,
-			'label'       => $label,
-			'value'       => $sanitized_value,
-			'order'       => $max_order + 1,
-			'status'      => 'active',
-			'lastUpdated' => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
-			'type'        => $type,
-		];
+		// MERGE, never replace (#417). The literal below does not enumerate
+		// `variableType`, which Divi's Visual Builder stamps on every global
+		// variable it stores — `global-data.js`'s reducer writes
+		// `variableType: <bucket>` — so an upsert onto a VB-made id stripped it.
+		// It is read back: `module-utils.js` gates image inlining on
+		// `"images" === e.variableType`, and `ai-agent.js` reports it in variable
+		// metadata. Divi's PHP never writes it, so nothing backfills it.
+		// Measured on staging (Divi 5.12.1): of 164 live `gvid-*` records, 53
+		// carry `variableType` and its value is always the bucket name.
+		//
+		// `$existing_var` is [] for a create, so a new variable starts clean.
+		// The payload keys win over the stored copy; everything else survives.
+		//
+		// `order` is the exception (#437), for the reason the colour branch above
+		// gives. This is the same shape variable_create_fluid_system already wrote
+		// into the identical `numbers` bucket — `(int) ( $existing_entry['order']
+		// ?? … )` — so the two writers into this storage now agree on the field.
+		$existing_var = is_array( $vars[ $type ][ $id ] ?? null ) ? $vars[ $type ][ $id ] : [];
+
+		$vars[ $type ][ $id ] = array_merge(
+			$existing_var,
+			[
+				'id'           => $id,
+				'label'        => $label,
+				'value'        => $sanitized_value,
+				'order'        => (int) ( $existing_var['order'] ?? $max_order + 1 ),
+				'status'       => 'active',
+				'lastUpdated'  => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
+				'type'         => $type,
+				'variableType' => $type,
+			]
+		);
 
 		self::write_divi_global_variables_registry( $vars );
 
@@ -1292,7 +1356,8 @@ trait DiviOps_Agent_Variable {
 	 * Charset is [a-z0-9-], matching the suffix rule the sibling writers
 	 * enforce. `_` was accepted until #443 and is not resolvable: see
 	 * `validate_global_variable_id()` for the two Divi extraction sites and
-	 * their measured patterns. Rejecting rather than normalising `_` to `-`
+	 * their measured patterns; `GradientUtils.php:755` is a third reference
+	 * site, a `var(--gvid-` prefix check rather than the same regex. Rejecting rather than normalising `_` to `-`
 	 * is deliberate, for the same reason the namespace guard in
 	 * `variable_create_fluid_system()` states — a silently rewritten name
 	 * aliases one token set onto another, and under overwrite=true rewrites
@@ -1881,15 +1946,25 @@ trait DiviOps_Agent_Variable {
 				? (int) ( $existing_entry['order'] ?? ++$max_order )
 				: ++$max_order;
 
-			$vars['numbers'][ $id ] = [
-				'id'          => $id,
-				'label'       => $label,
-				'value'       => $value,
-				'order'       => $order,
-				'status'      => 'active',
-				'lastUpdated' => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
-				'type'        => 'numbers',
-			];
+			// MERGE, never replace, and stamp `variableType` (#417) — the same
+			// treatment variable_create's own write gets. This is the second
+			// writer into the identical `numbers` bucket, and an overwrite=true
+			// run onto a Visual-Builder-made id stripped every key not listed
+			// below, `variableType` included. `$existing_entry` is null for a
+			// create, so a fresh variable still inherits nothing.
+			$vars['numbers'][ $id ] = array_merge(
+				$exists ? $existing_entry : [],
+				[
+					'id'           => $id,
+					'label'        => $label,
+					'value'        => $value,
+					'order'        => $order,
+					'status'       => 'active',
+					'lastUpdated'  => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
+					'type'         => 'numbers',
+					'variableType' => 'numbers',
+				]
+			);
 			$created[] = [
 				'id'        => $id,
 				'value'     => $value,
@@ -2472,7 +2547,7 @@ trait DiviOps_Agent_Variable {
 	 * Detect numeric/font variable IDs (gvid-*) the page actually emits.
 	 *
 	 * Mirrors the same content-stack assembly Divi performs at frontend render
-	 * (FrontEnd.php:628-675) so the result matches the variable IDs Divi 5.4.0+
+	 * (FrontEnd.php:637-696) so the result matches the variable IDs Divi 5.4.0+
 	 * uses to scope selective `:root{--gvid-*}` emission via
 	 * `Style::get_global_numeric_and_fonts_vars_style($ids)`:
 	 *
@@ -2501,7 +2576,7 @@ trait DiviOps_Agent_Variable {
 	 * Canvas-portal IDs are extracted directly from the assembled stack with
 	 * `DynamicAssetsUtils::extract_canvas_portal_canvas_ids_from_content()`
 	 * because the same util's cached `canvas_portal_ids` field is also gated
-	 * on `is_cacheable_request` (DynamicAssetsUtils.php:2736-2772) and would
+	 * on `is_cacheable_request` (DynamicAssetsUtils.php:3017-3050) and would
 	 * be empty in REST.
 	 *
 	 * NOTE: gvid-* only. Color variables (gcid-*) are emitted via a separate
@@ -2545,9 +2620,9 @@ trait DiviOps_Agent_Variable {
 		}
 
 		// Build the combined main content: post_content + each TB template's
-		// post_content, space-joined. This matches `FrontEnd.php:640-653`
+		// post_content, space-joined. This matches `FrontEnd.php:655-668`
 		// exactly and is the same string Divi passes as `$main_content` to
-		// `get_all_appended_canvas_content_for_post_and_templates()` at line 658.
+		// `get_all_appended_canvas_content_for_post_and_templates()` at line 673.
 		// Critically, this combined string — not a per-owner one — is what
 		// every owner needs so interaction-target discovery is identical to
 		// the frontend, and so the canvas-data static cache gets seeded
@@ -2607,30 +2682,30 @@ trait DiviOps_Agent_Variable {
 		// per owner BEFORE any other canvas helper runs for that owner.
 		// `get_canvas_content_for_appended()` internally calls
 		// `get_all_canvas_data_for_post($owner_id)` with an empty main_content
-		// (OffCanvasHooks.php:2892), which would write the static cache
+		// (OffCanvasHooks.php:3364), which would write the static cache
 		// (keyed both by content-hash and by base "post_id_md5('')") with
 		// `interaction_targets => []` — empty seed, no targets discoverable.
 		// `get_canvas_content_for_targets()` later reads the same base key
 		// (it also passes empty main_content) and would find no targets.
 		// Seeding first with the same combined main Divi uses populates the
 		// cache with `interaction_targets` so the later targets call works.
-		// See DynamicAssetsUtils.php:2937-2965 (interaction_targets build) and
-		// :2990-2995 (dual-key cache write).
+		// See DynamicAssetsUtils.php:3219-3242 (interaction_targets build) and
+		// :3269-3274 (dual-key cache write).
 		//
 		// Canvas portal IDs need to be extracted ourselves: that same util's
 		// `canvas_portal_ids` field is also gated behind `is_cacheable_request`
-		// (DynamicAssetsUtils.php:2736-2772), so the cached `canvas_data`
+		// (DynamicAssetsUtils.php:3017-3050), so the cached `canvas_data`
 		// returns an empty array for that field in REST. We walk the combined
 		// main content with `extract_canvas_portal_canvas_ids_from_content()`
 		// + recursive expansion via `get_canvas_content_for_canvas_portals()`,
-		// matching the full pipeline at OffCanvasHooks.php:3004-3047 (incl.
-		// the 10-iteration safety cap for nested portals).
+		// matching the full pipeline at OffCanvasHooks.php:3476-3519 (incl.
+		// the 10-iteration safety cap for nested portals at :3492-3502).
 		//
 		// Interaction targets are extracted from `$combined_main` (matching
-		// what Divi passes at OffCanvasHooks.php:3070/3087 — same combined
+		// what Divi passes at OffCanvasHooks.php:3542/3559 — same combined
 		// string for every owner) and filtered through
 		// `canvas_block_content_contains_target` to drop targets already
-		// satisfied on the main canvas (matches OffCanvasHooks.php:2980-3002).
+		// satisfied on the main canvas (matches OffCanvasHooks.php:3452-3474).
 		if ( class_exists( '\\ET\\Builder\\VisualBuilder\\OffCanvas\\OffCanvasHooks' ) ) {
 			$canvas_owner_ids = array_values( array_unique( array_merge( [ $post_id ], $tb_template_ids ) ) );
 
@@ -2651,7 +2726,7 @@ trait DiviOps_Agent_Variable {
 
 			// Pre-seed the portal IDs that come from the combined main content
 			// (matches Divi's `canvas_data['canvas_portal_ids']` which is built
-			// from main + TB content at DynamicAssetsUtils.php:2749-2771). Same
+			// from main + TB content at DynamicAssetsUtils.php:3026-3049). Same
 			// for every owner since the main is the same.
 			$shared_portal_ids_from_main = [];
 			if ( false !== strpos( $combined_main, 'canvas-portal' ) ) {
@@ -2665,10 +2740,10 @@ trait DiviOps_Agent_Variable {
 				\ET\Builder\FrontEnd\Assets\DynamicAssetsUtils::get_all_canvas_data_for_post( $owner_id, $combined_main );
 
 				// Per-owner local buffer — Divi's `get_all_appended_canvas_content`
-				// uses a fresh `$all_canvas_content` per owner (line 2969) and
+				// uses a fresh `$all_canvas_content` per owner (line 3441) and
 				// expands portals only from THAT buffer + the canvas_data's main-
 				// derived portal IDs, calling `get_canvas_content_for_canvas_portals(
-				// $ids, $owner_id)` against THIS owner's $post_id (line 3033).
+				// $ids, $owner_id)` against THIS owner's $post_id (line 3505).
 				// Sharing portal-ID extraction across owners via the global
 				// $content_stack would resolve a same-named portal ID against the
 				// wrong owner and over-include canvases the frontend would not
@@ -2692,7 +2767,7 @@ trait DiviOps_Agent_Variable {
 				// Canvas-portal expansion (recursive, capped). Seed from the
 				// shared main-derived IDs + portals discovered inside this
 				// OWNER's local appended/interaction buffer — matches the
-				// merge at OffCanvasHooks.php:3009-3017.
+				// merge at OffCanvasHooks.php:3481-3489.
 				$portal_ids_from_owner_buffer = [];
 				if ( '' !== $owner_canvas_content && false !== strpos( $owner_canvas_content, 'canvas-portal' ) ) {
 					$portal_ids_from_owner_buffer = \ET\Builder\FrontEnd\Assets\DynamicAssetsUtils::extract_canvas_portal_canvas_ids_from_content( $owner_canvas_content );
