@@ -87,3 +87,73 @@ assert_true(
 		|| ! in_array( 'diviops-server', (array) $server['exclude-paths'], true ),
 	'the diviops-server package does not exclude its own path'
 );
+
+/*
+ * #402: a merged SINGLE release PR builds zero releases, and the fix is config.
+ *
+ * With both packages sharing one release PR, release-please titles it
+ * `chore: release main` — a title carrying no component. On merge it parses the
+ * component back as `undefined` and rejects the PR for BOTH configured paths:
+ *
+ *   PR component: undefined does not match configured component: diviops-agent
+ *   PR component: undefined does not match configured component: mcp-server
+ *
+ * Zero releases are built, no tag is cut, and `autorelease: pending` is left on
+ * the merged PR — which aborts every later run before the tag-creating step, so
+ * the state cannot clear itself. Eight occurrences, and the ninth (v1.23.2) was
+ * PREDICTED in advance from the pattern below and failed exactly as predicted:
+ * every release carrying only ONE of the two packages failed, and every release
+ * cut alongside the other succeeded.
+ *
+ * `separate-pull-requests` gives each package its own release PR, whose title
+ * therefore carries that package's component and parses back to it.
+ *
+ * This asserts the setting is present AND strictly boolean true, because
+ * release-please reads a JSON `"true"` string as a plain truthy value in some
+ * paths and silently as absent in others — a stringly-typed flag here would
+ * restore the bug while looking correct.
+ */
+assert_true(
+	array_key_exists( 'separate-pull-requests', $config ),
+	'the config sets separate-pull-requests so each package gets its own release PR (#402)'
+);
+
+assert_same(
+	true,
+	isset( $config['separate-pull-requests'] ) ? $config['separate-pull-requests'] : null,
+	'separate-pull-requests is boolean true, not a truthy string or number (#402)'
+);
+
+/*
+ * Separate PRs only disambiguate if the two packages resolve to DIFFERENT
+ * component identities. If both resolved to the same one, the per-package PRs
+ * would carry the same title and the component would be ambiguous again.
+ */
+$root_component   = isset( $root['component'] ) ? $root['component'] : $root['package-name'];
+$server_component = isset( $server['component'] ) ? $server['component'] : $server['package-name'];
+
+assert_true(
+	is_string( $root_component ) && '' !== $root_component,
+	'the root package resolves to a non-empty component identity'
+);
+assert_true(
+	$root_component !== $server_component,
+	sprintf( 'the two packages resolve to distinct components ("%s" vs "%s")', $root_component, $server_component )
+);
+
+/*
+ * The fix must not change what the tags are called. `publish.yaml` triggers on
+ * `release: published` but guards on the `mcp-server-v` prefix, and branch
+ * protection plus the #402 recovery recipe both assume the root tags as plain
+ * `vX.Y.Z`. Changing PR grouping must leave both tag shapes alone.
+ */
+assert_same(
+	false,
+	isset( $config['include-component-in-tag'] ) ? $config['include-component-in-tag'] : null,
+	'the root still tags as vX.Y.Z (include-component-in-tag stays false at top level)'
+);
+assert_same(
+	true,
+	isset( $server['include-component-in-tag'] ) ? $server['include-component-in-tag'] : null,
+	'the server still tags as mcp-server-vX.Y.Z, which publish.yaml guards on'
+);
