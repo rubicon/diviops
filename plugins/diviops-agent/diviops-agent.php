@@ -2682,6 +2682,9 @@ class DiviOps_Agent {
 	}
 
 	public static function render_admin_page() {
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'You do not have permission to view this dashboard.', 'diviops-agent' ) );
+		}
 		$divi_active   = function_exists( 'et_get_option' );
 		$divi_version  = $divi_active && defined( 'ET_BUILDER_PRODUCT_VERSION' ) ? ET_BUILDER_PRODUCT_VERSION : null;
 		$rest_url      = rest_url( self::REST_NAMESPACE );
