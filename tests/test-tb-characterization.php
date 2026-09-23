@@ -113,12 +113,25 @@ assert_same( 400, $response->get_status(), 'a non-positive source_id is a 400' )
 assert_same( 'source_id', $body['error']['data']['field'] ?? null, 'the refusal names the offending field' );
 
 diviops_tbc_post( 5400, '', 'et_header_layout', 'Site Header' );
+// tb_body_layout is a supported kind since #472, so asking for one and handing
+// over a HEADER layout now fails the post-type check rather than the kind gate.
+// The refusal moved from invalid_input to not_found, which is the more accurate
+// of the two: the kind is fine, the post is not that kind.
 $body = diviops_tbc_call(
 	'cross_env_source_export_get',
 	array( 'source_id' => 5400, 'source_kind' => 'tb_body_layout' )
 )->get_data();
-assert_same( 'invalid_input', $body['error']['code'] ?? null, 'only header and footer kinds are exportable' );
-assert_same( 'tb_body_layout', $body['error']['data']['received'] ?? null, 'the refusal echoes the rejected kind' );
+assert_same( 'not_found', $body['error']['code'] ?? null, 'a supported kind with a wrong-type post is not_found, not an invalid kind' );
+
+// The kind gate itself still exists and still echoes what it rejected — proven
+// with a kind that really is unsupported, so widening the map did not quietly
+// remove the gate along with the limit.
+$body = diviops_tbc_call(
+	'cross_env_source_export_get',
+	array( 'source_id' => 5400, 'source_kind' => 'tb_sidebar_layout' )
+)->get_data();
+assert_same( 'invalid_input', $body['error']['code'] ?? null, 'an unsupported source kind is still refused' );
+assert_same( 'tb_sidebar_layout', $body['error']['data']['received'] ?? null, 'the refusal echoes the rejected kind' );
 
 diviops_tbc_post( 5401, '', 'page', 'Not a layout' );
 $response = diviops_tbc_call( 'cross_env_source_export_get', array( 'source_id' => 5401 ) );
@@ -193,12 +206,19 @@ $body     = $response->get_data();
 assert_same( 'invalid_input', $body['error']['code'] ?? null, 'target context refuses a non-positive destination_id' );
 assert_same( 'destination_id', $body['error']['data']['field'] ?? null, 'the refusal names destination_id' );
 
+// Same move as the source-export pair above (#472).
 $body = diviops_tbc_call(
 	'cross_env_target_context_get',
 	array( 'destination_id' => 5400, 'destination_kind' => 'tb_body_layout' )
 )->get_data();
-assert_same( 'invalid_input', $body['error']['code'] ?? null, 'target context supports header and footer kinds only' );
-assert_same( 'tb_body_layout', $body['error']['data']['received'] ?? null, 'the refusal echoes the rejected kind' );
+assert_same( 'not_found', $body['error']['code'] ?? null, 'a supported kind with a wrong-type destination is not_found' );
+
+$body = diviops_tbc_call(
+	'cross_env_target_context_get',
+	array( 'destination_id' => 5400, 'destination_kind' => 'tb_sidebar_layout' )
+)->get_data();
+assert_same( 'invalid_input', $body['error']['code'] ?? null, 'an unsupported destination kind is still refused' );
+assert_same( 'tb_sidebar_layout', $body['error']['data']['received'] ?? null, 'the refusal echoes the rejected kind' );
 
 $response = diviops_tbc_call( 'cross_env_target_context_get', array( 'destination_id' => 5401 ) );
 assert_same( 'not_found', $response->get_data()['error']['code'] ?? null, 'a wrong-type destination is not_found' );
@@ -249,16 +269,19 @@ assert_same(
 );
 assert_same( 77, $candidates[0]['source_attachment_id'] ?? null, 'a single source id is attributed onto the candidate' );
 
-// DEFECT, pinned as-is. The candidate is proven by an exact upload-path match,
-// but the bare-filename hint is queried afterwards, resolves the same
-// attachment, and overwrites the row under the same `id|path` key — so the
-// evidence label degrades to the weaker `target_basename_exact`. Because
-// sourceHintsFromPayload() always sends a filename alongside the path, the
-// stronger proof is never reported in practice.
+// The exact upload-path hint is resolved first and its proof survives (#356).
+// Previously the bare-filename hint was queried afterwards, resolved the same
+// attachment, and overwrote the row under the same `id|path` key — degrading the
+// label to the weaker `target_basename_exact`. Since sourceHintsFromPayload()
+// always sends a filename alongside the path, that degradation happened on every
+// real request and the stronger proof was never reported in practice, even
+// though the code computed it. The two-pass narrowing resolves upload_path hints
+// first, records each basename an exact hint proved, and skips the fallback hint
+// for a basename already proven.
 assert_same(
-	'target_basename_exact',
+	'target_upload_path_exact',
 	$candidates[0]['proof'] ?? null,
-	'DEFECT: a later basename hint overwrites the exact-upload-path proof'
+	'an exact upload-path proof is not overwritten by a later bare-basename hint for the same basename'
 );
 
 $path_only = diviops_call_static(
@@ -277,23 +300,98 @@ assert_same(
 
 $remaps = diviops_call_static( 'cross_env_attachment_remaps', array( $candidates, $hints['source_ids'] ) );
 assert_same(
-	array( '77' => array( 'target_id' => 5402, 'proof' => 'target_basename_exact' ) ),
+	array( '77' => array( 'target_id' => 5402, 'proof' => 'target_upload_path_exact' ) ),
 	$remaps,
 	'a unique candidate plus a single source id emits one remap carrying the candidate proof'
 );
 
-// DEFECT, pinned as-is. A second attachment sharing the basename in a different
-// month is reachable only through the bare-filename hint, but it still lands in
-// the candidate set even though the exact upload-path hint already identified
-// exactly one attachment. Two target ids then suppress the remap entirely, and
-// the preflight reports missing_remap for an asset it could have proven.
+// A second attachment sharing the basename in a different month is reachable
+// only through the bare-filename hint (#356). It no longer joins the candidate
+// set, because the exact upload-path hint already proved that basename. Before
+// the narrowing it did join, two target ids suppressed the remap entirely —
+// cross_env_attachment_remaps() emits nothing unless exactly one target id
+// survives — and the preflight reported missing_remap for an asset it could have
+// proven.
+//
+// This is the assertion that makes the narrowing worth taking rather than a
+// cosmetic relabel: the case below is a REAL remap recovered, not a stronger
+// word for one that already worked.
 diviops_tbc_attachment( 5404, '2023/01/hero.jpg' );
 $dup_candidates = diviops_call_static( 'cross_env_attachment_candidates', array( $hints['assets'], $hints['source_ids'] ) );
-assert_same( 2, count( $dup_candidates ), 'DEFECT: a duplicate basename in another folder joins the candidate set' );
+assert_same( 1, count( $dup_candidates ), 'a duplicate basename in another folder is excluded once an exact upload path has proven that basename' );
+assert_same(
+	5402,
+	$dup_candidates[0]['id'] ?? null,
+	'and the surviving candidate is the one the exact upload path identified, not the duplicate'
+);
+assert_same(
+	array( '77' => array( 'target_id' => 5402, 'proof' => 'target_upload_path_exact' ) ),
+	diviops_call_static( 'cross_env_attachment_remaps', array( $dup_candidates, $hints['source_ids'] ) ),
+	'so the remap the exact upload path had already proven still emits'
+);
+
+// The narrowing keys on what an exact hint PROVED, never on the hint merely
+// being present — and this is the case that distinguishes the two.
+//
+// It is also the feature's primary use case rather than a corner: a page moved
+// between environments references `/wp-content/uploads/2024/05/hero.jpg`, and
+// the target holds the same file under a different month because it was
+// uploaded on a different day. The exact upload-path hint matches nothing; the
+// bare-filename fallback is the entire reason a remap can still be proven.
+//
+// Recording the basename for an upload_path hint that resolved NOTHING would
+// suppress that fallback and return zero candidates. The suite passed that
+// mutation until this block existed.
+$GLOBALS['diviops_test_posts'][5402]     = null;
+unset( $GLOBALS['diviops_test_posts'][5402] );
+$GLOBALS['diviops_test_attachments'][5402] = null;
+unset( $GLOBALS['diviops_test_attachments'][5402] );
+
+$moved_candidates = diviops_call_static(
+	'cross_env_attachment_candidates',
+	array( $hints['assets'], $hints['source_ids'] )
+);
+assert_same(
+	1,
+	count( $moved_candidates ),
+	'an exact upload-path hint that matches nothing does not suppress the basename fallback that can still find the file'
+);
+assert_same(
+	5404,
+	$moved_candidates[0]['id'] ?? null,
+	'and the fallback finds the same file under its different uploads month'
+);
+assert_same(
+	'target_basename_exact',
+	$moved_candidates[0]['proof'] ?? null,
+	'reported honestly as a basename match, since no upload path proved it'
+);
+assert_same(
+	array( '77' => array( 'target_id' => 5404, 'proof' => 'target_basename_exact' ) ),
+	diviops_call_static( 'cross_env_attachment_remaps', array( $moved_candidates, $hints['source_ids'] ) ),
+	'so the cross-environment remap this whole feature exists for is still emitted'
+);
+
+// Restore the exact-path attachment for anything downstream.
+diviops_tbc_attachment( 5402, '2024/05/hero.jpg' );
+
+// The narrowing must not swallow a genuinely ambiguous basename. With NO exact
+// upload-path hint, nothing was proven, so both attachments are still reachable
+// and the remap is still correctly suppressed — an ambiguous match must stay
+// ambiguous rather than silently resolving to whichever row sorted first.
+$name_only = diviops_call_static(
+	'cross_env_normalize_asset_hints',
+	array( array( 'hero.jpg' ), array( 77 ) )
+);
+$name_only_candidates = diviops_call_static(
+	'cross_env_attachment_candidates',
+	array( $name_only['assets'], $name_only['source_ids'] )
+);
+assert_same( 2, count( $name_only_candidates ), 'with no exact upload path to narrow against, both same-basename attachments remain candidates' );
 assert_same(
 	array(),
-	diviops_call_static( 'cross_env_attachment_remaps', array( $dup_candidates, $hints['source_ids'] ) ),
-	'DEFECT: the extra candidate suppresses a remap the exact upload path had already proven'
+	diviops_call_static( 'cross_env_attachment_remaps', array( $name_only_candidates, $name_only['source_ids'] ) ),
+	'and a genuinely ambiguous basename still suppresses the remap rather than guessing'
 );
 
 // ══ tb_layout_update ══════════════════════════════════════════════════════

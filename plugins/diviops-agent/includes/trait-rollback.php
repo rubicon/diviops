@@ -106,6 +106,57 @@ trait DiviOps_Agent_Rollback {
 		return 'sha256:' . hash( 'sha256', $value );
 	}
 
+	/**
+	 * Integrity state of a stored `before` payload: verified, mismatch, or absent.
+	 *
+	 * #460. The store keeps the bytes AND a checksum of them. Nothing re-checked
+	 * that the two still agree, so `restorable` reported presence rather than
+	 * integrity. Measured read-only on staging 2026-09-23: 26 of 64 stored
+	 * payloads did not hash to their own checksum — all of them captured in July
+	 * or August, none in September, so this is historical data rather than a live
+	 * capture defect (current capture derives both fields from one normalised
+	 * string, `rollback_snapshot_before_from_post()` below).
+	 *
+	 * Three states, not two, because an operator has to act differently on each:
+	 * `absent` means nothing was captured and never could be restored,
+	 * `mismatch` means bytes exist but were altered after capture, and only
+	 * `verified` means a restore would write back what was read.
+	 *
+	 * An absent or empty checksum is `absent`, not `verified` — there is no
+	 * evidence either way, and defaulting to yes is the failure this whole check
+	 * exists to stop.
+	 *
+	 * @param array $before Stored `before` payload.
+	 * @return string One of verified|mismatch|absent.
+	 */
+	private static function rollback_snapshot_before_integrity( array $before ): string {
+		if ( ! array_key_exists( 'value', $before ) ) {
+			return 'absent';
+		}
+		$checksum = (string) ( $before['checksum'] ?? '' );
+		if ( '' === $checksum ) {
+			return 'absent';
+		}
+		return hash_equals( $checksum, self::rollback_snapshot_checksum( (string) $before['value'] ) )
+			? 'verified'
+			: 'mismatch';
+	}
+
+	/**
+	 * Can the stored `before` payload be trusted enough to write back?
+	 *
+	 * The single question every restore gate and every `restorable` flag asks.
+	 * Kept separate from rollback_snapshot_before_integrity() so a caller that
+	 * only needs yes/no cannot accidentally treat the string 'mismatch' as truthy
+	 * — which it is.
+	 *
+	 * @param array $before Stored `before` payload.
+	 * @return bool
+	 */
+	private static function rollback_snapshot_before_value_intact( array $before ): bool {
+		return 'verified' === self::rollback_snapshot_before_integrity( $before );
+	}
+
 	private static function rollback_snapshot_generate_id( int $post_id, string $tool ): string {
 		$seed = $tool . '|' . $post_id . '|' . microtime( true ) . '|' . wp_rand();
 		return 'snap_' . gmdate( 'YmdHis' ) . '_' . substr( hash( 'sha256', $seed ), 0, 16 );
@@ -710,17 +761,23 @@ trait DiviOps_Agent_Rollback {
 				'before'      => [
 					'checksum'    => $before['checksum'] ?? null,
 					'byte_length' => $before['byte_length'] ?? null,
+					// #460: presence is not integrity. Reported per entry because a
+					// chunk holds up to 100 of them and one corrupt payload must not
+					// take its siblings down, nor hide behind them.
+					'integrity'   => self::rollback_snapshot_before_integrity( $before ),
 				],
 				'after'       => [
 					'checksum'    => $after['checksum'] ?? null,
 					'byte_length' => $after['byte_length'] ?? null,
 				],
 				// False for an entry that was captured and never marked (restore
-				// refuses it), AND for one already restored from this chunk (restore
-				// refuses that too). Either way the point is that a caller learns it
-				// here rather than when recovery fails.
+				// refuses it), for one whose payload no longer hashes to its own
+				// checksum (#460 — restore refuses that too), and for one already
+				// restored from this chunk. Either way the point is that a caller
+				// learns it here rather than when recovery fails. `integrity` above
+				// says WHICH, because the three need different responses.
 				'restorable'  => ! empty( $after['checksum'] )
-					&& array_key_exists( 'value', $before )
+					&& self::rollback_snapshot_before_value_intact( $before )
 					&& ! in_array( $id, $already_restored, true ),
 				'restored'    => in_array( $id, $already_restored, true ),
 			];
@@ -777,6 +834,15 @@ trait DiviOps_Agent_Rollback {
 		// marked can never be restored, whatever the live page looks like.
 		if ( ! array_key_exists( 'value', $before ) || empty( $after['checksum'] ) ) {
 			return $refuse( 'unrestorable', 'This page was captured but its write was never recorded, so there is no verified state to restore from.' );
+		}
+		// #460: separate code from `unrestorable` on purpose. That one means the
+		// store never held a usable payload; this one means it did and the payload
+		// no longer verifies. The stored bytes are the ONLY thing a restore can
+		// write, so writing them unverified is the exact accident this subsystem
+		// exists to prevent — and the bytes are not lost by refusing, they are still
+		// readable through rollback_snapshot_get.
+		if ( ! self::rollback_snapshot_before_value_intact( $before ) ) {
+			return $refuse( 'payload_integrity_failed', 'This page\'s captured content no longer matches the checksum taken with it, so it cannot be verified before writing it back.' );
 		}
 
 		$post = get_post( $post_id );
@@ -1318,13 +1384,21 @@ trait DiviOps_Agent_Rollback {
 				'checksum'    => sanitize_text_field( (string) ( $before['checksum'] ?? '' ) ),
 				'byte_length' => isset( $before['byte_length'] ) ? absint( $before['byte_length'] ) : null,
 				'has_value'   => array_key_exists( 'value', $before ),
+				// #460: has_value answers "are there bytes"; this answers "are they
+				// the bytes that were captured". A listing showed the first and
+				// implied the second.
+				'integrity'   => self::rollback_snapshot_before_integrity( $before ),
 			],
 			'after'          => [
 				'checksum'    => sanitize_text_field( (string) ( $after['checksum'] ?? '' ) ),
 				'byte_length' => isset( $after['byte_length'] ) ? absint( $after['byte_length'] ) : null,
 			],
 			'restore'        => [
-				'restorable'  => (bool) ( $restore['restorable'] ?? false ),
+				// #460: the stored flag is set to true at capture and never revisited,
+				// so it records intent, not present state. Gate it on the payload
+				// still verifying.
+				'restorable'  => (bool) ( $restore['restorable'] ?? false )
+					&& self::rollback_snapshot_before_value_intact( $before ),
 				'restored_at' => isset( $restore['restored_at'] ) ? sanitize_text_field( (string) $restore['restored_at'] ) : null,
 			],
 			'cleanup'        => [
@@ -1584,7 +1658,13 @@ trait DiviOps_Agent_Rollback {
 			if ( ! preg_match( '/^sha256:[a-f0-9]{64}$/', (string) $summary['before']['checksum'] ) || ! preg_match( '/^sha256:[a-f0-9]{64}$/', (string) $summary['after']['checksum'] ) ) {
 				$reasons[] = 'checksum_evidence_missing';
 			}
-			if ( empty( $summary['restore']['restorable'] ) || 'write_applied' !== $summary['status'] ) {
+			// #460: a corrupt payload also drives restorable false, and reporting
+			// that as `status_not_restorable` sends an operator to inspect a status
+			// that is perfectly fine. Name the real reason first, and only fall
+			// through to the status reason when the status IS the problem.
+			if ( 'mismatch' === $summary['before']['integrity'] ) {
+				$reasons[] = 'payload_integrity_failed';
+			} elseif ( empty( $summary['restore']['restorable'] ) || 'write_applied' !== $summary['status'] ) {
 				$reasons[] = 'status_not_restorable';
 			}
 
@@ -1992,6 +2072,17 @@ trait DiviOps_Agent_Rollback {
 
 		$before = self::rollback_snapshot_as_array( $record['before'] ?? [] );
 		$after  = self::rollback_snapshot_as_array( $record['after'] ?? [] );
+		// #460 first, because `restorable` now folds integrity in and the generic
+		// conflict message would blame the status for a payload problem.
+		if ( 'mismatch' === $summary['before']['integrity'] ) {
+			return self::envelope_error(
+				'conflict',
+				'This rollback snapshot\'s captured content no longer matches the checksum taken with it.',
+				'The stored bytes cannot be verified, so they are not written back. Inspect the snapshot with diviops_rollback_snapshot_get and recover by hand if the content is still wanted.',
+				409,
+				[ 'snapshot_id' => $snapshot_id, 'status' => $summary['status'], 'before' => $summary['before'] ]
+			);
+		}
 		if ( empty( $summary['restore']['restorable'] ) || ! array_key_exists( 'value', $before ) || empty( $after['checksum'] ) ) {
 			return self::envelope_error( 'conflict', 'Rollback snapshot is not in a restorable state.', null, 409, [ 'snapshot_id' => $snapshot_id, 'status' => $summary['status'] ] );
 		}

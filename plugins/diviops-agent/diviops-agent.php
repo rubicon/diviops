@@ -24,6 +24,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 // Loaded before the class declaration so trait names resolve when
 // the class declares `use ...;`. Each trait file has its own
 // ABSPATH guard, so direct loading is rejected.
+require_once __DIR__ . '/includes/trait-authoring-shape.php';
 require_once __DIR__ . '/includes/trait-canvas.php';
 require_once __DIR__ . '/includes/trait-core.php';
 require_once __DIR__ . '/includes/trait-dynamic-content.php';
@@ -53,6 +54,7 @@ class DiviOps_Agent {
 	// Each trait contributes a slice of the REST surface. The traits
 	// are required in the file-scope bootstrap below; methods on each
 	// trait are mixed into this class.
+	use DiviOps_Agent_AuthoringShape;
 	use DiviOps_Agent_Canvas;
 	use DiviOps_Agent_Core;
 	use DiviOps_Agent_DynamicContent;
@@ -277,6 +279,22 @@ class DiviOps_Agent {
 	 *
 	 * @var array<string, array{0: string, 1: int}>
 	 */
+	/**
+	 * Resource budget for full-content authoring writes (#474).
+	 *
+	 * Adopted from upstream as published, after measuring against real content:
+	 * the worst page/post/layout/canvas on staging is 273,774 bytes, 332 blocks
+	 * and depth 12 — 3.8x, 12x and 5.3x headroom. A limit set below real content
+	 * would refuse legitimate writes and nothing in the code would say so.
+	 */
+	private const AUTHORING_SHAPE_LIMITS = [
+		'input_bytes'  => 1048576,
+		'blocks'       => 4096,
+		'depth'        => 64,
+		'fields'       => 8192,
+		'string_bytes' => 1048576,
+	];
+
 	private const FRAMEWORK_ERROR_ENVELOPE = [
 		'rest_invalid_param'          => [ 'invalid_input', 400 ],
 		'rest_missing_callback_param' => [ 'invalid_input', 400 ],
@@ -2381,11 +2399,57 @@ class DiviOps_Agent {
 	 *
 	 * @param string $hook Current admin screen's hook suffix.
 	 */
+	/**
+	 * Is the admin page being asked for the read-only Design System view? (#465)
+	 *
+	 * `$_GET['view']` is attacker-controlled, so the token is matched twice: once
+	 * raw and once through `sanitize_key( wp_unslash( ... ) )`. Requiring BOTH to
+	 * equal the literal rejects normalisation variants — a value that only becomes
+	 * `design-system` after sanitising (`Design-System`, `design_system`, one with
+	 * a trailing byte sanitize_key strips) fails the raw comparison and is not
+	 * treated as the view.
+	 *
+	 * This is deliberately ONE function rather than the guard repeated at each
+	 * call site. It decides which assets are enqueued and which branch renders, so
+	 * two copies could drift into disagreeing about what the view is — which is how
+	 * the preset reference scan's post-type filter drifted from its write path
+	 * (#314). Nothing here changes state; it is a read-only navigation token.
+	 *
+	 * @return bool
+	 */
+	private static function admin_is_design_system_view(): bool {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only navigation token, no state change; see the docblock for the double-match guard.
+		$raw = isset( $_GET['view'] ) ? $_GET['view'] : null;
+		if ( ! is_string( $raw ) ) {
+			return false;
+		}
+		return 'design-system' === $raw && 'design-system' === sanitize_key( wp_unslash( $raw ) );
+	}
+
 	public static function enqueue_admin_styles( $hook ): void {
 		if ( ! self::$admin_page_hook || self::$admin_page_hook !== $hook ) {
 			return;
 		}
 		wp_enqueue_style( 'diviops-agent-admin', plugins_url( 'assets/admin.css', __FILE__ ), [ 'dashicons' ], self::VERSION );
+
+		// The Design System assets are enqueued only for the view that uses them,
+		// and only for a user who could render it. `render_admin_page()` carries
+		// its own `manage_options` gate (#454); this is the enqueue-side half, on
+		// a hook that fires before that gate runs. Divi must be active too — the
+		// dashboard reads preset and variable registries that do not exist
+		// without it, and the shell renders an explanatory callout instead.
+		if ( ! self::admin_is_design_system_view() ) {
+			return;
+		}
+		if ( ! current_user_can( 'manage_options' ) || ! function_exists( 'et_get_option' ) ) {
+			return;
+		}
+		wp_enqueue_style( 'diviops-design-system', plugins_url( 'assets/design-system.css', __FILE__ ), [ 'diviops-agent-admin' ], self::VERSION );
+		wp_enqueue_script( 'diviops-design-system', plugins_url( 'assets/design-system.js', __FILE__ ), [], self::VERSION, true );
+		wp_localize_script( 'diviops-design-system', 'diviopsDesignSystem', [
+			'root'  => rest_url( self::REST_NAMESPACE . '/' ),
+			'nonce' => wp_create_nonce( 'wp_rest' ),
+		] );
 	}
 
 	private static function admin_menu_icon(): string {
@@ -2717,7 +2781,13 @@ class DiviOps_Agent {
 				return 'limit' === $key ? 8 : null;
 			}
 		};
-		$rollback_snapshots = self::rollback_snapshot_filtered_summaries( $snapshot_request );
+		// The Design System view renders none of the snapshot table, and
+		// `rollback_snapshot_filtered_summaries()` walks every snapshot option row to
+		// build it — so it is skipped rather than computed and discarded. The Overview
+		// path is unchanged: `$design_system` is false there and the call runs exactly
+		// as before.
+		$design_system      = self::admin_is_design_system_view();
+		$rollback_snapshots = $design_system ? [] : self::rollback_snapshot_filtered_summaries( $snapshot_request );
 
 		// Client-reported runtime (#123). Read here and rendered apart from the
 		// Divi-backed support list below, because it is a different kind of claim:
@@ -2741,11 +2811,15 @@ class DiviOps_Agent {
 				</header>
 				<?php if ( $pro_active ) : ?>
 					<nav class="diviops-nav" aria-label="<?php esc_attr_e( 'DiviOps pages', 'diviops-agent' ); ?>">
-						<a href="<?php echo esc_url( admin_url( 'admin.php?page=diviops' ) ); ?>" aria-current="page"><?php esc_html_e( 'Overview', 'diviops-agent' ); ?></a>
+						<a href="<?php echo esc_url( admin_url( 'admin.php?page=diviops' ) ); ?>"<?php echo $design_system ? '' : ' aria-current="page"'; ?>><?php esc_html_e( 'Overview', 'diviops-agent' ); ?></a>
+						<a href="<?php echo esc_url( admin_url( 'admin.php?page=diviops&view=design-system' ) ); ?>"<?php echo $design_system ? ' aria-current="page"' : ''; ?>><?php esc_html_e( 'Design System', 'diviops-agent' ); ?></a>
 						<a href="<?php echo esc_url( $pro_url ); ?>"><?php esc_html_e( 'Pro License', 'diviops-agent' ); ?></a>
 					</nav>
 				<?php endif; ?>
 				<div class="diviops-content">
+					<?php if ( $design_system ) : ?>
+						<?php require __DIR__ . '/includes/admin-design-system.php'; ?>
+					<?php else : ?>
 					<div class="diviops-intro">
 						<h2><?php esc_html_e( 'Installation overview', 'diviops-agent' ); ?></h2>
 						<p><?php esc_html_e( 'Installed components and local configuration. MCP client connectivity is not verified here.', 'diviops-agent' ); ?></p>
@@ -2854,6 +2928,7 @@ class DiviOps_Agent {
 							<p><code>claude mcp add diviops-mysite --env WP_URL=https://example.com --env WP_USER=admin --env WP_APP_PASSWORD=xxxxXXXXxxxxXXXXxxxxXXXX -- npx -y --package @rubicontv/diviops-mcp diviops-mcp</code></p>
 						</div>
 					</section>
+					<?php endif; ?>
 				</div>
 				<footer class="diviops-footer"><?php esc_html_e( 'Divi is a registered trademark of Elegant Themes, Inc. DiviOps Agent is not affiliated with or endorsed by Elegant Themes.', 'diviops-agent' ); ?></footer>
 			</div>

@@ -185,6 +185,14 @@ trait DiviOps_Agent_Library {
 				400
 			);
 		}
+
+		// #474: budget before plan. Refusing an oversized payload here costs one
+		// walk; discovering it inside parse_blocks() during the write costs the
+		// process and leaves a half-written page.
+		$shape = self::authoring_shape_preflight( [ $content ] );
+		if ( is_wp_error( $shape ) ) {
+			return self::envelope_error( 'invalid_input', $shape->get_error_message(), null, 400 );
+		}
 		if ( ! in_array( $layout_type, $allowed_types, true ) ) {
 			return self::envelope_error(
 				'invalid_input',

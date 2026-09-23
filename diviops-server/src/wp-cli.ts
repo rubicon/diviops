@@ -793,7 +793,8 @@ function warnIfShellBoundaryWrapper(executable: string, wpCliCmd: string): void 
   console.warn(
     `[diviops] WP_CLI_CMD="${wpCliCmd}" invokes ssh directly. ssh concatenates its command argv into one string that the remote shell re-parses, so per-argument quoting is lost — \`wp eval\`, \`search-replace\` patterns, and JSON filters fail as remote shell syntax errors rather than wp-cli errors. Point WP_CLI_CMD at a local shim that re-quotes instead:\n` +
       `  #!/bin/bash\n` +
-      `  exec ssh -o BatchMode=yes HOST "cd /srv/site && wp $(printf '%q ' "$@")"\n` +
+      `  exec ssh -o BatchMode=yes -o RemoteCommand=none -o RequestTTY=no HOST "cd /srv/site && wp $(printf '%q ' "$@")"\n` +
+      `RemoteCommand=none and RequestTTY=no are required on any host whose ~/.ssh/config sets a RemoteCommand — OpenSSH then refuses a command argument outright ("Cannot execute command-line and remote command", exit 255), which surfaces here as a spawn failure and reads like a missing binary. Both are correct on a host without one.\n` +
       `See https://github.com/rubicon/diviops/blob/main/SETUP.md#remote-hosts-over-ssh`,
   );
 }

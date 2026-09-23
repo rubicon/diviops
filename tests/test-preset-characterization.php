@@ -524,17 +524,20 @@ $spam_unref = array_column( $audit['spam_unreferenced'], 'id' );
 $spam_ref   = array_column( $audit['spam_referenced'], 'id' );
 $descriptive = array_column( $audit['descriptive'], 'id' );
 assert_same( array( 'mod-clean', 'mod-chained', 'grp-orphan' ), $descriptive, 'everything with content and a non-spam name is descriptive' );
-assert_same( array( 'grp-chained' ), $spam_ref, 'only a spam name that something actually references is spam_referenced' );
-
-// DEFECT: `referenced` is `block_ref_count > 0 || group_ref_count > 0` and
-// nothing else, so BEING THE BUCKET DEFAULT does not make a preset referenced.
-// `mod-default` is the registered default for module/divi/heading and is
-// nevertheless filed under `spam_unreferenced` — the list an operator reads as
-// "safe to delete". preset_cleanup separately refuses to delete it, so the two
-// halves of the same trait disagree about whether it is a deletion candidate.
-assert_same( array( 'mod-default', 'mod-spam' ), $spam_unref, 'DEFECT: the bucket default is listed as spam_unreferenced alongside a genuinely unused preset' );
-assert_same( 2, $audit['spam_unreferenced_count'], 'spam_unreferenced_count matches' );
-assert_same( 1, $audit['spam_referenced_count'], 'spam_referenced_count matches' );
+// FIXED in #378. `spam_unreferenced` is the list an operator reads as "safe to
+// delete", and it is now computed with the SAME predicate preset_cleanup removes
+// on — `! $is_ref && ! $is_default`. Previously audit branched on `$is_ref`
+// alone, so `mod-default` (the registered default for module/divi/heading) was
+// advertised as deletable while preset_cleanup correctly refused to delete it:
+// two halves of one trait disagreeing about the same question.
+//
+// The protected default now lands in `spam_referenced` — the bucket that is not
+// a delete list — and still reports `referenced: false` and `ref_count: 0`
+// below, so WHY it is protected stays visible.
+assert_same( array( 'mod-default', 'grp-chained' ), $spam_ref, '#378: spam-named presets that cannot be deleted, whether protected by a reference or by the default gate' );
+assert_same( array( 'mod-spam' ), $spam_unref, '#378: only the genuinely deletable preset is listed as spam_unreferenced' );
+assert_same( 1, $audit['spam_unreferenced_count'], 'spam_unreferenced_count matches' );
+assert_same( 2, $audit['spam_referenced_count'], 'spam_referenced_count matches' );
 assert_same( 3, $audit['descriptive_count'], 'descriptive_count matches' );
 
 $by_id = array();
@@ -669,26 +672,34 @@ assert_same( 'spam', $body['scope'], 'an unrecognised scope falls back to spam i
 diviops_pc_seed( diviops_pc_registry_fixture() );
 $body = diviops_pc_body( 'preset_cleanup', array( 'action' => 'remove_orphans', 'scope' => 'all', 'dry_run' => false ) )['data'];
 $stored = diviops_pc_stored();
+// FIXED in #378 — this block pinned the defect and now pins the fix.
+//
+// `grp-chained` is referenced only by `mod-chained`'s chain, and `mod-chained`
+// is itself an orphan. The removal pass now iterates to a fixed point, so the
+// whole orphan closure goes in ONE run. Before the fix this run removed five and
+// reported "kept 2", and an identical second run then deleted `grp-chained` —
+// the operator had no way to see that one of those two was doomed.
+//
+// The expectation below therefore removes MORE than the pre-fix one did. Nothing
+// survives this single run that survived the old pair of runs; only the reported
+// count changed, from a temporary number to the true one.
 assert_same(
-	array( 'mod-spam', 'mod-clean', 'mod-empty', 'mod-chained', 'grp-orphan' ),
+	array( 'mod-spam', 'mod-clean', 'mod-empty', 'mod-chained', 'grp-orphan', 'grp-chained' ),
 	array_column( $body['removed'], 'id' ),
-	'scope=all removes every unreferenced non-default preset regardless of name'
+	'#378: scope=all removes the whole orphan closure in one pass, including a group preset whose only referrer was itself removed'
 );
 assert_same( true, isset( $stored['module']['divi/heading']['items']['mod-default'] ), 'the bucket default survives scope=all — the is_default gate' );
-assert_same( true, isset( $stored['group']['divi/font']['items']['grp-chained'] ), 'the chain-referenced group preset survives scope=all — the referenced gate' );
-assert_same( 2, $body['kept_count'], 'kept_count is the two protected presets' );
+assert_same( false, isset( $stored['group']['divi/font']['items']['grp-chained'] ), '#378: the chain-referenced group preset no longer survives, because its referrer did not either' );
+assert_same( 1, $body['kept_count'], '#378: kept_count is the one genuinely protected preset, not two' );
 
-// DEFECT: the referenced set is computed ONCE, before the removal pass. In this
-// run `mod-chained` is deleted (nothing references it) while `grp-chained` is
-// protected BY `mod-chained`'s now-deleted chain ref. The registry left behind
-// is therefore not a fixed point: running the identical command again deletes
-// the group preset the first run went out of its way to protect. An operator who
-// reads "removed 5, kept 2" has no way to see that the second number is
-// temporary.
+// The fixed-point property itself: an identical second run is now a no-op.
+// `test-preset-cleanup-fixed-point.php` is the dedicated regression file for
+// this, including the control proving a chain ref from a preset that CANNOT be
+// removed still protects its target.
 $body   = diviops_pc_body( 'preset_cleanup', array( 'action' => 'remove_orphans', 'scope' => 'all', 'dry_run' => false ) )['data'];
 $stored = diviops_pc_stored();
-assert_same( array( 'grp-chained' ), array_column( $body['removed'], 'id' ), 'DEFECT: a second identical run deletes the preset the first run protected' );
-assert_same( false, isset( $stored['group']['divi/font']['items']['grp-chained'] ), 'and it is gone from storage' );
+assert_same( array(), array_column( $body['removed'], 'id' ), '#378: a second identical run removes nothing — the first reached a fixed point' );
+assert_same( false, isset( $stored['group']['divi/font']['items']['grp-chained'] ), 'and storage is unchanged by it' );
 
 // Proof the chain union is load-bearing rather than incidental: strip the chain
 // and the same request deletes the group preset it was protecting.
@@ -717,17 +728,18 @@ $body   = diviops_pc_body( 'preset_cleanup', array( 'action' => 'rename_strip_pr
 $stored = diviops_pc_stored();
 assert_same( array( 'p1' ), array_column( $body['renamed'], 'id' ), 'only names that start with the prefix are renamed' );
 
-// DEFECT: `prefix` is run through `sanitize_text_field()` (trait-preset.php:1007),
-// which collapses whitespace runs and trims — WordPress core's own behaviour, at
-// `wp-includes/formatting.php` `_sanitize_text_fields()`. So a caller asking to
-// strip `"DiviOps "` actually strips `"DiviOps"`, and every renamed preset is
-// left with a leading space. There is no request shape that strips the separator,
-// and the handler reports the rename as if it had succeeded cleanly.
-assert_same( ' Hero', $stored['module']['divi/heading']['items']['p1']['name'], 'DEFECT: the trailing space is trimmed off the prefix, so the stripped name keeps a leading space' );
+// FIXED in #378. `prefix` was run through `sanitize_text_field()`, which ends in
+// `trim()` — WordPress core's own behaviour at `wp-includes/formatting.php`
+// `_sanitize_text_fields()`. A caller asking to strip `"DiviOps "` actually
+// stripped `"DiviOps"`, leaving a leading space on every renamed preset while the
+// handler reported a clean rename. The parameter is a literal to MATCH, so it is
+// now validated (UTF-8, no control bytes, length ceiling) and passed through byte
+// for byte. See tests/test-preset-378-prefix-and-audit.php.
+assert_same( 'Hero', $stored['module']['divi/heading']['items']['p1']['name'], '#378: the trailing separator is part of the literal and is stripped with it' );
 assert_same( 'DiviOps', $stored['module']['divi/heading']['items']['p2']['name'], 'a name that is exactly the prefix is skipped — stripping it would leave nothing' );
 assert_same( 'Untouched', $stored['module']['divi/heading']['items']['p3']['name'], 'a non-matching name is untouched' );
 assert_same( 3, $body['kept_count'], 'kept_count in this action counts every item walked, renamed ones included' );
-assert_same( 'DiviOps', $body['prefix'], 'and the response echoes the sanitized prefix, not the one that was asked for' );
+assert_same( 'DiviOps ', $body['prefix'], '#378: and the response echoes the prefix exactly as asked for' );
 
 // An empty prefix falls through to default cleanup rather than stripping
 // nothing: the guard is `'' !== $prefix`, not the action alone.
