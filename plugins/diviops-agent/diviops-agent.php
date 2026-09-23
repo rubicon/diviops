@@ -9,6 +9,7 @@
  * Author: Dax Davis
  * Author URI: https://daxdavis.com
  * Text Domain: diviops-agent
+ * Domain Path: /languages
  * Requires at least: 6.5
  * Requires PHP: 7.4
  * License: GPL v2 or later
