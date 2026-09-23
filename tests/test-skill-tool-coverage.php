@@ -148,50 +148,31 @@ assert_true(
 );
 
 /**
- * Known undocumented, pinned at #506. Burn this down; do not grow it.
+ * Known undocumented, pinned at #506 and burned down at #507. Do not grow it.
+ *
+ * #507 documented 36 of the original 41 — menus as their own topic file, the rest
+ * as entries in the tool reference. The five below are NOT a backlog: each is a
+ * deliberate exclusion, because a forced entry for a tool nobody should reach for
+ * in an authoring context is worse than an honest absence.
+ *
+ * The three `seo_*` tools are out of scope by the skill's OWN frontmatter, which
+ * lists "SEO setup" among the things `divi-5-builder` must not be used for
+ * (`skills/divi-5-builder/SKILL.md`). Documenting them in the reference would
+ * invite exactly the use the description refuses. They are a coherent surface and
+ * belong in an SEO skill, which this repository does not ship.
+ *
+ * The two `cross_env_*` tools are read-only preflights for a **Pro** cross-
+ * environment layout apply. Their own registrations say so: the source export
+ * returns a `source_payload_ref` described as an artifact handle "for the Pro
+ * cross-env layout apply tools". The free fork has no apply, so documenting the
+ * preflight here would tell an agent to prepare for a step it cannot take.
  */
 $sd_known = array(
-	'diviops_canvas_orphan_audit',
 	'diviops_cross_env_source_export_get',
 	'diviops_cross_env_target_context_get',
-	'diviops_global_color_audit_storage',
-	'diviops_global_font_audit_storage',
-	'diviops_library_delete',
-	'diviops_media_get',
-	'diviops_media_list',
-	'diviops_media_set_featured_image',
-	'diviops_media_update_meta',
-	'diviops_media_upload',
-	'diviops_menu_create',
-	'diviops_menu_delete',
-	'diviops_menu_get',
-	'diviops_menu_item_add_custom',
-	'diviops_menu_item_add_page',
-	'diviops_menu_item_remove',
-	'diviops_menu_item_reorder',
-	'diviops_menu_list',
-	'diviops_menu_location_assign',
-	'diviops_menu_location_unassign',
-	'diviops_module_clone',
-	'diviops_module_lock',
-	'diviops_module_unlock',
-	'diviops_page_block_insert',
-	'diviops_page_duplicate',
-	'diviops_page_trash',
-	'diviops_preset_audit_storage',
-	'diviops_revision_diff',
-	'diviops_revision_get',
-	'diviops_revision_list',
-	'diviops_revision_restore',
-	'diviops_rollback_snapshot_delete',
-	'diviops_rollback_snapshot_list',
 	'diviops_seo_metadata_get',
 	'diviops_seo_metadata_update',
 	'diviops_seo_provider_list',
-	'diviops_tb_layout_block_insert',
-	'diviops_theme_options_update',
-	'diviops_variable_update',
-	'diviops_variable_used_on_page',
 );
 
 $sd_new = array_values( array_diff( $sd_undocumented, $sd_known ) );

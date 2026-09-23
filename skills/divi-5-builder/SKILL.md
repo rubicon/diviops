@@ -31,7 +31,8 @@ Read the right file for the task at hand — don't load everything.
 | Adding CSS classes to modules | [design-effects.md](references/design-effects.md) — uses `module.decoration.attributes`, NOT `className` |
 | Trigger/effect Interactions (show-hide, mouse-follow, breakpoint) | [interactions.md](references/interactions.md) |
 | CSS effects & WebGL shaders | [design-effects.md](references/design-effects.md) |
-| Mega menus & navigation | [mega-menu-pattern.md](references/mega-menu-pattern.md) |
+| Mega menus & navigation built from Divi modules | [mega-menu-pattern.md](references/mega-menu-pattern.md) |
+| WordPress nav menus — items, nesting, ordering, theme locations | [menus.md](references/menus.md) (a different surface from the row above; needs `edit_theme_options`) |
 | SCF/ACF custom fields — discovery, JSON sync, dynamic-content binding | [scf-fields.md](references/scf-fields.md) |
 | Presets & cleanup | [presets.md](references/presets.md) |
 | Design system setup | [SKILL.md](#design-system-lifecycle) (below) → [presets.md](references/presets.md) |
