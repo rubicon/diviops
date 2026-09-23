@@ -79,7 +79,7 @@ All namespaces have adopted the envelope as of the last wave (`module_*` + `sect
 
 **dry_run** plans (where supported) flow through the success branch as `data: { dry_run: true, plan: { summary, changes[, warnings] } }` — same shape as before, now wrapped in the envelope.
 
-## Read Tools (27)
+## Read Tools (30)
 <!-- Distinct-tool count; multiple tools per bullet via `/` separator -->
 
 
@@ -100,12 +100,17 @@ All namespaces have adopted the envelope as of the last wave (`module_*` + `sect
 - `diviops_tb_template_list` / `diviops_tb_layout_get` — browse Theme Builder templates and layouts
 - `diviops_canvas_list` / `diviops_canvas_get` — browse and read off-canvas workspaces (popups, modals, menus)
 - `diviops_variable_list` — list design token variables, filter by type (`colors`, `numbers`, etc.) or ID prefix. `prefix` matches the stored ID only; it does not match `label`. For semantic token names such as `oa-*` labels on UUID-backed Divi variables, list by `type` and filter the returned `label` client-side.
+- `diviops_content_search` — find a literal string across every scannable post type, with per-post match context. Searches **two** needle forms: the literal string, and the bytes core's `serialize_block_attributes()` stores for it. Divi 5 keeps module text inside block-comment attribute JSON where `<`, `>`, `&`, `"`, `--` and `\` are escaped, so a single literal search would report "no matches" on text that is plainly visible on the page. Read scope is wider than the bulk write scope (`page` + `post`); statuses covered are publish/draft/private/pending/future. Defaults to 50 posts and 10 matches per post, capped at 200 and 50. **This is the discovery half of a bulk run** — a bulk write takes explicit ids and never a query, so the intended flow is search, read the results, then pass the ids you chose
+- `diviops_bulk_run_get` — read a finished bulk run's manifest by `run_id`: per-target outcome, counts, snapshot chunk ids. For `diviops_bulk_status_change` this is the recovery record, not the snapshot
+- `diviops_page_export` — export one page as Divi's own portability artifact (the schema the Visual Builder's Export button produces). The artifact embeds **every image as base64**, so a photo-heavy page is megabytes: by default it is written to a server-local store and the tool returns `artifact_ref` + `manifest` instead. `return_payload: true` inlines it and can exceed a client's context limit. **Knowingly incomplete, and it says so**: `manifest.artifact_omits` names `global_variables`, `page_settings_meta` and `thumbnails`, which Divi computes in the Visual Builder's JavaScript — no server-side seam produces them, in this plugin or in Divi's own headless export route. Treat it as a layout + presets + global-colors export, not as a full site-to-site move
 - `diviops_variable_scan_orphans` — find `gvid-`/`gcid-` refs with no backing Variable Manager entry (orphans render as invalid CSS when the `$variable()$` resolver falls through) plus variables defined but referenced nowhere (unused — deletion candidates). Scans pages, Theme Builder layouts (`et_header_layout` / `et_body_layout` / `et_footer_layout`), Divi Library items (`et_pb_layout`), canvas pages (`et_pb_canvas`), and the preset registry. Symmetric to `diviops_preset_scan_orphans`
 
-## Write Tools (30)
+## Write Tools (32)
 
 - `diviops_preset_registry_doctor` — audit canonical D5 preset timestamps and chunk transients; guarded repair converts only parseable ISO timestamps after backup, with dry-run support
 
+- `diviops_bulk_status_change` — change `post_status` on up to 25 explicitly named pages in one reviewed run. Refusals: `bulk.too_many_targets`, `bulk.plan_stale`, `bulk.plan_invalid`, `bulk.target_drifted`, `bulk.post_type_not_writable`, `bulk.partial_failure`. Never touches `post_content`. **Read the bulk write contract in the [diviops primer](../../diviops/SKILL.md) before calling it** — the dry run is mandatory and the plan token binds each target
+- `diviops_bulk_find_replace` — replace a **literal** string across up to 25 explicitly named pages. Not a pattern: a regex a caller cannot fully predict, applied to 25 pages under one approval, is a different risk class from the one the plan exists to let a human judge. `scope` is `both` / `body` / `attrs`. Attribute matches are applied by decoding one opener's JSON, replacing on the decoded tree, and re-encoding — never a raw byte splice, which is how a replacement containing `"` or `\` silently empties a module. Refusals beyond the shared set: `bulk.attrs_decode_failed`, `bulk.attrs_reencode_invalid`, `bulk.attrs_escape_malformed`, `bulk.match_spans_block_boundary`, `bulk.replacement_contains_block_delimiter`, `bulk.marker_census_changed`, `bulk.module_locked`, `bulk.global_layout_drift`. That last one is worth knowing: a global layout's `globalModule` id is stored as a **string**, so sweeping a numeric token (a post id, an SKU, an order number) can rewrite a page's layout reference — that target refuses and is left byte-identical while the rest of the run proceeds
 - `diviops_page_create` — create new page with Divi content
 - `diviops_page_update_content` — full page rewrite
 - `diviops_page_update_meta` — update title, slug, parent, and menu order without touching content. Slug changes on published posts preserve `_wp_old_slug` by default; use `diviops_page_update_status` for status

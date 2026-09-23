@@ -145,6 +145,26 @@ A tool is idempotent when running it twice produces the same observable state as
 
 These conventions are documentation discipline, not runtime enforcement. The plugin doesn't reject a non-idempotent retry; it just guarantees the documented shape when retry is safe.
 
+## Bulk write contract
+
+Four tools operate on many pages in one call — `diviops_content_search` (discovery, read-only), `diviops_bulk_status_change` and `diviops_bulk_find_replace` (writes), and `diviops_bulk_run_get` (read a finished run). The writes share one contract, described once here rather than per tool.
+
+**Explicit ids only, never a query.** A bulk write takes a `targets` array of post ids. It will not take a search expression, deliberately: a query is re-evaluated at apply time, so the set that applies is not the set a human reviewed. Find the ids with `diviops_content_search` first, read the results, then pass the ids you want.
+
+**The dry run is mandatory, and the plan is a contract.** Call with `dry_run: true` (the default) to get the plan plus a `plan_token`. Pass that token back with `dry_run: false` to apply. The token is `<issued_at>.<mac>`, keyed server-side, and it binds **each target's** content checksum, `post_status` and `post_modified_gmt`. At apply time every target is re-loaded and re-verified against what the plan promised. If a page changed in between — by you, by another agent, by a human in wp-admin — that target refuses with `bulk.target_drifted` and is not written. The token expires after **900 seconds**; a stale one is `bulk.plan_stale`, a forged or edited one is `bulk.plan_invalid`.
+
+**The cap is 25 targets, and going over is a refusal.** `bulk.too_many_targets`, never a silent truncation to the first 25. Split the work into runs.
+
+**A partial run reports `ok: false`.** If any target fails, the envelope is an error — code `bulk.partial_failure`, HTTP 409 — carrying `data.targets[]` with a per-target `status` (`applied` / `skipped` / `failed` / `not_attempted`) and `data.counts`. Read the per-target rows before concluding anything: "the run failed" and "3 of 25 pages failed" are the same envelope. `on_error` defaults to `continue`; pass `stop` to halt at the first failure, which leaves the remainder `not_attempted`.
+
+**Write scope is `page` and `post` only** — narrower than the read side, which searches every scannable post type. A target outside it refuses with `bulk.post_type_not_writable`.
+
+**Locked modules refuse the whole run**, not just the locked page (`bulk.module_locked`). A single-module tool can presume you meant that module because you named it; a bulk run names no module, so a lock means "not without naming me". Pass `include_locked: true` to proceed anyway.
+
+**Recovery differs by tool, and the difference matters.** Both write a run-scoped snapshot and return `data.snapshot_chunks` (ids readable with `diviops_rollback_snapshot_get`). For `bulk_find_replace` that snapshot is a genuine recovery record, because the operation really does change `post_content`. For `bulk_status_change` it is **not** — a snapshot captures `post_content`, which a status change never touches, so restoring it would not undo the change. The run manifest is the recovery record there; read it with `diviops_bulk_run_get`.
+
+**A bulk apply costs its target count against the write rate limit**, not one call.
+
 ## When you'd reach for this primer
 
 - A `diviops_*` tool returned `{ ok: false, error: { code: "scf.not_configured", … } }` and you want to know whether to surface a setup hint or a per-call recovery hint → gate code, setup-side fix.
