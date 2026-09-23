@@ -3717,7 +3717,7 @@ registerPluginTool(
   "diviops_media_upload",
   {
     description:
-      "Upload an image into the WordPress media library from a public URL (server fetches, SSRF-guarded) or from base64 bytes. Provide exactly one of `url` or (`data_base64` + `filename`). Optional attach_to/title/alt/caption. Pass dry_run=true to preview. Returns the standard envelope; blocked internal targets return 'forbidden_target' (403), disallowed/spoofed types return 'unsupported_media_type' (415), SVG without an active sideload sanitizer returns 'svg_sanitizer_required' (415), SVG from a caller lacking the site's configured SVG-upload capability returns 'svg_capability_required' (403), a fetched body over the size ceiling returns 'payload_too_large' (413), and a URL that cannot be retrieved returns 'fetch_failed' (502).",
+      "Upload an image into the WordPress media library from a public URL (server fetches, SSRF-guarded) or from base64 bytes. Provide exactly one of `url` or (`data_base64` + `filename`). Optional attach_to/title/alt/caption. Pass dry_run=true to preview. Returns the standard envelope; blocked internal targets return 'forbidden_target' (403), disallowed/spoofed types return 'unsupported_media_type' (415), SVG without an active sideload sanitizer returns 'svg_sanitizer_required' (415), SVG from a caller lacking the site's configured SVG-upload capability returns 'svg_capability_required' (403), a fetched body over the size ceiling returns 'payload_too_large' (413), and a URL that cannot be retrieved returns 'fetch_failed' (502); and a WordPress-side sideload rejection — an unwritable uploads directory, a full disk — is 'upload_failed' (500).",
     inputSchema: {
       url: z.string().url().optional().describe("Public http/https image URL to fetch."),
       data_base64: z.string().optional().describe("Base64-encoded file bytes (use with filename)."),
@@ -3774,7 +3774,7 @@ registerPluginTool(
         .default(20)
         .describe("Number of results per page (max 100)"),
       mime: z.string().optional().describe('Filter by mime type prefix, e.g. "image/"'),
-      search: z.string().optional().describe("Filter by attachment title search term"),
+      search: z.string().optional().describe("Filter by a WP_Query `s` search over the attachment's title, caption and description (not alt text)"),
     },
     annotations: { readOnlyHint: true, idempotentHint: true },
     _meta: { idempotent: "true" },

@@ -54,9 +54,9 @@ describe("tool descriptions that disagreed with their handlers (#510)", () => {
   it("media_list does not claim search is title-only — the handler passes it to WP_Query `s`", () => {
     const block = registration("diviops_media_list");
     assert.equal(
-      /a title search term/.test(block),
+      /title search term/.test(block),
       false,
-      "the old wording claimed title-only; trait-media.php assigns search to WP_Query's `s`, which also matches caption and description",
+      "the old wording claimed title-only, in BOTH the tool description and the `search` parameter's own describe; trait-media.php:630 assigns search to WP_Query's `s`, which also matches caption and description. The first version of this assertion read /a title search term/, which could not match 'Filter by attachment title search term' — the character before ' title' is the 't' of 'attachment' — so the stale parameter string shipped green",
     );
     assert.match(block, /WP_Query/);
     // The control: this assertion is only meaningful while the block really is
@@ -65,7 +65,13 @@ describe("tool descriptions that disagreed with their handlers (#510)", () => {
     assert.match(block, /List\/paginate media library attachments/);
   });
 
-  it("media_upload names every refusal code its handler returns", () => {
+  // The codes below are pinned, not derived. trait-media.php emits them in TWO
+  // shapes — `envelope_error( 'code', ... )` for the transport failures and a
+  // returned `array( 'code' => ... )` from the type/SVG validator — so a
+  // cross-check written for either shape alone would miss four codes and report a
+  // false gap. Pinning the list and naming that limit is honest; claiming
+  // exhaustiveness the test cannot verify is not.
+  it("media_upload names the refusal codes an agent has to tell apart", () => {
     const block = registration("diviops_media_upload");
     for (const code of [
       "forbidden_target",
@@ -74,6 +80,7 @@ describe("tool descriptions that disagreed with their handlers (#510)", () => {
       "svg_capability_required",
       "payload_too_large",
       "fetch_failed",
+      "upload_failed",
     ]) {
       assert.match(block, new RegExp(`'${code}'`), `${code} is documented`);
     }
