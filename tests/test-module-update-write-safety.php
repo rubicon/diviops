@@ -368,6 +368,61 @@ assert_true(
  * regex cannot answer it — closures inside a function body would fool any
  * line-based heuristic.
  */
+/**
+ * Strip comments from a function body via the real tokenizer, so a name that
+ * appears only in prose cannot answer a question about the code.
+ *
+ * Per-file prefix because tests/run.php requires every test file into ONE
+ * process, so a bare name would collide with the identically-purposed helper in
+ * test-preset-reassign-write-safety.php, which declares it unguarded.
+ *
+ * String literals are deliberately left in place. They are the same class of
+ * blindness, but stripping them changes nothing across the traits scanned here,
+ * and a string carrying `normalize_divi_full_content_for_write(` with its
+ * trailing paren is not a natural thing to write, unlike a comment that names a
+ * write path — which this codebase writes on purpose and twice has been bitten
+ * by. Add T_CONSTANT_ENCAPSED_STRING to the drop list if that ever changes.
+ */
+function module_update_write_safety_code_only( string $body ): string {
+	$out = '';
+	foreach ( token_get_all( '<?php ' . $body ) as $token ) {
+		if ( is_array( $token ) ) {
+			if ( T_COMMENT === $token[0] || T_DOC_COMMENT === $token[0] ) {
+				continue;
+			}
+			$out .= $token[1];
+		} else {
+			$out .= $token;
+		}
+	}
+	return $out;
+}
+
+/**
+ * Both verdicts the scan needs about one function body, from code-only text.
+ *
+ * Shared with the fixtures below rather than inlined in the loop, so the
+ * fixtures exercise the predicate the scan actually uses instead of a
+ * re-spelling of it that could drift away from it.
+ */
+function module_update_write_safety_classify( string $body, string $guard_call, array $canonical_markers ): array {
+	$code   = module_update_write_safety_code_only( $body );
+	$writer = false !== strpos( $code, $guard_call . '(' );
+
+	$canonical = false;
+	foreach ( $canonical_markers as $marker ) {
+		if ( false !== strpos( $code, $marker ) ) {
+			$canonical = true;
+			break;
+		}
+	}
+
+	return array(
+		'writer'    => $writer,
+		'canonical' => $canonical,
+	);
+}
+
 $guard_call   = 'update_post_content_with_integrity_guard';
 $includes_dir = dirname( __DIR__ ) . '/plugins/diviops-agent/includes';
 $trait_files  = glob( $includes_dir . '/trait-*.php' );
@@ -396,6 +451,106 @@ $canonical_markers = array(
 	'serialize_block(',
 	'serialize_block_attrs_canonical(',
 	'save_mutated_blocks(',
+);
+
+/*
+ * Self-checks on the classifier, because a scan that reads prose as code answers
+ * BOTH of its questions wrong, in opposite and unequally dangerous ways (#483).
+ *
+ * The noisy direction is a false positive: this file's own guard call is named in
+ * comments throughout the plugin, so a function that merely documents where writes
+ * go gets counted as a write path. That is live on main today —
+ * rollback_snapshot_before_from_post() writes nothing, captures a snapshot, and is
+ * counted solely because of the comment at trait-rollback.php:151. It has stayed
+ * invisible only because that function independently calls the normalizer (#208),
+ * so it lands in the canonical bucket rather than the reported one. It surfaced for
+ * real on trait-authoring-shape.php::authoring_shape_preflight(), which writes
+ * nothing and was reported under "ANY entry appearing here is a new regression".
+ *
+ * The dangerous direction is the mirror image, on $canonical_markers: a genuine
+ * write path whose only mention of normalize_divi_full_content_for_write() is in a
+ * comment reads as canonical and PASSES. That is a false negative on precisely the
+ * regression this file exists to catch, and #208 emptied $known_unnormalized so
+ * that any entry would be meaningful — this hole can stop one ever appearing.
+ *
+ * Both are asserted because either alone still passes against the raw-text scan:
+ * the positive controls pass trivially, the false-positive fixture is what the
+ * text scan gets wrong, and the false-negative fixture is what it gets wrong in
+ * the direction that matters.
+ */
+
+// Positive controls first: a classifier that answered `false` to everything would
+// satisfy the false-positive fixture below for entirely the wrong reason.
+$real_writer_body = <<<'PHP'
+{
+	$result = self::update_post_content_with_integrity_guard( $post_id, $content );
+	return $result;
+}
+PHP;
+
+$real_canonical_body = <<<'PHP'
+{
+	$normalized = self::normalize_divi_full_content_for_write( $content );
+	$result     = self::update_post_content_with_integrity_guard( $post_id, $normalized['content'] );
+	return $result;
+}
+PHP;
+
+$control_writer = module_update_write_safety_classify( $real_writer_body, $guard_call, $canonical_markers );
+assert_true(
+	true === $control_writer['writer'],
+	'classifier control: a genuine guard call is counted as a write path'
+);
+assert_true(
+	false === $control_writer['canonical'],
+	'classifier control: a write path with no canonicalizing call is reported as unnormalized'
+);
+
+$control_canonical = module_update_write_safety_classify( $real_canonical_body, $guard_call, $canonical_markers );
+assert_true(
+	true === $control_canonical['canonical'],
+	'classifier control: a genuine normalizer call marks the write path canonical'
+);
+
+// Direction 1 — the false positive. Modelled on the comment at
+// trait-rollback.php:151, which is ordinary, correct documentation of where
+// writes go, written inside a function that performs no write.
+$prose_only_writer_body = <<<'PHP'
+{
+	// Every write goes through update_post_content_with_integrity_guard(), which
+	// reads back and compares byte-for-byte. Nothing is written here; the budget
+	// is measured and returned to the caller.
+	return self::authoring_shape_budget( $blocks );
+}
+PHP;
+
+assert_true(
+	false === module_update_write_safety_classify( $prose_only_writer_body, $guard_call, $canonical_markers )['writer'],
+	'a guard call named only in a comment does not make a function a write path'
+);
+
+// Direction 2 — the false negative, and the one that matters. A real write whose
+// only mention of the normalizer is prose must still be reported.
+$prose_only_canonical_body = <<<'PHP'
+{
+	/**
+	 * Callers hand us bytes that already went through
+	 * normalize_divi_full_content_for_write(), so no further canonicalization
+	 * happens here.
+	 */
+	$result = self::update_post_content_with_integrity_guard( $post_id, $content );
+	return $result;
+}
+PHP;
+
+$prose_canonical = module_update_write_safety_classify( $prose_only_canonical_body, $guard_call, $canonical_markers );
+assert_true(
+	true === $prose_canonical['writer'],
+	'a write path is still recognised when its comments mention the normalizer'
+);
+assert_true(
+	false === $prose_canonical['canonical'],
+	'a canonical marker named only in a comment does not exempt a real write path'
 );
 
 /*
@@ -473,19 +628,14 @@ foreach ( (array) $trait_files as $trait_file ) {
 			}
 		}
 
-		if ( false === strpos( $body, $guard_call . '(' ) ) {
+		$verdict = module_update_write_safety_classify( $body, $guard_call, $canonical_markers );
+
+		if ( ! $verdict['writer'] ) {
 			continue;
 		}
 		$writers_found++;
 
-		$is_canonical = false;
-		foreach ( $canonical_markers as $marker ) {
-			if ( false !== strpos( $body, $marker ) ) {
-				$is_canonical = true;
-				break;
-			}
-		}
-		if ( ! $is_canonical ) {
+		if ( ! $verdict['canonical'] ) {
 			$unnormalized[] = basename( $trait_file ) . '::' . $name;
 		}
 	}
@@ -500,6 +650,12 @@ assert_true(
 	$writers_found > 0,
 	sprintf( 'the scan actually found functions calling %s() (found %d)', $guard_call, $writers_found )
 );
+// The floor is what stops a change to the scan from quietly shrinking it to
+// nothing while still reporting no findings. #483 moved the real count from 14 to
+// 13 by dropping rollback_snapshot_before_from_post(), which was only ever counted
+// because a comment in it names the guard call. The floor is deliberately left
+// below the real count: it guards against collapse, not against the list changing
+// by one when a write path is legitimately added or removed.
 assert_true(
 	$writers_found >= 12,
 	sprintf( 'the scan reached every known write path, not a truncated subset (found %d, expected >= 12)', $writers_found )
