@@ -1151,9 +1151,68 @@ trait DiviOps_Agent_ThemeBuilder {
 		];
 	}
 
+	/**
+	 * Resolve target attachment candidates from normalized asset hints.
+	 *
+	 * Two passes, not one (#356, adopted from upstream). A single loop treated
+	 * every hint as equally authoritative and let a later one overwrite an earlier
+	 * one under the same `id|path` key, which broke two ways at once — and broke
+	 * them on every real request, because `sourceHintsFromPayload()` in
+	 * `diviops-server/src/index.ts` always sends an attachment's path, url AND
+	 * filename. The path and url normalize to one hint carrying an `upload_path`;
+	 * the filename normalizes to a second carrying only a `basename`.
+	 *
+	 * 1. The filename hint was queried after the path hint, resolved the same
+	 *    attachment, and overwrote its row — degrading `proof` from
+	 *    `target_upload_path_exact` to `target_basename_exact`. The stronger label
+	 *    was computed and then thrown away every single time; only a synthetic
+	 *    path-only hint set ever saw it.
+	 * 2. A second attachment sharing the basename in another folder
+	 *    (`2023/01/hero.jpg` beside `2024/05/hero.jpg`) is reachable only through
+	 *    the filename hint, yet it joined the candidate set anyway — after the
+	 *    exact upload path had already identified exactly one attachment.
+	 *    `cross_env_attachment_remaps()` emits nothing unless exactly one target
+	 *    id survives, so the remap vanished and the preflight reported
+	 *    `missing_remap` for an asset it could have proven.
+	 *
+	 * So: resolve the `upload_path` hints first, record each basename an exact
+	 * hint actually PROVED (recorded inside the row loop, after the null check —
+	 * a hint that matched nothing proves nothing), then run the bare-basename
+	 * hints while skipping any whose basename is already in that set.
+	 *
+	 * The narrowing is deliberately keyed on proof, not on presence: with no
+	 * exact hint to narrow against, an ambiguous basename still yields both
+	 * attachments and still suppresses the remap. Ambiguity stays ambiguous
+	 * rather than resolving to whichever row sorted first.
+	 *
+	 * @param array $asset_hints Normalized hints from cross_env_normalize_asset_hints().
+	 * @param array $source_ids  Source attachment ids, for attribution.
+	 * @return array
+	 */
 	private static function cross_env_attachment_candidates( array $asset_hints, array $source_ids ): array {
-		$candidates = [];
+		$candidates      = [];
+		$fallback_hints  = [];
+		$exact_basenames = [];
 		foreach ( $asset_hints as $hint ) {
+			if ( empty( $hint['upload_path'] ) ) {
+				$fallback_hints[] = $hint;
+				continue;
+			}
+			$posts = self::cross_env_query_attachments_for_hint( $hint );
+			foreach ( $posts as $post ) {
+				$row = self::cross_env_attachment_candidate_payload( $post, $hint, $source_ids );
+				if ( null === $row ) {
+					continue;
+				}
+				$candidates[ (string) $row['id'] . '|' . (string) ( $row['path'] ?? '' ) ] = $row;
+				$exact_basenames[ $hint['basename'] ] = true;
+			}
+		}
+
+		foreach ( $fallback_hints as $hint ) {
+			if ( isset( $exact_basenames[ $hint['basename'] ] ) ) {
+				continue;
+			}
 			$posts = self::cross_env_query_attachments_for_hint( $hint );
 			foreach ( $posts as $post ) {
 				$row = self::cross_env_attachment_candidate_payload( $post, $hint, $source_ids );
