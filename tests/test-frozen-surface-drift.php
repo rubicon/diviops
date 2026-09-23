@@ -101,6 +101,70 @@ function diviops_frozen_surface( string $main, string $meta, string $slug ): arr
 }
 
 /**
+ * The ordered capability keys inside a CAPABILITIES extract.
+ *
+ * Reads the quoted keys rather than the whole literal, so comments, wrapping and
+ * indentation inside the const cannot register as a change to the surface Pro gates
+ * on. An empty result from a non-empty extract is returned as-is and compares
+ * unequal, which is the correct outcome: an extract whose keys stopped being
+ * recognisable is exactly as alarming as one that lost a key.
+ *
+ * @param string $extract The matched `const CAPABILITIES = [ ... ];` text.
+ * @return array<int, string> Keys in declaration order.
+ */
+function diviops_frozen_capability_keys( string $extract ): array {
+	// Strip line comments first: the const is heavily commented with group labels,
+	// and a label containing a quoted word would otherwise read as a key.
+	$stripped = (string) preg_replace( '#//[^\r\n]*#', '', $extract );
+	preg_match_all( "/'([a-z0-9_]+)'/", $stripped, $matches );
+	return $matches[1];
+}
+
+/**
+ * Compare two capability lists under the rule that actually protects Pro.
+ *
+ * Byte identity is the wrong test for this one extract, and #38 phase 1 was the
+ * first change to discover it: no capability key had been added since this gate
+ * landed in #451, so nothing had ever exercised the addition case. Under byte
+ * identity, shipping ANY new tool fails this gate with no waiver — which means the
+ * gate would be satisfied only by never growing the plugin, and the realistic way
+ * that resolves is somebody deleting the gate.
+ *
+ * What the docblock above says the gate is for is precise, and additions are not in
+ * it: "a failed capability gate removes a tool rather than reporting a problem."
+ * Removing a key, renaming one, or reordering the existing ones can each silently
+ * disable a Pro capability or vanish an MCP tool. Appending a new key cannot — Pro
+ * gates on the keys it knows, and a key it has never heard of is inert to it.
+ *
+ * So the invariant enforced here is: every base key is still present, and the base
+ * keys still appear in the same relative order. New keys may appear anywhere.
+ *
+ * @param array<int, string> $base Base-ref keys, in order.
+ * @param array<int, string> $here This checkout's keys, in order.
+ * @return string|null Reason the lists are incompatible, or null when they are fine.
+ */
+function diviops_frozen_capability_reason( array $base, array $here ): ?string {
+	$missing = array_values( array_diff( $base, $here ) );
+	if ( array() !== $missing ) {
+		return 'capability key(s) removed or renamed: ' . implode( ', ', $missing );
+	}
+
+	// Relative order: walk this checkout's list and require the base keys to appear
+	// in their base sequence. Anything interleaved is a new key and is skipped.
+	$expected = 0;
+	foreach ( $here as $key ) {
+		if ( $expected < count( $base ) && $key === $base[ $expected ] ) {
+			$expected++;
+		}
+	}
+	if ( $expected !== count( $base ) ) {
+		return 'capability keys reordered; the base order must be preserved';
+	}
+
+	return null;
+}
+
+/**
  * Read a blob at $ref exactly, or null when it does not resolve.
  *
  * popen() rather than exec(): exec() strips trailing whitespace from each output
@@ -165,11 +229,25 @@ function diviops_frozen_surface_report( string $root, string $base ): array {
 	);
 	$there = diviops_frozen_surface( $base_main, $base_meta, 'diviops-agent' );
 
-	$differences = array();
+	$differences  = array();
+	$capabilities = null;
 	foreach ( $here as $name => $value ) {
-		if ( $value !== ( $there[ $name ] ?? null ) ) {
-			$differences[] = (string) $name;
+		if ( $value === ( $there[ $name ] ?? null ) ) {
+			continue;
 		}
+		// Every extract but this one is frozen byte-for-byte. See
+		// diviops_frozen_capability_reason() for why this one is not, and for
+		// exactly what it is frozen against instead.
+		if ( 'capabilities' === $name && '' !== $value && '' !== (string) ( $there[ $name ] ?? '' ) ) {
+			$capabilities = diviops_frozen_capability_reason(
+				diviops_frozen_capability_keys( (string) $there[ $name ] ),
+				diviops_frozen_capability_keys( $value )
+			);
+			if ( null === $capabilities ) {
+				continue;
+			}
+		}
+		$differences[] = (string) $name;
 	}
 
 	if ( array() === $differences ) {
@@ -487,6 +565,96 @@ assert_same( array( 'rest_namespace' ), $frozen_report['differences'], 'the repo
 assert_true(
 	false !== strpos( $frozen_report['reason'], 'rest_namespace' ),
 	'the failure reason names the extract, so it is actionable without further digging: ' . $frozen_report['reason']
+);
+
+// ── The capabilities extract, which is NOT frozen byte-for-byte ──────────
+//
+// #38 phase 1 was the first change since #451 to add a capability key, and it
+// found that byte identity forbids every addition with no waiver. These three
+// fixtures pin the replacement rule in both directions, so "additions are fine"
+// can never quietly become "capability drift is fine".
+//
+// Each fixture rewrites the working tree of a repository whose base ref still
+// carries $frozen_main, so what is compared is a real base blob against a real
+// working tree — the same path the live check below takes.
+
+$frozen_repo_caps = $frozen_tmp . '/capabilities';
+diviops_frozen_repo( $frozen_repo_caps, $frozen_main, $frozen_meta, true );
+
+// (1) Appending a key. Pro gates on the keys it knows; one it has never heard of
+// is inert to it, so this must pass.
+diviops_frozen_write(
+	$frozen_repo_caps,
+	DIVIOPS_FROZEN_MAIN_PATH,
+	str_replace( "\t\t'page_get',", "\t\t'page_get',\n\t\t// bulk\n\t\t'content_search',", $frozen_main )
+);
+$frozen_report     = diviops_frozen_surface_report( $frozen_repo_caps, 'origin/main' );
+$frozen_statuses[] = $frozen_report['status'];
+assert_same( 'unchanged', $frozen_report['status'], 'adding a capability key is not frozen-surface drift: ' . $frozen_report['reason'] );
+
+// The fixture has to actually differ byte-for-byte, or (1) proves nothing: it would
+// pass under the old rule too, and this whole block would be theatre.
+assert_true(
+	diviops_frozen_surface(
+		(string) file_get_contents( $frozen_repo_caps . '/' . DIVIOPS_FROZEN_MAIN_PATH ),
+		$frozen_meta,
+		'diviops-agent'
+	)['capabilities'] !== $frozen_baseline['capabilities'],
+	'the added-key fixture does change the extract byte-for-byte, so its pass comes from the rule and not from the fixture being a no-op'
+);
+
+// (2) Removing a key. This is the failure the gate exists for: a capability key
+// that disappears removes a Pro capability and vanishes an MCP tool silently.
+diviops_frozen_write(
+	$frozen_repo_caps,
+	DIVIOPS_FROZEN_MAIN_PATH,
+	str_replace( "\t\t'page_get',\n", '', $frozen_main )
+);
+$frozen_report     = diviops_frozen_surface_report( $frozen_repo_caps, 'origin/main' );
+$frozen_statuses[] = $frozen_report['status'];
+assert_same( 'changed', $frozen_report['status'], 'removing a capability key is caught' );
+assert_same( array( 'capabilities' ), $frozen_report['differences'], 'and it is reported against the capabilities extract, and only it' );
+
+// (3) Reordering the existing keys. Nothing is missing, so a set comparison would
+// pass this; the order is part of the handshake surface #451 pinned.
+diviops_frozen_write(
+	$frozen_repo_caps,
+	DIVIOPS_FROZEN_MAIN_PATH,
+	str_replace(
+		"\t\t'canvas_create', 'canvas_delete',\n\t\t'page_get',",
+		"\t\t'canvas_delete', 'canvas_create',\n\t\t'page_get',",
+		$frozen_main
+	)
+);
+$frozen_report     = diviops_frozen_surface_report( $frozen_repo_caps, 'origin/main' );
+$frozen_statuses[] = $frozen_report['status'];
+assert_same( 'changed', $frozen_report['status'], 'reordering capability keys is caught, which a set comparison would not be' );
+
+// The key reader itself, driven directly: a group-label comment carrying a quoted
+// word must not register as a key. Without this, (1) could pass because the reader
+// silently found nothing on both sides and compared two empty lists.
+assert_same(
+	array( 'canvas_create', 'canvas_delete', 'page_get' ),
+	diviops_frozen_capability_keys( $frozen_baseline['capabilities'] ),
+	'the capability reader returns the declared keys in order'
+);
+assert_same(
+	array( 'a', 'b' ),
+	diviops_frozen_capability_keys( "const CAPABILITIES = [\n\t// see 'notes' below\n\t'a', 'b',\n];" ),
+	"a quoted word inside a line comment is not read as a capability key"
+);
+assert_same(
+	null,
+	diviops_frozen_capability_reason( array( 'a', 'b' ), array( 'a', 'x', 'b', 'y' ) ),
+	'new keys interleaved among the base keys are allowed, as long as the base order survives'
+);
+assert_true(
+	null !== diviops_frozen_capability_reason( array( 'a', 'b' ), array( 'b', 'a' ) ),
+	'a swapped pair is reported as reordered'
+);
+assert_true(
+	null !== diviops_frozen_capability_reason( array( 'a', 'b' ), array( 'a' ) ),
+	'a dropped key is reported as removed'
 );
 
 // Deleting the whole plugin file is divergence too, and every extract should say so
