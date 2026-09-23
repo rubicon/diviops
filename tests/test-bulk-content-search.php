@@ -181,6 +181,44 @@ assert_same(
 	'the response says both forms were searched, so a caller can tell a real zero from a blind one'
 );
 
+// An adversarial design review named this exact input as a blocking miss, on the
+// reading that the candidate query is a single LIKE on the literal needle. It is
+// pinned here because the failing case it describes is real for that design: the
+// raw bytes of this post contain no part of the phrase a human reads on it.
+//
+//   needle  <strong>Acme</strong>
+//   stored  \u003cstrong\u003eAcme\u003c/strong\u003e
+//
+// A single-LIKE implementation never selects the row, so the decoded-value
+// confirmation never runs and the tool reports "no matches".
+
+$bcs_tags = '<strong>Acme</strong>';
+diviops_test_register_post( 712, diviops_bcs_text_block( $bcs_tags ), 'page', 'Tagged markup' );
+
+assert_true(
+	false === strpos( $GLOBALS['diviops_test_posts'][712]->post_content, $bcs_tags ),
+	'the stored bytes contain no occurrence of the literal phrase, so only the escaped form can find this post'
+);
+
+$bcs_tag_hit = diviops_bcs_search( array( 'search' => $bcs_tags ) );
+assert_same(
+	array( 712 ),
+	array_map(
+		static function ( $row ) {
+			return $row['id'];
+		},
+		$bcs_tag_hit['data']['results']
+	),
+	'a phrase whose every escapable character is escaped in storage is still found'
+);
+assert_same( 'escaped', $bcs_tag_hit['data']['results'][0]['matches'][0]['form'], 'and is reported as an escaped-form match' );
+assert_same(
+	$bcs_tags,
+	$bcs_tag_hit['data']['results'][0]['matches'][0]['decoded_value'],
+	'with the decoded value reading back as the phrase a human sees on the page'
+);
+unset( $GLOBALS['diviops_test_posts'][712] );
+
 // ── 4. The row-level edit_post boundary ──────────────────────────────────
 //
 // A coarse route-level gate is not the contract; raw object content needs the
