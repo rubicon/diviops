@@ -680,8 +680,24 @@ if ( ! class_exists( 'DiviOps_Test_wpdb' ) ) {
 		 * Model $wpdb::prepare() for the %s/%d placeholders this codebase uses.
 		 * Strings are single-quoted with SQL's doubled-quote escaping, which
 		 * leaves esc_like()'s backslashes intact for the LIKE matcher below.
+		 *
+		 * Core accepts the values either as variadic arguments or as a single
+		 * array, and unwraps the array form itself (wp-db.php: `if (
+		 * is_array( $args[0] ) && count( $args ) === 1 ) { $args = $args[0]; }`).
+		 * Modelling only the variadic form is not a smaller model, it is a
+		 * wrong one: every caller in this plugin that builds a dynamic
+		 * placeholder list passes the array form — `variable_id_appears_anywhere()`
+		 * (trait-variable.php) and `bulk_search_candidate_ids()` (trait-bulk.php)
+		 * both do — and without this the whole array stringifies to the literal
+		 * text `Array`, producing a syntactically valid query that matches
+		 * nothing. A test driven through that reads as "the site has no such
+		 * posts", which is the exact false-green shape the shim contract in
+		 * CONTRIBUTING.md was written about.
 		 */
 		public function prepare( $query, ...$args ) {
+			if ( 1 === count( $args ) && is_array( $args[0] ) ) {
+				$args = $args[0];
+			}
 			$index = 0;
 			return (string) preg_replace_callback(
 				'/%[sd%]/',
