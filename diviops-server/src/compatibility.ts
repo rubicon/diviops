@@ -309,7 +309,17 @@ export function normalizeSiteIdentity(raw: unknown): SiteIdentity | null {
  * and a live map would silently disagree with the tools already advertised.
  */
 export type LiveHandshake =
-  | { ok: true; pluginVersion: string | null; codeFingerprint: string | null }
+  | {
+      ok: true;
+      pluginVersion: string | null;
+      codeFingerprint: string | null;
+      /**
+       * Divi's version at the re-read (#480). Optional so a caller that does
+       * not supply it gets `divi_stale: null` — unknown — rather than an
+       * exception or a fabricated `false`.
+       */
+      diviVersion?: string | null;
+    }
   | { ok: false; message: string };
 
 /**
@@ -327,6 +337,18 @@ export interface LiveHandshakeReport {
   code_fingerprint: string | null;
   stale: boolean | null;
   warning?: string;
+  /**
+   * Divi's version at the live re-read (#480).
+   *
+   * Reported beside `stale`, never folded into it. `stale` means "restart the
+   * MCP client to re-negotiate"; a Divi change usually does not need that — it
+   * needs Divi's source re-read before anything derived from it is trusted.
+   * One flag covering both makes the operator's next action ambiguous, which is
+   * the reasoning #343 used to keep site identity out of the staleness signals.
+   */
+  divi_version: string | null;
+  divi_stale: boolean | null;
+  divi_warning?: string;
 }
 
 /** Short form for prose; the full digest stays in `code_fingerprint`. */
@@ -343,7 +365,11 @@ function shortFingerprint(fingerprint: string): string {
  * while someone was reading the field that was lying.
  */
 export function buildLiveHandshakeReport(
-  spawn: { pluginVersion: string | null; codeFingerprint: string | null },
+  spawn: {
+    pluginVersion: string | null;
+    codeFingerprint: string | null;
+    diviVersion?: string | null;
+  },
   live: LiveHandshake,
 ): LiveHandshakeReport {
   if (!live.ok) {
@@ -352,6 +378,12 @@ export function buildLiveHandshakeReport(
       plugin_version: null,
       code_fingerprint: null,
       stale: null,
+      divi_version: null,
+      divi_stale: null,
+      divi_warning:
+        "The live re-check did not complete, so Divi's version could not be " +
+        "read either. Anything derived from reading Divi's source — module " +
+        "attribute shapes, render behaviour — may describe a different build.",
       warning:
         `Could not re-check the plugin: ${live.message}. The values under ` +
         "`handshake` are this session's spawn-time snapshot and may no longer " +
@@ -369,10 +401,48 @@ export function buildLiveHandshakeReport(
   const fingerprintDrifted =
     fingerprintComparable && spawn.codeFingerprint !== live.codeFingerprint;
 
+  // Divi's version, compared the same three-valued way and reported on its own
+  // fields (#480). The plugin needs a code fingerprint because our builds change
+  // constantly at an unchanged version; Divi is a third-party release whose
+  // version moves when its code does, and hashing it is not viable — measured at
+  // 1,650 PHP files and 135 MB against our plugin's 22 files.
+  const diviComparable =
+    (spawn.diviVersion ?? null) !== null && (live.diviVersion ?? null) !== null;
+  const diviDrifted =
+    diviComparable && spawn.diviVersion !== live.diviVersion;
+
+  const diviFields: Pick<
+    LiveHandshakeReport,
+    "divi_version" | "divi_stale" | "divi_warning"
+  > = diviDrifted
+    ? {
+        divi_version: live.diviVersion ?? null,
+        divi_stale: true,
+        divi_warning:
+          `Divi changed since this MCP session started (version ${spawn.diviVersion} → ${live.diviVersion}). ` +
+          "This does not usually require restarting the MCP client — the " +
+          "capability handshake is against the plugin, not Divi — but anything " +
+          "derived from reading Divi's source at the old version should be " +
+          "re-read before it is trusted.",
+      }
+    : diviComparable
+      ? { divi_version: live.diviVersion ?? null, divi_stale: false }
+      : {
+          divi_version: live.diviVersion ?? null,
+          divi_stale: null,
+          divi_warning:
+            "No Divi version to compare: it is missing from the spawn-time " +
+            "handshake, from the live re-check, or from both (Divi inactive, or " +
+            "a plugin predating the handshake's divi block). A Divi change at an " +
+            "unchanged version — a hand-patched install — is not detectable here " +
+            "either, since only the version string is compared.",
+        };
+
   const base = {
     state: "ok" as const,
     plugin_version: live.pluginVersion,
     code_fingerprint: live.codeFingerprint,
+    ...diviFields,
   };
 
   if (versionDrifted || fingerprintDrifted) {
