@@ -84,7 +84,7 @@ The skill enforces the Divi block format, the design system, and the response co
 
 ## Tools at a glance
 
-The server exposes **118 always-on tools** across the categories below. Each category names representative tool prefixes; for one row per tool, with inputs and idempotency, see the [Per-tool reference](#per-tool-reference).
+The server exposes **120 always-on tools** across the categories below. Each category names representative tool prefixes; for one row per tool, with inputs and idempotency, see the [Per-tool reference](#per-tool-reference).
 
 | Category | Use case | Tool prefixes |
 |----------|----------|---------------|
@@ -159,7 +159,7 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 
 > Generated mechanically by `diviops-server/scripts/regen-tool-reference.mjs` from the tool-registration call sites in `diviops-server/src/index.ts`. Everything between the `BEGIN GENERATED:tool-reference:*` / `END GENERATED:tool-reference:*` HTML-comment sentinels is rewritten on regen (see `diviops-server/CONTRIBUTING.md`). Do **not** edit between sentinels — edits are clobbered.
 
-118 always-on tools (106 plugin-backed, 12 server-local) and 30 conditionally-registered Pro tools.
+120 always-on tools (108 plugin-backed, 12 server-local) and 30 conditionally-registered Pro tools.
 
 **Inputs** lists each tool's top-level input fields in schema order; a trailing `?` marks a field the schema makes optional or gives a default, and `_(none)_` marks a tool that takes no arguments. **Idempotent** is the tool's own `_meta.idempotent` marker ([what the values mean](#_metaidempotent-markers)). **Summary** is the first sentence of the tool's MCP `description`, which is the full reference for its response payload and error codes; a trailing `…` marks a description that continues, and an `…` inside the text marks a value the server fills in at handshake time. Every tool returns the [standardized envelope](#response-contract).
 
@@ -171,6 +171,8 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 
 | Tool | Kind | Inputs | Idempotent | Summary |
 |---|---|---|---|---|
+| `diviops_bulk_run_get` | plugin | `run_id` | true | Read the manifest of a completed bulk run by its run_id. … |
+| `diviops_bulk_status_change` | plugin | `targets`, `status`, `dry_run?`, `plan_token?`, `on_error?` | conditional | Change post status across an EXPLICIT list of post ids. … |
 | `diviops_canvas_create` | plugin | `title`, `parent_page_id`, `content?`, `canvas_id?`, `append_to_main?`, `z_index?`, `dry_run?` | conditional | Create a canvas (off-canvas workspace) linked to a page. … |
 | `diviops_canvas_delete` | plugin | `canvas_post_id`, `dry_run?` | true | Delete a canvas. … |
 | `diviops_canvas_duplicate` | plugin | `canvas_post_id`, `title?`, `dry_run?` | conditional | Deep-copy a canvas (post_content + canvas-specific meta: parent page, append_to_main, z_index). … |

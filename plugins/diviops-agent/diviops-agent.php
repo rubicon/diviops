@@ -110,7 +110,7 @@ use DiviOps_Agent_Canvas;
 	 */
 	const CAPABILITIES = [
 		// bulk / site-wide (#38)
-		'content_search',
+		'content_search', 'bulk_status_change', 'bulk_run_get',
 		// canvas
 		'canvas_create', 'canvas_delete', 'canvas_duplicate', 'canvas_get', 'canvas_list', 'canvas_orphan_audit', 'canvas_update',
 		// dynamic content
@@ -194,6 +194,75 @@ use DiviOps_Agent_Canvas;
 	 * `trash` and `auto-draft` are excluded: a match inside a trashed post is
 	 * not something a caller can act on through any tool this plugin ships.
 	 */
+	/**
+	 * Post types a bulk WRITE may reach.
+	 *
+	 * Deliberately narrower than `SCANNABLE_POST_TYPES`, which the read side
+	 * uses. That list carries `et_header_layout`, `et_body_layout` and
+	 * `et_footer_layout`; one Theme Builder layout already applies site-wide, so
+	 * a bulk operation across them is a multiplier on a multiplier. A reader that
+	 * sees further than any writer reaches is safe; the reverse is a writer
+	 * nobody can audit.
+	 */
+	const BULK_WRITE_POST_TYPES = [ 'page', 'post' ];
+
+	/**
+	 * Hard cap on targets in one bulk apply.
+	 *
+	 * 25 is the #38 spec's ceiling, kept after an owner decision on 2026-09-23.
+	 *
+	 * The spec's phase-0 criterion -- "if p95 size x 25 exceeds 2 MB of snapshot
+	 * per run, the cap drops until it does not" -- was measured on the reference
+	 * site and FAILED: p95 `post_content` over `page` + `post` is 188,830 bytes,
+	 * so 188,830 x 25 = 4.72 MB and the arithmetic yields 11.
+	 *
+	 * That arithmetic is right; its 2 MB input was never measured. What the
+	 * budget stood in for is pressure on the snapshot store, and that was
+	 * measured: 64 of the 1000 records past which
+	 * `rollback_snapshot_managed_inventory()` starts hiding the NEWEST snapshots.
+	 * 936 free records is ~37 runs at 25 and ~85 at 11, and neither is a fix --
+	 * nothing in this plugin ever deletes a snapshot (no cron anywhere in it),
+	 * which is the real problem and is tracked separately. Halving the tool's
+	 * usefulness to buy 48 more runs against an unbounded accumulation is not a
+	 * trade worth making, so the ceiling stands and retention gets solved
+	 * properly.
+	 *
+	 * Over the cap is a refusal, never a truncation -- not even a truncation
+	 * carrying a flag. `preset_reassign`'s `truncated` flag means its apply
+	 * covered a different set than the caller believes, which is the failure this
+	 * whole harness exists to avoid.
+	 */
+	const BULK_MAX_TARGETS = 25;
+
+	/**
+	 * Seconds a bulk plan token stays valid.
+	 *
+	 * Matches `rollback_snapshot_created_stale_seconds()`'s horizon rather than
+	 * inventing a second one.
+	 */
+	const BULK_PLAN_TTL_SECONDS = 900;
+
+	/** wp_salt() scheme for the plan-token HMAC key. */
+	const BULK_PLAN_SALT_SCHEME = 'diviops_bulk';
+
+	/** Option name prefix for a bulk run manifest. */
+	const BULK_RUN_OPTION_PREFIX = 'diviops_bulk_run_';
+
+	/**
+	 * What recovery actually means for a bulk run, stated in the response.
+	 *
+	 * The harness forces a rollback snapshot on for every bulk write, and that
+	 * snapshot captures `post_content`. A status change never touches
+	 * `post_content`, so restoring the snapshot restores bytes that did not
+	 * change and does NOT put the status back. A recovery story a caller
+	 * misreads is worse than none, so the tool says this in its own output
+	 * rather than only in a docblock nobody reading the JSON will see.
+	 */
+	const BULK_RECOVERY_NOTE = 'The rollback snapshot for each target records post_content, which a status change does not modify -- restoring it will NOT undo the status change. To revert, read this run manifest and run bulk_status_change again with the recorded before.post_status values. Prior post_date and post_date_gmt are recorded here for manual repair; publish side effects (pingbacks, feeds, notification plugins) cannot be recalled by any means.';
+
+	/** Seconds a per-target bulk write lock is held. */
+	const BULK_TARGET_LOCK_SECONDS = 30;
+
 	const BULK_SEARCH_POST_STATUSES = [ 'publish', 'draft', 'private', 'pending', 'future' ];
 
 	/** Largest number of posts a single content_search will return. */
@@ -472,22 +541,31 @@ use DiviOps_Agent_Canvas;
 		$transient_key = "diviops_rl_{$bucket}_{$user_id}";
 		$now           = time();
 
+		// The bucket counts REQUESTS, which for every route but one is the same
+		// thing as affected posts. A bulk apply is not: one request can write up
+		// to BULK_MAX_TARGETS posts, and the write limit is a de-facto
+		// blast-radius ceiling — an agent that goes wrong damages at most
+		// `write` pages a minute. Charging a bulk apply 1 would silently raise
+		// that ceiling by its target count, so it is charged what it costs.
+		// Every other route resolves to 1, so nothing else changes (#38).
+		$cost = self::bulk_rate_limit_cost( $route, $request );
+
 		$data = get_transient( $transient_key );
 		if ( false === $data || ! is_array( $data ) || ! isset( $data['count'], $data['window_start'] ) ) {
 			// First request or corrupted transient — start new window.
-			set_transient( $transient_key, [ 'count' => 1, 'window_start' => $now ], 60 );
+			set_transient( $transient_key, [ 'count' => $cost, 'window_start' => $now ], 60 );
 			return $result;
 		}
 
 		// Reset window if 60s have elapsed.
 		$elapsed = $now - (int) $data['window_start'];
 		if ( $elapsed >= 60 ) {
-			set_transient( $transient_key, [ 'count' => 1, 'window_start' => $now ], 60 );
+			set_transient( $transient_key, [ 'count' => $cost, 'window_start' => $now ], 60 );
 			return $result;
 		}
 
-		$data['count']++;
-		$remaining_ttl = max( 1, 60 - $elapsed );
+		$data['count'] += $cost;
+		$remaining_ttl  = max( 1, 60 - $elapsed );
 
 		if ( $data['count'] > $limit ) {
 			$retry_after = $remaining_ttl;
@@ -2327,6 +2405,31 @@ use DiviOps_Agent_Canvas;
 				'id'    => [ 'required' => true, 'type' => 'string' ],
 				'force' => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
 			],
+		] );
+
+		// Bulk / site-wide write harness (#38 phase 2).
+		//
+		// Write-gated at the route, and re-gated per target inside the loop --
+		// a single route-level callback structurally cannot express a publish
+		// capability for a batch spanning mixed post types, so the in-handler
+		// re-check is a privilege boundary rather than a nicety.
+		register_rest_route( self::REST_NAMESPACE, '/bulk/status-change', [
+			'methods'             => 'POST',
+			'callback'            => [ __CLASS__, 'bulk_status_change' ],
+			'permission_callback' => [ __CLASS__, 'check_write_permission' ],
+			'args'                => [
+				'targets'    => [ 'required' => true,  'type' => 'array' ],
+				'status'     => [ 'required' => true,  'type' => 'string' ],
+				'dry_run'    => [ 'required' => false, 'type' => 'boolean' ],
+				'plan_token' => [ 'required' => false, 'type' => 'string' ],
+				'on_error'   => [ 'required' => false, 'type' => 'string' ],
+			],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/bulk/run/(?P<run_id>[A-Za-z0-9_]+)', [
+			'methods'             => 'GET',
+			'callback'            => [ __CLASS__, 'bulk_run_get' ],
+			'permission_callback' => [ __CLASS__, 'check_read_permission' ],
 		] );
 
 		// Bulk / site-wide content operations (#38 phase 1).

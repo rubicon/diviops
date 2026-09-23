@@ -5692,6 +5692,91 @@ registerPluginTool(
 );
 
 registerPluginTool(
+  "diviops_bulk_status_change",
+  {
+    description:
+      "Change post status across an EXPLICIT list of post ids. The highest-blast-radius tool in this plugin; read this whole description before using it. " +
+      "TWO-STEP, ALWAYS. Call it once with dry_run (the default) to get a plan plus a plan_token, read the plan, then call it again with dry_run:false AND that plan_token. " +
+      "dry_run:false without a token is refused — there is exactly one way to preview and exactly one way to apply. " +
+      "THE TOKEN BINDS THE TARGETS. It covers each target's content checksum, post_status and post_modified_gmt, so if anything drifted between plan and apply the whole run refuses with bulk.plan_stale naming what moved. A vanished target surfaces the same way. Tokens expire after 15 minutes. " +
+      "IDS ONLY, NEVER A QUERY, and at most 25 per run — over that is bulk.too_many_targets, a refusal, never a silent truncation. Use diviops_content_search to find the ids first. " +
+      "page and post only; Theme Builder layout types are deliberately out of scope. " +
+      "ALL-OR-NOTHING GATE: if ANY target fails preflight (missing, wrong post type, no edit_post, or no publish capability) the entire run is refused before anything is written. Failures discovered mid-run are governed by on_error, which defaults to continue. " +
+      "ok IS FALSE if any target failed, with the full run record in error.data — unlike diviops_preset_reassign, a partial application never reads as success. " +
+      "PUBLISHING IS NOT REVERSIBLE by re-running this tool. publish fires transition_post_status and publish_post: pingbacks, feeds and any notification or social-publishing plugin. Setting the status back does not recall those events, and the plan warns on every transition into publish. " +
+      "RECOVERY: a rollback snapshot is forced on per target, but it records post_content, which this tool does not modify — restoring it will NOT undo a status change. The run manifest (diviops_bulk_run_get) holds each target's prior status and dates; reverting means running this tool again with those values. " +
+      "status=future is refused: scheduling needs a per-target date, so use diviops_page_update_status. " +
+      "A bulk apply consumes one write-rate-limit slot PER TARGET, not per request. " +
+      "Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.",
+    inputSchema: {
+      targets: z
+        .array(z.number().int().positive())
+        .min(1)
+        .max(25)
+        .describe("Explicit post ids, at most 25. Never a query: a query re-evaluated at apply time is not the set you reviewed."),
+      status: z
+        .enum(["publish", "draft", "private", "pending"])
+        .describe("Target status for every id. future is deliberately absent — schedule individually with diviops_page_update_status."),
+      dry_run: z
+        .boolean()
+        .optional()
+        .describe("Defaults to TRUE, inverting this plugin's usual convention. A single-page handler that writes when you forget a flag costs one page; this one costs many."),
+      plan_token: z
+        .string()
+        .optional()
+        .describe("The token from this tool's own dry-run plan. Required to apply, and valid for 15 minutes against the exact state it was minted for."),
+      on_error: z
+        .enum(["continue", "stop"])
+        .optional()
+        .describe("Default continue. Every refusal this tool produces is page-specific, so stopping turns '9 applied, 2 refused with reasons' into '4 applied, 7 unattempted'."),
+    },
+    annotations: { destructiveHint: true },
+    // Conditional, not true: a re-run with the same targets and status reports
+    // `already_<status>` per target and writes nothing, so the second call is a
+    // no-op. But a publish transition fires outbound side effects the first time
+    // that the second call cannot repeat OR recall, so it is not idempotent in
+    // the sense a caller retrying blindly would want.
+    _meta: { idempotent: "conditional" },
+  },
+  async ({ targets, status, dry_run, plan_token, on_error }) => {
+    const result = await wp.requestEnveloped("/bulk/status-change", {
+      method: "POST",
+      body: { targets, status, dry_run, plan_token, on_error },
+    });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_bulk_status_change") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
+  "diviops_bulk_run_get",
+  {
+    description:
+      "Read the manifest of a completed bulk run by its run_id. Read-only. " +
+      "This is the RECOVERY RECORD for a bulk status change, and the only one that works: each target's prior post_status, post_date and post_date_gmt. " +
+      "The rollback snapshot a bulk run also creates records post_content, which a status change never modifies, so restoring it will not undo the change. " +
+      "To revert, read this manifest and call diviops_bulk_status_change again with the recorded before.post_status values. " +
+      "A dry run creates no manifest. Returns the standardized envelope.",
+    inputSchema: {
+      run_id: z.string().min(1).describe("The run_id returned by a bulk apply."),
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ run_id }) => {
+    const result = await wp.requestEnveloped(`/bulk/run/${encodeURIComponent(run_id)}`);
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_bulk_run_get") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
   "diviops_design_system_apply",
   {
     description:

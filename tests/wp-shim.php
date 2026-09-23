@@ -300,12 +300,20 @@ if ( ! function_exists( 'rest_authorization_required_code' ) ) {
 
 if ( ! function_exists( 'get_current_user_id' ) ) {
 	/**
-	 * Fixed-zero stub — the natural "no auth context" value in this CLI
-	 * harness. No test asserts on this value; it exists only so calls like
-	 * handshake() (trait-meta.php) don't fatal on an undefined function.
+	 * Zero by default — the natural "no auth context" value in this CLI
+	 * harness — with one seam, in the same shape as
+	 * `$GLOBALS['diviops_test_denied_caps']` and
+	 * `$GLOBALS['diviops_test_uneditable_ids']` above.
+	 *
+	 * The default is unchanged, so nothing that relied on zero moves. The seam
+	 * exists because `check_rate_limit()` (diviops-agent.php) returns early for
+	 * an unauthenticated caller — permission callbacks reject those anyway — so
+	 * with a fixed zero the rate limiter cannot be driven at all, and #38's
+	 * target-counting change to it would have had no behavioural coverage.
+	 * A test that sets this must set it back.
 	 */
 	function get_current_user_id() {
-		return 0;
+		return (int) ( $GLOBALS['diviops_test_current_user_id'] ?? 0 );
 	}
 }
 
