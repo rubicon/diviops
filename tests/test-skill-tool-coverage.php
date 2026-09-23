@@ -48,6 +48,27 @@ assert_true(
 	'the extraction found the plugin-routed tools in index.ts (' . count( $sd_tools ) . ' found)'
 );
 
+/*
+ * A floor is not enough, and a pre-merge review proved it. The pattern above
+ * requires the tool name to be the NEXT token after the paren, so a registration
+ * that wraps, or carries a comment between the two, is invisible to it — and a
+ * tool that is invisible here cannot be reported undocumented. The reviewer added
+ * one such registration and the whole suite stayed green while the tool had no
+ * documentation anywhere.
+ *
+ * A floor of 100 cannot catch that, because 109 found out of 110 registered is
+ * still comfortably over 100. So count the CALL SITES independently — line-anchored,
+ * the same shape `test-tool-count-sync.php` uses — and require the two to agree
+ * exactly. A registration this file cannot parse now fails it instead of vanishing.
+ */
+$sd_call_sites = (int) preg_match_all( '/^[ \t]*registerPluginTool\(/m', $sd_index );
+assert_true( $sd_call_sites >= 100, 'and found the registerPluginTool() call sites themselves (' . $sd_call_sites . ')' );
+assert_same(
+	$sd_call_sites,
+	count( $sd_tools ),
+	'every registerPluginTool() call site yielded a tool name, so none is invisible to this gate'
+);
+
 // Every Markdown file under skills/, concatenated. A tool counts as documented if it
 // is named anywhere in that corpus -- deliberately generous, because the reference is
 // a curated subset by design and some tools are documented in their own topic file.
@@ -62,6 +83,22 @@ foreach ( $sd_iter as $sd_entry ) {
 }
 
 assert_true( $sd_files >= 10, 'and read the skill corpus it checks them against (' . $sd_files . ' file(s))' );
+
+/*
+ * A synthetic probe, appended before the matcher closes over the blob.
+ *
+ * The boundary below is the gate's headline correctness property, and it had no
+ * test: a pre-merge review replaced `(?![a-z0-9_])` with a plain substring search
+ * and the file still passed, because every nested pair that exists today
+ * (`diviops_page_get` / `_get_layout`, `diviops_preset_audit` / `_audit_storage`,
+ * `diviops_variable_create` / `_create_fluid_system`) happens to have BOTH halves
+ * documented, so the two matchers agree by luck. They would disagree the moment a
+ * nested pair splits — which is exactly the case the boundary exists for.
+ *
+ * The probe manufactures that split: a long name is present in the corpus, its
+ * strict prefix is not, and neither is a real tool.
+ */
+$sd_blob .= "\n<!-- coverage-gate probe --> diviops_gate_probe_name_long\n";
 
 /**
  * Matched on a trailing boundary, never with `strpos()`.
@@ -90,6 +127,11 @@ foreach ( $sd_tools as $sd_tool ) {
 // list below would silently absorb either.
 assert_true( $sd_documented_in_skills( 'diviops_page_update_content' ), 'the matcher finds a tool the skills definitely document' );
 assert_true( ! $sd_documented_in_skills( 'diviops_not_a_real_tool_name' ), 'and does not find one that does not exist' );
+assert_true( $sd_documented_in_skills( 'diviops_gate_probe_name_long' ), 'the matcher finds the synthetic probe that was appended to the corpus' );
+assert_true(
+	! $sd_documented_in_skills( 'diviops_gate_probe_name' ),
+	'and a STRICT PREFIX of a documented name is not counted as documented, which is the boundary this matcher exists for'
+);
 
 /**
  * Known undocumented, pinned at #506. Burn this down; do not grow it.
