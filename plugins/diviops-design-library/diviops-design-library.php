@@ -216,6 +216,38 @@ class DiviOps_Design_Library {
 			.ddl-delay-5.ddl-visible { animation-delay: 0.5s; }
 			.ddl-delay-6.ddl-visible { animation-delay: 0.6s; }
 
+			/* ===== Native Image Reveal (#487) =====
+			   Opt in with the ddl-image-reveal class on a Divi Image module.
+
+			   The baseline is VISIBLE. Nothing here clips an image until JavaScript
+			   adds ddl-image-reveal-active, so an image renders normally with CSS
+			   alone, with JS disabled, and before the observer fires. Do not move the
+			   clip onto .ddl-image-reveal itself -- that ships an invisible image to
+			   anyone whose script never runs, and it looks correct in every browser
+			   where the script does. */
+			@keyframes ddl-image-reveal {
+				from { clip-path: inset(0 100% 0 0); }
+				to   { clip-path: inset(0 0 0 0); }
+			}
+			/* Only the <img> is clipped -- clipping the module would take the link
+			   box and the focus ring with it. */
+			.et_pb_image.ddl-image-reveal .et_pb_image_wrap img.ddl-image-reveal-active {
+				animation: ddl-image-reveal 650ms cubic-bezier(0.16, 1, 0.3, 1) 1;
+			}
+			/* The Visual Builder re-renders modules as you edit; a half-run animation
+			   there is a corrupted editing surface, not a preview. */
+			#et-fb-app .et_pb_image.ddl-image-reveal .et_pb_image_wrap img.ddl-image-reveal-active,
+			.et-fb .et_pb_image.ddl-image-reveal .et_pb_image_wrap img.ddl-image-reveal-active {
+				animation: none !important;
+			}
+			/* Stated twice on purpose -- the script bails too, but this holds even if
+			   the script is cached, stale, or blocked. */
+			@media (prefers-reduced-motion: reduce) {
+				.et_pb_image.ddl-image-reveal .et_pb_image_wrap img.ddl-image-reveal-active {
+					animation: none !important;
+				}
+			}
+
 			/* ===== Animated Gradient Background ===== */
 			@keyframes ddl-gradient-shift {
 				0%   { background-position: 0% 50%; }

@@ -368,6 +368,65 @@ assert_true(
  * regex cannot answer it — closures inside a function body would fool any
  * line-based heuristic.
  */
+/**
+ * Strip comments and string literals from a function body via the real
+ * tokenizer, so a name that appears only in prose or in quotes cannot answer a
+ * question about the code.
+ *
+ * Per-file prefix because tests/run.php requires every test file into ONE
+ * process, so a bare name would collide with the identically-purposed helper in
+ * test-preset-reassign-write-safety.php, which declares it unguarded and drops
+ * the same four token types.
+ *
+ * All four are needed, not two. A comment is how this codebase documents where
+ * writes go, and is what produced the live miscount this gate carried. A string
+ * is how it reports one: the needles here are exactly the sort of name that ends
+ * up inside an error envelope telling a caller which API to use, or inside a
+ * dry-run plan naming the step it would take. T_ENCAPSED_AND_WHITESPACE is
+ * listed alongside T_CONSTANT_ENCAPSED_STRING because interpolated and heredoc
+ * bodies tokenize as the former, and a drop list carrying only the latter would
+ * still read those as code.
+ */
+function module_update_write_safety_code_only( string $body ): string {
+	$out = '';
+	foreach ( token_get_all( '<?php ' . $body ) as $token ) {
+		if ( is_array( $token ) ) {
+			if ( in_array( $token[0], array( T_COMMENT, T_DOC_COMMENT, T_CONSTANT_ENCAPSED_STRING, T_ENCAPSED_AND_WHITESPACE ), true ) ) {
+				continue;
+			}
+			$out .= $token[1];
+		} else {
+			$out .= $token;
+		}
+	}
+	return $out;
+}
+
+/**
+ * Both verdicts the scan needs about one function body, from code-only text.
+ *
+ * Shared with the fixtures below rather than inlined in the loop, so the
+ * fixtures exercise the predicate the scan actually uses instead of a
+ * re-spelling of it that could drift away from it.
+ */
+function module_update_write_safety_classify( string $body, string $guard_call, array $canonical_markers ): array {
+	$code   = module_update_write_safety_code_only( $body );
+	$writer = false !== strpos( $code, $guard_call . '(' );
+
+	$canonical = false;
+	foreach ( $canonical_markers as $marker ) {
+		if ( false !== strpos( $code, $marker ) ) {
+			$canonical = true;
+			break;
+		}
+	}
+
+	return array(
+		'writer'    => $writer,
+		'canonical' => $canonical,
+	);
+}
+
 $guard_call   = 'update_post_content_with_integrity_guard';
 $includes_dir = dirname( __DIR__ ) . '/plugins/diviops-agent/includes';
 $trait_files  = glob( $includes_dir . '/trait-*.php' );
@@ -396,6 +455,165 @@ $canonical_markers = array(
 	'serialize_block(',
 	'serialize_block_attrs_canonical(',
 	'save_mutated_blocks(',
+);
+
+/*
+ * Self-checks on the classifier, because a scan that reads non-code text as code
+ * answers BOTH of its questions wrong, in opposite and unequally dangerous ways
+ * (#483).
+ *
+ * The noisy direction is a false positive: this file's own guard call is named in
+ * comments throughout the plugin, so a function that merely documents where writes
+ * go gets counted as a write path. That is live on main today —
+ * rollback_snapshot_before_from_post() writes nothing, captures a snapshot, and is
+ * counted solely because of the comment at trait-rollback.php:151. It has stayed
+ * invisible only because that function independently calls the normalizer (#208),
+ * so it lands in the canonical bucket rather than the reported one. It surfaced for
+ * real on trait-authoring-shape.php::authoring_shape_preflight(), which writes
+ * nothing and was reported under "ANY entry appearing here is a new regression".
+ *
+ * The dangerous direction is the mirror image, on $canonical_markers: a genuine
+ * write path whose only mention of normalize_divi_full_content_for_write() is in a
+ * comment reads as canonical and PASSES. That is a false negative on precisely the
+ * regression this file exists to catch, and #208 emptied $known_unnormalized so
+ * that any entry would be meaningful — this hole can stop one ever appearing.
+ *
+ * Both questions are asked of both non-code token classes — comments and string
+ * literals — for four directional fixtures in all, because no one of them fails
+ * alone against the raw-text scan. The positive controls pass trivially under
+ * either scan; the false-positive fixtures are what a text scan gets wrong
+ * noisily; the false-negative fixtures are what it gets wrong in the direction
+ * that matters. A string is not a lesser case than a comment here: these
+ * particular needles are the sort of name that ends up quoted inside an error
+ * envelope naming the API a caller should have used.
+ */
+
+// Positive controls first: a classifier that answered `false` to everything would
+// satisfy the false-positive fixture below for entirely the wrong reason.
+$real_writer_body = <<<'PHP'
+{
+	$result = self::update_post_content_with_integrity_guard( $post_id, $content );
+	return $result;
+}
+PHP;
+
+$real_canonical_body = <<<'PHP'
+{
+	$normalized = self::normalize_divi_full_content_for_write( $content );
+	$result     = self::update_post_content_with_integrity_guard( $post_id, $normalized['content'] );
+	return $result;
+}
+PHP;
+
+$control_writer = module_update_write_safety_classify( $real_writer_body, $guard_call, $canonical_markers );
+assert_true(
+	true === $control_writer['writer'],
+	'classifier control: a genuine guard call is counted as a write path'
+);
+assert_true(
+	false === $control_writer['canonical'],
+	'classifier control: a write path with no canonicalizing call is reported as unnormalized'
+);
+
+$control_canonical = module_update_write_safety_classify( $real_canonical_body, $guard_call, $canonical_markers );
+assert_true(
+	true === $control_canonical['canonical'],
+	'classifier control: a genuine normalizer call marks the write path canonical'
+);
+
+// Direction 1 — the false positive. Modelled on the comment at
+// trait-rollback.php:151, which is ordinary, correct documentation of where
+// writes go, written inside a function that performs no write.
+$prose_only_writer_body = <<<'PHP'
+{
+	// Every write goes through update_post_content_with_integrity_guard(), which
+	// reads back and compares byte-for-byte. Nothing is written here; the budget
+	// is measured and returned to the caller.
+	return self::authoring_shape_budget( $blocks );
+}
+PHP;
+
+assert_true(
+	false === module_update_write_safety_classify( $prose_only_writer_body, $guard_call, $canonical_markers )['writer'],
+	'a guard call named only in a comment does not make a function a write path'
+);
+
+// Direction 2 — the false negative, and the one that matters. A real write whose
+// only mention of the normalizer is prose must still be reported.
+$prose_only_canonical_body = <<<'PHP'
+{
+	/**
+	 * Callers hand us bytes that already went through
+	 * normalize_divi_full_content_for_write(), so no further canonicalization
+	 * happens here.
+	 */
+	$result = self::update_post_content_with_integrity_guard( $post_id, $content );
+	return $result;
+}
+PHP;
+
+$prose_canonical = module_update_write_safety_classify( $prose_only_canonical_body, $guard_call, $canonical_markers );
+assert_true(
+	true === $prose_canonical['writer'],
+	'a write path is still recognised when its comments mention the normalizer'
+);
+assert_true(
+	false === $prose_canonical['canonical'],
+	'a canonical marker named only in a comment does not exempt a real write path'
+);
+
+// Directions 3 and 4 — the same two questions, asked of string literals. A name
+// inside a string is no more a call than a name inside a comment, and this gate's
+// needles are exactly the sort of thing that ends up quoted: an error envelope
+// naming the API a caller should have used, or a dry-run plan describing the step
+// it would take. Both shapes below are modelled on that.
+$string_only_writer_body = <<<'PHP'
+{
+	return new WP_Error(
+		'use_guarded_write',
+		'Full-content writes must go through update_post_content_with_integrity_guard().',
+		array( 'status' => 400 )
+	);
+}
+PHP;
+
+assert_true(
+	false === module_update_write_safety_classify( $string_only_writer_body, $guard_call, $canonical_markers )['writer'],
+	'a guard call named only in a string literal does not make a function a write path'
+);
+
+$string_only_canonical_body = <<<'PHP'
+{
+	$plan['steps'][] = 'normalize_divi_full_content_for_write()';
+	$result          = self::update_post_content_with_integrity_guard( $post_id, $content );
+	return $result;
+}
+PHP;
+
+$string_canonical = module_update_write_safety_classify( $string_only_canonical_body, $guard_call, $canonical_markers );
+assert_true(
+	true === $string_canonical['writer'],
+	'a write path is still recognised when its strings mention the normalizer'
+);
+assert_true(
+	false === $string_canonical['canonical'],
+	'a canonical marker named only in a string literal does not exempt a real write path'
+);
+
+// Interpolated and heredoc bodies arrive as T_ENCAPSED_AND_WHITESPACE rather than
+// T_CONSTANT_ENCAPSED_STRING, so a drop list carrying only the latter would leave
+// this one readable as code.
+$interpolated_canonical_body = <<<'PHP'
+{
+	$note   = "ran normalize_divi_full_content_for_write() on {$post_id} already";
+	$result = self::update_post_content_with_integrity_guard( $post_id, $content );
+	return $result;
+}
+PHP;
+
+assert_true(
+	false === module_update_write_safety_classify( $interpolated_canonical_body, $guard_call, $canonical_markers )['canonical'],
+	'a canonical marker named only inside an interpolated string does not exempt a real write path'
 );
 
 /*
@@ -473,19 +691,14 @@ foreach ( (array) $trait_files as $trait_file ) {
 			}
 		}
 
-		if ( false === strpos( $body, $guard_call . '(' ) ) {
+		$verdict = module_update_write_safety_classify( $body, $guard_call, $canonical_markers );
+
+		if ( ! $verdict['writer'] ) {
 			continue;
 		}
 		$writers_found++;
 
-		$is_canonical = false;
-		foreach ( $canonical_markers as $marker ) {
-			if ( false !== strpos( $body, $marker ) ) {
-				$is_canonical = true;
-				break;
-			}
-		}
-		if ( ! $is_canonical ) {
+		if ( ! $verdict['canonical'] ) {
 			$unnormalized[] = basename( $trait_file ) . '::' . $name;
 		}
 	}
@@ -500,6 +713,12 @@ assert_true(
 	$writers_found > 0,
 	sprintf( 'the scan actually found functions calling %s() (found %d)', $guard_call, $writers_found )
 );
+// The floor is what stops a change to the scan from quietly shrinking it to
+// nothing while still reporting no findings. #483 moved the real count from 14 to
+// 13 by dropping rollback_snapshot_before_from_post(), which was only ever counted
+// because a comment in it names the guard call. The floor is deliberately left
+// below the real count: it guards against collapse, not against the list changing
+// by one when a write path is legitimately added or removed.
 assert_true(
 	$writers_found >= 12,
 	sprintf( 'the scan reached every known write path, not a truncated subset (found %d, expected >= 12)', $writers_found )
