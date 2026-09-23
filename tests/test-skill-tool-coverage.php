@@ -60,13 +60,27 @@ assert_true(
  * still comfortably over 100. So count the CALL SITES independently — line-anchored,
  * the same shape `test-tool-count-sync.php` uses — and require the two to agree
  * exactly. A registration this file cannot parse now fails it instead of vanishing.
+ *
+ * **What this still does not catch, stated rather than implied.** Both counts read
+ * source text, and the call-site count deliberately reuses the other file's shape,
+ * so they share its blind spots. A registration whose name is not a string literal
+ * in the call — a table-driven `Object.entries(TOOLS).forEach(([n, d]) =>
+ * registerPluginTool(n, d, ...))`, say — is invisible to BOTH, and agreement
+ * between two blind counts proves nothing about it. A third review demonstrated
+ * exactly that and the suite stayed green.
+ *
+ * Closing it properly means asking the built server which tools it registered,
+ * rather than asking the source what it says — the smoke test already does that
+ * ("121 always-on tools"), but it is a Node process and this is a PHP suite, so
+ * the cross-check would have to live on the TypeScript side. Recorded here so the
+ * next person does not mistake exact agreement for exhaustiveness.
  */
 $sd_call_sites = (int) preg_match_all( '/^[ \t]*registerPluginTool\(/m', $sd_index );
 assert_true( $sd_call_sites >= 100, 'and found the registerPluginTool() call sites themselves (' . $sd_call_sites . ')' );
 assert_same(
 	$sd_call_sites,
 	count( $sd_tools ),
-	'every registerPluginTool() call site yielded a tool name, so none is invisible to this gate'
+	'the call-site count and the extracted tool names agree (' . $sd_call_sites . ' call site(s), ' . count( $sd_tools ) . ' name(s)); they disagree when a registration is written in a shape one of the two cannot see, in EITHER direction'
 );
 
 // Every Markdown file under skills/, concatenated. A tool counts as documented if it
