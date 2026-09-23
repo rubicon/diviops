@@ -61,6 +61,32 @@ Each attribute entry needs: `id` (unique), `name` ("class"), `value` (space-sepa
 | `ddl-pulse-dot` | Pulsing indicator dot |
 | `ddl-text-stroke` | Light text outline (stroke) |
 | `ddl-text-stroke-dark` | Dark text outline (stroke) |
+| `ddl-image-reveal` | Wipe reveal on an Image module — see below |
+
+### Image Reveal (`ddl-image-reveal`)
+
+Put the class on the **Image module**, not on the `<img>`. A `clip-path` wipes
+left-to-right over 650ms the first time the image scrolls into view.
+
+It is deliberately inert in several cases, and all of them are correct rather
+than bugs to work around:
+
+| It will not animate when | Because |
+|---|---|
+| The visitor set `prefers-reduced-motion` | Enforced in both the CSS and the script |
+| You are in the Visual Builder | VB re-renders modules; a half-run animation is a corrupted editing surface |
+| The browser lacks `IntersectionObserver` or `clip-path` | Refusing beats clipping an image it can never un-clip |
+| The image failed to load, or loaded at zero width | Nothing to reveal |
+
+**The image is always visible without JavaScript.** The clip is attached to
+`ddl-image-reveal-active`, a class only the script adds, so the baseline render
+is unclipped. If you ever hand-write CSS for this effect, keep that property —
+moving the clip onto `ddl-image-reveal` itself ships an invisible image to
+anyone whose script does not run, and it looks perfectly correct in a browser
+where it does.
+
+Only the `<img>` is clipped, never the module, so a link target and its focus
+outline stay intact for keyboard users.
 
 ### Marquee (continuous scrolling)
 | Class | Where | Purpose |
