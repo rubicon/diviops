@@ -180,6 +180,11 @@ export type HandshakeState =
       // same reason as codeFingerprint above: a plugin that predates the block
       // sends none, and meta_info reports that as unknown rather than guessing.
       siteIdentity?: SiteIdentity | null;
+      // Divi's version as it was at spawn (#480). Previously this arrived on
+      // every handshake, was spent on one log line, and was discarded — so
+      // nothing could tell that Divi had been upgraded mid-session while every
+      // capability gate went on reporting itself current.
+      diviVersion?: string | null;
       proVersion?: string;
       // ADR-003 / ADR-007 Pro-extension fields — present on `ok` only.
       // Free-only sites populate these as `false` / `{}` via wp-client
@@ -371,6 +376,7 @@ async function refreshPluginState(): Promise<{
         ok: true,
         pluginVersion: observedVersion(hs.plugin_version),
         codeFingerprint: observedVersion(hs.code_fingerprint),
+        diviVersion: observedVersion(hs.divi?.version ?? null),
       },
       // Reported beside the staleness signals rather than inside them: which
       // site answered is a different question from when the answer was true,
@@ -394,6 +400,10 @@ async function buildMetaInfo() {
       codeFingerprint:
         handshakeState.kind === "ok"
           ? handshakeState.codeFingerprint ?? null
+          : null,
+      diviVersion:
+        handshakeState.kind === "ok"
+          ? handshakeState.diviVersion ?? null
           : null,
     },
     refreshed.live,
@@ -8340,6 +8350,7 @@ async function main() {
       pluginVersion: observedVersion(hs.plugin_version),
       codeFingerprint: observedVersion(hs.code_fingerprint),
       siteIdentity: hs.site_identity ?? null,
+      diviVersion: observedVersion(hs.divi?.version ?? null),
       proVersion: hs.pro_version,
       proActive: hs.pro_active === true,
       availableTargets: hs.available_targets ?? {},
