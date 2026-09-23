@@ -38,6 +38,7 @@ require_once __DIR__ . '/includes/trait-meta.php';
 require_once __DIR__ . '/includes/trait-module-schema.php';
 require_once __DIR__ . '/includes/trait-menu.php';
 require_once __DIR__ . '/includes/trait-page.php';
+require_once __DIR__ . '/includes/trait-portability.php';
 require_once __DIR__ . '/includes/trait-preset.php';
 require_once __DIR__ . '/includes/trait-render.php';
 require_once __DIR__ . '/includes/trait-revision.php';
@@ -69,6 +70,7 @@ use DiviOps_Agent_Canvas;
 	use DiviOps_Agent_Menu;
 	use DiviOps_Agent_ModuleSchema;
 	use DiviOps_Agent_Page;
+	use DiviOps_Agent_Portability;
 	use DiviOps_Agent_Preset;
 	use DiviOps_Agent_Render;
 	use DiviOps_Agent_Revision;
@@ -133,6 +135,8 @@ use DiviOps_Agent_Canvas;
 		// page
 		'page_block_insert', 'page_create', 'page_duplicate', 'page_get', 'page_get_layout', 'page_list',
 		'page_trash', 'page_update_content', 'page_update_content_backup', 'page_update_content_expected_checksum', 'page_update_meta', 'page_update_status',
+		// portability (#382) — raw Divi export payload + manifest for one page
+		'page_export',
 		// preset
 		'preset_audit', 'preset_audit_storage', 'preset_cleanup', 'preset_create', 'preset_delete', 'preset_inspect', 'preset_registry_doctor',
 		'preset_reassign', 'preset_scan_orphans', 'preset_set_default', 'preset_update',
@@ -999,6 +1003,19 @@ use DiviOps_Agent_Canvas;
 					'type'        => 'boolean',
 					'description' => 'Include full block attrs and raw content (default: false for slim targeting-only response)',
 				],
+			],
+		] );
+
+		// Raw Divi portability payload for one page (#382). Same route-level
+		// gate as the page reads above; page_export() additionally applies the
+		// row-level can_inspect_post_object() check, because the payload
+		// carries full content plus base64 image bytes.
+		register_rest_route( self::REST_NAMESPACE, '/page/export/(?P<id>\d+)', [
+			'methods'             => 'GET',
+			'callback'            => [ __CLASS__, 'page_export' ],
+			'permission_callback' => [ __CLASS__, 'check_read_permission' ],
+			'args'                => [
+				'id' => [ 'required' => true, 'type' => 'integer', 'minimum' => 1 ],
 			],
 		] );
 

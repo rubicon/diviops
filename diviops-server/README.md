@@ -171,7 +171,6 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 
 | Tool | Kind | Inputs | Idempotent | Summary |
 |---|---|---|---|---|
-| `diviops_bulk_find_replace` | plugin | `targets`, `search`, `replace?`, `scope?`, `include_locked?`, `dry_run?`, `plan_token?`, `on_error?` | conditional | Replace a LITERAL string across an explicit list of post ids. … |
 | `diviops_bulk_run_get` | plugin | `run_id` | true | Read the manifest of a completed bulk run by its run_id. … |
 | `diviops_bulk_status_change` | plugin | `targets`, `status`, `dry_run?`, `plan_token?`, `on_error?` | conditional | Change post status across an EXPLICIT list of post ids. … |
 | `diviops_canvas_create` | plugin | `title`, `parent_page_id`, `content?`, `canvas_id?`, `append_to_main?`, `z_index?`, `dry_run?` | conditional | Create a canvas (off-canvas workspace) linked to a page. … |
@@ -231,6 +230,7 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 | `diviops_page_block_insert` | plugin | `page_id`, `parent_selector?`, `parent_path?`, `position?`, `content`, `dry_run?`, `backup?` | conditional | Insert one or more serialized Divi blocks (a new row, column, or module) at a specific position on a page/post, without rebuilding the surrounding section. … |
 | `diviops_page_create` | plugin | `title`, `content?`, `status?`, `post_type?`, `dry_run?` | false | Create a new WordPress page — or, via post_type, a post or custom post type — optionally with Divi block content. … |
 | `diviops_page_duplicate` | plugin | `page_id`, `title?`, `status?`, `post_type?`, `dry_run?` | false | Duplicate a page/post on the SAME site — a first-class operation instead of hand-rolling diviops_page_get_layout + diviops_page_create. … |
+| `diviops_page_export` | plugin | `page_id`, `return_payload?` | true | Export a page as Divi's own portability artifact — the same schema the Visual Builder's Export button produces, so a VB Import on another site consumes it verbatim. … |
 | `diviops_page_get` | plugin | `page_id` | true | Get detailed info about a specific page including its raw Divi block content and a content_checksum (`sha256:` over the exact post_content bytes) to pass back to diviops_page_update_content as a stale-write guard. … |
 | `diviops_page_get_layout` | plugin | `page_id`, `full?` | true | Get the parsed block tree for a page. … |
 | `diviops_page_list` | plugin | `post_type?`, `per_page?`, `page?` | true | List pages/posts in the WordPress site. … |
