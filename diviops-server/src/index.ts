@@ -5630,6 +5630,68 @@ registerPluginTool(
 );
 
 registerPluginTool(
+  "diviops_content_search",
+  {
+    description:
+      "Search every page/post on the site for a literal string and report where it occurs. READ-ONLY — it changes nothing. " +
+      "This is the discovery half of bulk operations: the bulk write tools take an explicit list of post ids and never a query, " +
+      "so you run this first, read the matches, and pass the ids you chose. " +
+      "LITERAL ONLY — there is no regex and there will not be; a pattern over Divi block markup is an arbitrary-corruption primitive. " +
+      "IT SEARCHES TWO BYTE-FORMS, because in Divi 5 module text lives inside the block comment's attribute JSON where WordPress escapes " +
+      "< > & \" -- and backslash. A phrase a human reads on the page is frequently NOT the bytes stored for it, so searching only the literal " +
+      "form silently misses those posts. Each match reports which form matched (literal | escaped), whether it sits in a block opener's " +
+      "attributes or in body text (block_attrs | body), the owning block name, the byte offset, a context window, and — for attribute matches — " +
+      "the DECODED value, which is what the page actually shows. " +
+      "Matches are one ordered list by byte offset, not two overlapping counts. " +
+      "truncated=true means more posts matched the SQL LIKE than the ceiling returned; it does NOT mean more posts were scanned. " +
+      "Results are filtered per-row by edit_post, so a post you could not open never appears. " +
+      "Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.",
+    inputSchema: {
+      search: z
+        .string()
+        .min(1)
+        .describe("The literal text to find. Not a pattern. Case-sensitive on the byte scan that produces the match list."),
+      post_types: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Subset of the scannable post types to search. Defaults to all of them: page, post, et_header_layout, et_body_layout, et_footer_layout, et_template, et_pb_layout, et_pb_canvas. An unsupported type is refused rather than ignored.",
+        ),
+      limit: z
+        .number()
+        .int()
+        .optional()
+        .describe("Maximum posts to return (default 50, max 200). More matching posts than this sets truncated=true."),
+      max_matches_per_post: z
+        .number()
+        .int()
+        .optional()
+        .describe("Maximum match records per post (default 10, max 50). match_count is always the true total; matches_capped says the list was cut."),
+      context_chars: z
+        .number()
+        .int()
+        .optional()
+        .describe("Characters of context on each side of a match (default 60, max 200). Windows never split a UTF-8 sequence."),
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ search, post_types, limit, max_matches_per_post, context_chars }) => {
+    const params = new URLSearchParams({ search });
+    if (limit !== undefined) params.set("limit", String(limit));
+    if (max_matches_per_post !== undefined) params.set("max_matches_per_post", String(max_matches_per_post));
+    if (context_chars !== undefined) params.set("context_chars", String(context_chars));
+    for (const type of post_types ?? []) params.append("post_types[]", type);
+    const result = await wp.requestEnveloped(`/content/search?${params.toString()}`);
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_content_search") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
   "diviops_design_system_apply",
   {
     description:

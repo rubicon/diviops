@@ -25,6 +25,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 // the class declares `use ...;`. Each trait file has its own
 // ABSPATH guard, so direct loading is rejected.
 require_once __DIR__ . '/includes/trait-authoring-shape.php';
+require_once __DIR__ . '/includes/trait-bulk.php';
 require_once __DIR__ . '/includes/trait-canvas.php';
 require_once __DIR__ . '/includes/trait-core.php';
 require_once __DIR__ . '/includes/trait-dynamic-content.php';
@@ -55,7 +56,8 @@ class DiviOps_Agent {
 	// are required in the file-scope bootstrap below; methods on each
 	// trait are mixed into this class.
 	use DiviOps_Agent_AuthoringShape;
-	use DiviOps_Agent_Canvas;
+	use DiviOps_Agent_Bulk;
+use DiviOps_Agent_Canvas;
 	use DiviOps_Agent_Core;
 	use DiviOps_Agent_DynamicContent;
 	use DiviOps_Agent_GlobalColor;
@@ -107,6 +109,8 @@ class DiviOps_Agent {
 	 * key here in the same PR.
 	 */
 	const CAPABILITIES = [
+		// bulk / site-wide (#38)
+		'content_search',
 		// canvas
 		'canvas_create', 'canvas_delete', 'canvas_duplicate', 'canvas_get', 'canvas_list', 'canvas_orphan_audit', 'canvas_update',
 		// dynamic content
@@ -180,6 +184,36 @@ class DiviOps_Agent {
 	const REST_NAMESPACE      = 'diviops/v1';
 	const REASSIGN_MAX_PAGES  = 1000;
 	const VARIABLES_SCAN_MAX_POSTS = 2000;
+
+	/**
+	 * Post statuses a site-wide content read reaches.
+	 *
+	 * Fixed rather than a parameter, and matching `variable_id_appears_anywhere()`
+	 * (`trait-variable.php`) and `preset_reassign`'s own scan, so the search a
+	 * caller runs before a bulk write covers the same rows those writers do.
+	 * `trash` and `auto-draft` are excluded: a match inside a trashed post is
+	 * not something a caller can act on through any tool this plugin ships.
+	 */
+	const BULK_SEARCH_POST_STATUSES = [ 'publish', 'draft', 'private', 'pending', 'future' ];
+
+	/** Largest number of posts a single content_search will return. */
+	const BULK_SEARCH_MAX_POSTS = 200;
+
+	/** Default number of posts returned when the caller names no limit. */
+	const BULK_SEARCH_DEFAULT_POSTS = 50;
+
+	/** Largest number of per-post match records returned. */
+	const BULK_SEARCH_MAX_MATCHES_PER_POST = 50;
+
+	/** Default number of per-post match records returned. */
+	const BULK_SEARCH_DEFAULT_MATCHES_PER_POST = 10;
+
+	/** Largest context window, in characters, on either side of a match. */
+	const BULK_SEARCH_MAX_CONTEXT = 200;
+
+	/** Default context window, in characters, on either side of a match. */
+	const BULK_SEARCH_DEFAULT_CONTEXT = 60;
+
 
 	/**
 	 * Post types that can contain Divi block markup — scanned for
@@ -2292,6 +2326,24 @@ class DiviOps_Agent {
 			'args'                => [
 				'id'    => [ 'required' => true, 'type' => 'string' ],
 				'force' => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
+			],
+		] );
+
+		// Bulk / site-wide content operations (#38 phase 1).
+		//
+		// Read-only. `check_read_permission` at the route, plus the same
+		// row-level `edit_post` boundary every raw object read applies, so a
+		// caller cannot use this to enumerate posts they could not open.
+		register_rest_route( self::REST_NAMESPACE, '/content/search', [
+			'methods'             => 'GET',
+			'callback'            => [ __CLASS__, 'content_search' ],
+			'permission_callback' => [ __CLASS__, 'check_read_permission' ],
+			'args'                => [
+				'search'               => [ 'required' => true,  'type' => 'string' ],
+				'post_types'           => [ 'required' => false, 'type' => 'array' ],
+				'limit'                => [ 'required' => false, 'type' => 'integer' ],
+				'max_matches_per_post' => [ 'required' => false, 'type' => 'integer' ],
+				'context_chars'        => [ 'required' => false, 'type' => 'integer' ],
 			],
 		] );
 
