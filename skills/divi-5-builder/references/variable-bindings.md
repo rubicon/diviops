@@ -248,6 +248,91 @@ emits that for loop-scoped meta options, and `DynamicData` injects the ambient
 `{"name":"post_link_url_page","settings":{"post_id":"306"}}`, i.e. the same idea
 expressed inside `settings` for that option *(verified 2026-08-14)*.
 
+### Loop context — the `loop_*` options, and the mistake Divi documents first
+
+Inside a looped module's child content, the ambient post is the **loop item**, not the
+page. Divi exposes a parallel set of registered names for that scope, and using the
+page-scoped name instead is the failure Divi's own agent guidance leads with.
+
+**Wrong, inside looped child content:**
+
+```jsonc
+"$variable({\"type\":\"post\",\"value\":{\"name\":\"title\",\"settings\":{}}})$"
+"$variable({\"type\":\"post\",\"value\":{\"name\":\"featured_image\",\"settings\":{}}})$"
+```
+
+**Correct:**
+
+```jsonc
+"$variable({\"type\":\"content\",\"value\":{\"name\":\"loop_post_title\",\"settings\":{}}})$"
+"$variable({\"type\":\"content\",\"value\":{\"name\":\"loop_post_featured_image\",\"settings\":{}}})$"
+```
+
+Note both halves of the correction: the wrapper `type` becomes `"content"`, **and** the
+name gains its `loop_` prefix. Changing only one of the two still fails, and it fails by
+rendering the *page's* value rather than erroring — every card in the loop shows the same
+text, which reads as a data problem rather than a token problem.
+
+Source: Divi ships this guidance as prose inside
+`includes/builder-5/visual-builder/build/ai-agent.js`, with the Wrong/Correct pairs
+above. Read it with `grep -oE ".{700}post_featured_image.{300}"` — the bundle is
+minified onto one line, so `grep -c` reports `1` however many matches exist; use
+`grep -o … | wc -l` instead.
+
+The registry is the same filter as the page-scoped options, so the loop names are
+readable the same way. On this fork's staging site at `post_id=0, context=edit` it
+yields **67** options total, of which the loop-scoped groups are
+*(verified 2026-09-23, Divi 5.13.1)*:
+
+| group | count | names |
+|---|---|---|
+| `Loop` | 12 | `loop_post_title`, `loop_post_excerpt`, `loop_post_date`, `loop_post_modified_date`, `loop_post_comment_count`, `loop_post_id`, `loop_post_terms`, `loop_post_link`, `loop_post_author`, `loop_post_author_bio`, `loop_post_featured_image`, `loop_post_author_profile_picture` |
+| `Loop Users` | 6 | `loop_user_name`, `loop_user_username`, `loop_user_email`, `loop_user_avatar`, `loop_user_description`, `loop_user_url` |
+| `Loop Terms` | 6 | `loop_term_name`, `loop_term_description`, `loop_term_count`, `loop_term_permalink`, `loop_term_taxonomy`, `loop_term_featured_image` |
+| `Loop Menus` | 7 | `loop_menu_text`, `loop_menu_link`, `loop_menu_menu_order`, `loop_menu_attr_title`, `loop_menu_classes`, `loop_menu_xfn`, `loop_menu_description` |
+| `Loop * Custom Fields` | 3 | `loop_post_meta_key_manual_custom_field`, `loop_user_meta_key_manual_custom_field`, `loop_term_meta_key_manual_custom_field` |
+
+As with the page-scoped count, this total is site-specific — read it, never hard-code it.
+
+### Loop custom fields take `select_loop_meta_key`, never `key`
+
+The loop custom-field options do **not** use the settings shape the page-scoped custom
+field uses. `settings.key` is not in their schema, so it is rejected as an unknown
+setting rather than silently resolving to nothing.
+
+Read live, `loop_post_meta_key_manual_custom_field` declares `before`, `after` and
+`select_loop_meta_key` — the last a `select` whose options are *grouped*, with
+`loop_post_meta_key_group_manual` holding the manual-entry sentinel and
+`loop_post_meta_key_group_standard` holding discovered keys
+*(verified 2026-09-23, Divi 5.13.1)*.
+
+**Manual entry** — two settings, and the sentinel value is load-bearing:
+
+```jsonc
+{ "name": "loop_post_meta_key_manual_custom_field",
+  "settings": {
+    "select_loop_meta_key": "loop_post_meta_key_manual_custom_field_value",
+    "loop_meta_key": "price"
+  } }
+```
+
+**A discovered key** — the key is carried *in* the selector, and `loop_meta_key` is not
+used:
+
+```jsonc
+{ "name": "loop_post_meta_key_manual_custom_field",
+  "settings": { "select_loop_meta_key": "loop_post_meta_key_price" } }
+```
+
+The `loop_user_*` and `loop_term_*` custom-field options follow the same shape with
+their own prefixes.
+
+### Writing a loop binding into a schema leaf
+
+For a module attribute that is a leaf rather than the module's main content — a looped
+button's link, for example — the token goes to the leaf via `subName`, not to the
+attribute root: `button.innerContent` with `subName: "linkUrl"`.
+
 ---
 
 ## Namespace 2 — Global colors (`type:"color"`, `gcid-`)

@@ -58,8 +58,16 @@ foreach ( $declared_tiers as $declared ) {
 /*
  * Every `*(… verified …)*`-shaped stamp in the reference resolves to one of the three.
  * `empirically verified` is the convention's own documented alias for tier 2.
+ *
+ * The prefix is OPTIONAL in this pattern, and that is load-bearing (#64). It previously
+ * read `[A-Za-z][A-Za-z -]*verified`, which REQUIRES at least one character before
+ * `verified` — so it matched `VB-verified` and `empirically verified` and silently
+ * skipped every plain `*(verified YYYY-MM-DD)*` stamp, which is tier 2's own spelling
+ * and the one this document uses most. Measured when the hole was found: the old
+ * pattern inspected 4 stamps out of 39. The gate reported success over 10% of its
+ * subject, which is the failure mode this repository's gates exist to prevent.
  */
-$stamps_found = preg_match_all( '/\*\(([A-Za-z][A-Za-z -]*verified)[^)]*\)\*/', $ref_src, $stamp_matches );
+$stamps_found = preg_match_all( '/\*\(((?:[A-Za-z][A-Za-z -]*)?verified)[^)]*\)\*/', $ref_src, $stamp_matches );
 assert_true( $stamps_found > 0, 'the reference carries at least one verification stamp to inspect' );
 
 $known_tiers   = array( 'verified', 'vb-verified', 'empirically verified' );
