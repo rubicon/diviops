@@ -186,6 +186,36 @@ use DiviOps_Agent_Canvas;
 	const VARIABLES_SCAN_MAX_POSTS = 2000;
 
 	/**
+	 * Post statuses a site-wide content read reaches.
+	 *
+	 * Fixed rather than a parameter, and matching `variable_id_appears_anywhere()`
+	 * (`trait-variable.php`) and `preset_reassign`'s own scan, so the search a
+	 * caller runs before a bulk write covers the same rows those writers do.
+	 * `trash` and `auto-draft` are excluded: a match inside a trashed post is
+	 * not something a caller can act on through any tool this plugin ships.
+	 */
+	const BULK_SEARCH_POST_STATUSES = [ 'publish', 'draft', 'private', 'pending', 'future' ];
+
+	/** Largest number of posts a single content_search will return. */
+	const BULK_SEARCH_MAX_POSTS = 200;
+
+	/** Default number of posts returned when the caller names no limit. */
+	const BULK_SEARCH_DEFAULT_POSTS = 50;
+
+	/** Largest number of per-post match records returned. */
+	const BULK_SEARCH_MAX_MATCHES_PER_POST = 50;
+
+	/** Default number of per-post match records returned. */
+	const BULK_SEARCH_DEFAULT_MATCHES_PER_POST = 10;
+
+	/** Largest context window, in characters, on either side of a match. */
+	const BULK_SEARCH_MAX_CONTEXT = 200;
+
+	/** Default context window, in characters, on either side of a match. */
+	const BULK_SEARCH_DEFAULT_CONTEXT = 60;
+
+
+	/**
 	 * Post types that can contain Divi block markup — scanned for
 	 * preset / variable references. Kept in one place so every ref-scanner
 	 * and the variable_delete SQL fast-path stay in lockstep. Anything that

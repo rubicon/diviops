@@ -23,34 +23,10 @@ defined( 'ABSPATH' ) || exit;
  */
 trait DiviOps_Agent_Bulk {
 
-	/**
-	 * Post statuses a site-wide content read reaches.
-	 *
-	 * Fixed rather than a parameter, and matching `variable_id_appears_anywhere()`
-	 * (`trait-variable.php`) and `preset_reassign`'s own scan, so the search a
-	 * caller runs before a bulk write covers the same rows those writers do.
-	 * `trash` and `auto-draft` are excluded: a match inside a trashed post is
-	 * not something a caller can act on through any tool this plugin ships.
-	 */
-	const BULK_SEARCH_POST_STATUSES = [ 'publish', 'draft', 'private', 'pending', 'future' ];
-
-	/** Largest number of posts a single content_search will return. */
-	const BULK_SEARCH_MAX_POSTS = 200;
-
-	/** Default number of posts returned when the caller names no limit. */
-	const BULK_SEARCH_DEFAULT_POSTS = 50;
-
-	/** Largest number of per-post match records returned. */
-	const BULK_SEARCH_MAX_MATCHES_PER_POST = 50;
-
-	/** Default number of per-post match records returned. */
-	const BULK_SEARCH_DEFAULT_MATCHES_PER_POST = 10;
-
-	/** Largest context window, in characters, on either side of a match. */
-	const BULK_SEARCH_MAX_CONTEXT = 200;
-
-	/** Default context window, in characters, on either side of a match. */
-	const BULK_SEARCH_DEFAULT_CONTEXT = 60;
+	// The bulk constants live on DiviOps_Agent itself, beside SCANNABLE_POST_TYPES
+	// and REASSIGN_MAX_PAGES. Not a style choice: PHP only allows constants in a
+	// trait from 8.2, and this plugin supports 7.4 (the CI matrix lints it), where
+	// `const` inside a trait is a fatal parse error rather than a warning.
 
 	/**
 	 * Site-wide literal substring search over `post_content`.
