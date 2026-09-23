@@ -50,6 +50,14 @@ trait DiviOps_Agent_Canvas {
 		$append_to_main = sanitize_key( (string) ( $request->get_param( 'append_to_main' ) ?? '' ) );
 		$z_index        = $request->get_param( 'z_index' );
 
+		// #474: budget before plan. Refusing an oversized payload here costs one
+		// walk; discovering it inside parse_blocks() during the write costs the
+		// process and leaves a half-written page.
+		$shape = self::authoring_shape_preflight( [ (string) $content ] );
+		if ( is_wp_error( $shape ) ) {
+			return self::envelope_error( 'invalid_input', $shape->get_error_message(), null, 400 );
+		}
+
 		// Validate canvas_id format if provided, otherwise auto-generate.
 		$raw_canvas_id = $request->get_param( 'canvas_id' );
 		if ( ! empty( $raw_canvas_id ) ) {
@@ -1116,6 +1124,16 @@ trait DiviOps_Agent_Canvas {
 		$title          = $request->get_param( 'title' );
 		$append_to_main = $request->get_param( 'append_to_main' );
 		$z_index        = $request->get_param( 'z_index' );
+
+		// #474: budget before plan. Refusing an oversized payload here costs one
+		// walk; discovering it inside parse_blocks() during the write costs the
+		// process and leaves a half-written page.
+		if ( null !== $content ) {
+			$shape = self::authoring_shape_preflight( [ (string) $content ] );
+			if ( is_wp_error( $shape ) ) {
+				return self::envelope_error( 'invalid_input', $shape->get_error_message(), null, 400 );
+			}
+		}
 
 		// Reject no-op payloads. The handler structure independently null-checks
 		// each field, so a payload with no actionable params would silently
