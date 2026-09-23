@@ -110,7 +110,7 @@ use DiviOps_Agent_Canvas;
 	 */
 	const CAPABILITIES = [
 		// bulk / site-wide (#38)
-		'content_search', 'bulk_status_change', 'bulk_run_get',
+		'content_search', 'bulk_status_change', 'bulk_run_get', 'bulk_find_replace',
 		// canvas
 		'canvas_create', 'canvas_delete', 'canvas_duplicate', 'canvas_get', 'canvas_list', 'canvas_orphan_audit', 'canvas_update',
 		// dynamic content
@@ -2423,6 +2423,22 @@ use DiviOps_Agent_Canvas;
 				'dry_run'    => [ 'required' => false, 'type' => 'boolean' ],
 				'plan_token' => [ 'required' => false, 'type' => 'string' ],
 				'on_error'   => [ 'required' => false, 'type' => 'string' ],
+			],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/bulk/find-replace', [
+			'methods'             => 'POST',
+			'callback'            => [ __CLASS__, 'bulk_find_replace' ],
+			'permission_callback' => [ __CLASS__, 'check_write_permission' ],
+			'args'                => [
+				'targets'        => [ 'required' => true,  'type' => 'array' ],
+				'search'         => [ 'required' => true,  'type' => 'string' ],
+				'replace'        => [ 'required' => false, 'type' => 'string' ],
+				'scope'          => [ 'required' => false, 'type' => 'string' ],
+				'include_locked' => [ 'required' => false, 'type' => 'boolean', 'default' => false ],
+				'dry_run'        => [ 'required' => false, 'type' => 'boolean' ],
+				'plan_token'     => [ 'required' => false, 'type' => 'string' ],
+				'on_error'       => [ 'required' => false, 'type' => 'string' ],
 			],
 		] );
 

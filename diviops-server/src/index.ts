@@ -5752,6 +5752,58 @@ registerPluginTool(
 );
 
 registerPluginTool(
+  "diviops_bulk_find_replace",
+  {
+    description:
+      "Replace a LITERAL string across an explicit list of post ids. The most dangerous tool in this plugin; read all of this. " +
+      "LITERAL ONLY, permanently — there is no regex and there will not be. A caller-supplied pattern over Divi block markup can rewrite comment delimiters, span block boundaries and mangle attribute JSON, and nothing can constrain afterwards what it already destroyed. Find the text with diviops_content_search, read the matches, pass a literal replacement. " +
+      "TWO-STEP, ALWAYS: call with dry_run (the default) to get a plan plus a plan_token showing every match per target, then call again with dry_run:false and that token. dry_run:false without a token is refused. The token binds each target's content checksum, status and modified time, so any drift refuses the run. " +
+      "IT NEVER BUILDS A BLOCK TREE. Taking a page apart and reassembling it is byte-lossy on real pages (measured at 82.6% identity on the reference site; one page gained 2,952 bytes through a round trip that changed nothing, and every existing guard passed it). Instead it decodes ONE block opener's attribute JSON at a time, replaces the decoded value, re-encodes that one opener and splices it back. " +
+      "SCOPE defaults to both, and that matters: in Divi 5 module text lives inside the block comment's attribute JSON, so a body-text-only run finds almost nothing. Attribute matches are decoded, replaced, re-encoded and required to parse again before anything is written; a replacement containing a quote or a backslash that would emit invalid JSON refuses that target with bulk.attrs_reencode_invalid rather than corrupting it. " +
+      "A page containing a LOCKED module refuses the whole run unless include_locked is passed. A bulk operation names no module, so a lock means 'not without naming me'. " +
+      "Guards: marker-census equality before and after, canonical re-serialisation, malformed-escape detection, a per-target readback-and-revert write guard with global-layout drift checking, and a forced rollback snapshot per target — which for THIS operation is a genuine recovery record, because it captures the post_content that actually changed. " +
+      "WHAT NO GUARD CAN CATCH: a replacement that is valid but WRONG. That judgement is yours, reading the plan. " +
+      "A bulk apply consumes one write-rate-limit slot per target. page and post only. Returns the standardized envelope.",
+    inputSchema: {
+      targets: z
+        .array(z.number().int().positive())
+        .min(1)
+        .max(25)
+        .describe("Explicit post ids, at most 25. Never a query — a query re-evaluated at apply time is not the set you reviewed."),
+      search: z.string().min(1).describe("The literal text to find. Not a pattern. Case-sensitive."),
+      replace: z.string().optional().describe("The literal replacement. Omit or pass an empty string to delete the search text."),
+      scope: z
+        .enum(["both", "body", "attrs"])
+        .optional()
+        .describe("Default both. body only touches text between block comments; attrs only touches decoded attribute values. Restricting to body is a default that cannot do the job in Divi 5."),
+      include_locked: z
+        .boolean()
+        .optional()
+        .describe("Default false. When false, a target containing any module with attrs.locked refuses the WHOLE run, naming them."),
+      dry_run: z.boolean().optional().describe("Defaults to TRUE. Writing requires passing false explicitly AND a plan_token."),
+      plan_token: z.string().optional().describe("The token from this tool's own dry-run plan. Valid 15 minutes against the exact state it was minted for."),
+      on_error: z.enum(["continue", "stop"]).optional().describe("Default continue. Every refusal here is page-specific, so stopping leaves a half-changed site."),
+    },
+    annotations: { destructiveHint: true },
+    // Conditional: a re-run whose search string no longer occurs reports
+    // already_applied and writes nothing, so it is idempotent on its own output.
+    // But a replacement that reintroduces the search string is not.
+    _meta: { idempotent: "conditional" },
+  },
+  async ({ targets, search, replace, scope, include_locked, dry_run, plan_token, on_error }) => {
+    const result = await wp.requestEnveloped("/bulk/find-replace", {
+      method: "POST",
+      body: { targets, search, replace, scope, include_locked, dry_run, plan_token, on_error },
+    });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_bulk_find_replace") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
   "diviops_bulk_run_get",
   {
     description:
