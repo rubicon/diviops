@@ -845,6 +845,66 @@ if ( ! function_exists( 'apply_filters' ) ) {
 	}
 }
 
+if ( ! function_exists( 'stripslashes_from_strings_only' ) ) {
+	/**
+	 * Reimplementation of WordPress core's stripslashes_from_strings_only()
+	 * (wp-includes/formatting.php): strip slashes from strings, leave every
+	 * other type alone.
+	 *
+	 * @param mixed $value Value to strip.
+	 * @return mixed
+	 */
+	function stripslashes_from_strings_only( $value ) {
+		return is_string( $value ) ? stripslashes( $value ) : $value;
+	}
+}
+
+if ( ! function_exists( 'stripslashes_deep' ) ) {
+	/**
+	 * Reimplementation of WordPress core's stripslashes_deep()
+	 * (wp-includes/formatting.php), which is `map_deep( $value,
+	 * 'stripslashes_from_strings_only' )` — recursing through arrays and object
+	 * properties and touching only strings.
+	 *
+	 * @param mixed $value Value to strip.
+	 * @return mixed
+	 */
+	function stripslashes_deep( $value ) {
+		if ( is_array( $value ) ) {
+			foreach ( $value as $key => $item ) {
+				$value[ $key ] = stripslashes_deep( $item );
+			}
+			return $value;
+		}
+		if ( is_object( $value ) ) {
+			foreach ( get_object_vars( $value ) as $key => $item ) {
+				$value->$key = stripslashes_deep( $item );
+			}
+			return $value;
+		}
+		return stripslashes_from_strings_only( $value );
+	}
+}
+
+if ( ! function_exists( 'wp_unslash' ) ) {
+	/**
+	 * Reimplementation of WordPress core's wp_unslash() (wp-includes/formatting.php),
+	 * which is exactly `stripslashes_deep( $value )`.
+	 *
+	 * Shimmed because the plugin calls it on `$_GET` input, which core has
+	 * already slashed by the time a handler sees it. Modelled faithfully rather
+	 * than stubbed to identity: a stub would make an unslash-then-compare guard
+	 * pass here while behaving differently under real core, which is the
+	 * false-green this harness exists to avoid.
+	 *
+	 * @param mixed $value Value to unslash.
+	 * @return mixed
+	 */
+	function wp_unslash( $value ) {
+		return stripslashes_deep( $value );
+	}
+}
+
 if ( ! function_exists( 'sanitize_key' ) ) {
 	/**
 	 * Reimplementation of WordPress core's sanitize_key() (wp-includes/formatting.php):

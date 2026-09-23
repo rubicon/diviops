@@ -339,6 +339,16 @@ trait DiviOps_Agent_Preset {
 		$chain        = self::collect_group_chain_refs( $d5 );
 		$chain_ids    = $chain['referenced_by'][ $preset_id ] ?? [];
 		$warnings     = self::preset_scope_warnings( $preset );
+		// #470: which design tokens this preset binds to — a question preset_inspect
+		// could not answer, on a real surface. Measured on staging before adopting
+		// it: 55 of 141 presets carry variable refs across 42 distinct ids, and all
+		// 42 resolve against the 196 known variables. walk_value_for_variable_refs()
+		// already had the signature; only the three bags needed walking.
+		$variable_ids = [];
+		$local_ids    = [];
+		foreach ( [ 'attrs', 'styleAttrs', 'renderAttrs' ] as $bag ) {
+			self::walk_value_for_variable_refs( $preset[ $bag ] ?? [], $variable_ids, $local_ids );
+		}
 		$noncanonical = array_filter( $occurrences, static fn( $o ) => 'd5_top_level' !== $o['provenance'] );
 		if ( count( $occurrences ) > 1 && ! empty( $noncanonical ) ) {
 			$warnings[] = [
@@ -364,6 +374,31 @@ trait DiviOps_Agent_Preset {
 			'styleAttrs'  => isset( $preset['styleAttrs'] ) ? (object) $preset['styleAttrs'] : null,
 			'renderAttrs' => isset( $preset['renderAttrs'] ) ? (object) $preset['renderAttrs'] : null,
 			'storage' => [ 'path' => $source['path'], 'provenance' => $source['provenance'], 'occurrences' => $occurrences ],
+			'variable_references' => [
+				'ids'      => array_keys( $variable_ids ),
+				'coverage' => 'Direct gvid-/gcid- names in $variable-marked strings in attrs, styleAttrs and renderAttrs only. No inherited, transitive, font-ID or computed-value resolution. Join ids to variable_list; an id absent from that list is unresolved.',
+			],
+			// #470. Both scans report separately because preset_inspect runs two —
+			// the live one and #314's revision pass — and they can disagree. `status`
+			// follows the live scan down rather than sitting at a constant 'partial'
+			// beside a block_scan of 'unavailable', which would be the same
+			// looks-fine-while-blind problem one level up.
+			'coverage' => [
+				'status'          => 'complete_within_scope' === $page_refs['scan'] ? 'partial' : $page_refs['scan'],
+				'block_scan'      => $page_refs['scan'],
+				'revision_scan'   => $revision_refs['scan'],
+				// Derived from the constant, never written beside it: upstream
+				// hardcodes "page/post", which would be false here the moment
+				// SCANNABLE_POST_TYPES changes — and is already false for the
+				// revision pass.
+				'blocks'          => 'Explicit modulePreset/groupPreset references in post_content of these post types: '
+					. implode( ', ', self::SCANNABLE_POST_TYPES )
+					. '; statuses publish, draft, private. Targeted ID prefilter, then structural block parsing.',
+				'preset_chains'   => 'Stored groupPresets / attrs.groupPreset bindings in the D5 module and group registry.',
+				'excluded'        => [ 'custom post types', 'library', 'Theme Builder', 'post meta', 'implicit defaults', 'inherited or computed usage' ],
+				'sample_limit'    => 10,
+				'zero_references' => 'No references found within this coverage does not mean safe to delete.',
+			],
 			'references' => [
 				'total'                 => $page_refs['count'] + ( $chain['counts'][ $preset_id ] ?? 0 ),
 				'block_ref_count'       => $page_refs['count'],
@@ -470,9 +505,20 @@ trait DiviOps_Agent_Preset {
 	): array {
 		global $wpdb;
 		$post_ids = [];
+		// #470: three situations produced `count => 0` and the caller could not tell
+		// them apart — scanned-and-none, could-not-scan, and nothing-in-scope. This
+		// is the surface an operator uses to decide whether a preset is safe to
+		// delete, so a zero that means "I could not look" must not render the same
+		// as one that means "I looked and there is nothing".
+		//
+		// Upstream's version of this (v1.5.64) carries two values. Ours needs three,
+		// because #314 gave this function a scope and an empty scope returns before
+		// the query — reporting that as `unavailable` would claim a database problem
+		// that did not happen.
 		if ( empty( $post_types ) || empty( $post_statuses ) ) {
-			return [ 'count' => 0, 'samples' => [] ];
+			return [ 'count' => 0, 'samples' => [], 'scan' => 'empty_scope' ];
 		}
+		$scan = 'unavailable';
 		if ( is_object( $wpdb ?? null ) && method_exists( $wpdb, 'get_col' ) && method_exists( $wpdb, 'prepare' ) && method_exists( $wpdb, 'esc_like' ) && ! empty( $wpdb->posts ) ) {
 			$type_placeholders   = implode( ',', array_fill( 0, count( $post_types ), '%s' ) );
 			$status_placeholders = implode( ',', array_fill( 0, count( $post_statuses ), '%s' ) );
@@ -484,9 +530,13 @@ trait DiviOps_Agent_Preset {
 			// phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Prepared above; this targeted prefilter avoids loading every post before structural block parsing.
 			$post_ids = $wpdb->get_col( $query );
+			// get_col() returns an array on both success and failure; last_error is
+			// what separates them. An empty array with no error really is "nothing
+			// matched", and that zero IS evidence.
+			$scan     = is_array( $post_ids ) && empty( $wpdb->last_error ) ? 'complete_within_scope' : 'unavailable';
 		}
 		if ( empty( $post_ids ) ) {
-			return [ 'count' => 0, 'samples' => [] ];
+			return [ 'count' => 0, 'samples' => [], 'scan' => $scan ];
 		}
 		$count = 0;
 		$samples = [];
@@ -507,7 +557,7 @@ trait DiviOps_Agent_Preset {
 				}
 			}
 		}
-		return [ 'count' => $count, 'samples' => array_slice( $samples, 0, 10 ) ];
+		return [ 'count' => $count, 'samples' => array_slice( $samples, 0, 10 ), 'scan' => $scan ];
 	}
 
 	private static function walk_blocks_for_preset_consumer( array $blocks, string $preset_id, $post, int &$count, array &$samples ): void {
@@ -769,6 +819,84 @@ trait DiviOps_Agent_Preset {
 	 * `presetId` in either shape is sometimes a single string and sometimes an array (Divi
 	 * accepts both via the stacking convention) — handle both.
 	 */
+	/**
+	 * Validate the `rename_strip_prefix` literal without altering it (#378).
+	 *
+	 * Returns `[ 'value' => string ]` or `[ 'error' => [...] ]`. The value is
+	 * passed through byte for byte: this parameter is compared against stored
+	 * preset names with `substr()`, so any normalisation here silently changes
+	 * which names match and by how many bytes they are cut.
+	 *
+	 * An empty string is valid and means "no prefix action", which the caller
+	 * already treats as a no-op.
+	 *
+	 * @param mixed $value Raw request parameter.
+	 * @return array
+	 */
+	private static function preset_validate_prefix_literal( $value ): array {
+		if ( ! is_string( $value ) ) {
+			return [ 'error' => [
+				'code'    => 'invalid_input',
+				'message' => 'prefix must be a plain string.',
+				'hint'    => 'Pass the literal prefix to strip, including any trailing separator.',
+				'data'    => [ 'field' => 'prefix', 'received_type' => gettype( $value ) ],
+			] ];
+		}
+		if ( '' !== $value && 1 !== preg_match( '//u', $value ) ) {
+			return [ 'error' => [
+				'code'    => 'invalid_input',
+				'message' => 'prefix must contain valid UTF-8.',
+				'hint'    => 'Re-encode the prefix as valid UTF-8 before retrying.',
+				'data'    => [ 'field' => 'prefix', 'reason' => 'invalid_encoding' ],
+			] ];
+		}
+		if ( preg_match( '/[\x{0000}-\x{001F}\x{007F}-\x{009F}]/u', $value ) ) {
+			return [ 'error' => [
+				'code'    => 'invalid_input',
+				'message' => 'prefix contains control characters.',
+				'hint'    => 'Pass one line of plain text without control bytes.',
+				'data'    => [ 'field' => 'prefix', 'reason' => 'control_character' ],
+			] ];
+		}
+		if ( strlen( $value ) > 255 ) {
+			return [ 'error' => [
+				'code'    => 'invalid_input',
+				'message' => 'prefix is longer than 255 bytes.',
+				'hint'    => 'A preset-name prefix this long is almost certainly a mistake.',
+				'data'    => [ 'field' => 'prefix', 'reason' => 'too_long', 'length' => strlen( $value ) ],
+			] ];
+		}
+		return [ 'value' => $value ];
+	}
+
+	/**
+	 * Count every preset item across both buckets.
+	 *
+	 * Used only as the loop bound on `remove_orphans`' fixed-point iteration
+	 * (#378). Each pass that does any work removes at least one item, so the
+	 * iteration cannot run more times than there are items — the bound is a
+	 * structural guarantee against a spin, not a tuning knob, and reaching it
+	 * would mean a pass removed nothing yet reported otherwise.
+	 *
+	 * @param mixed $d5 Registry payload.
+	 * @return int
+	 */
+	private static function preset_registry_item_count( $d5 ): int {
+		$count = 0;
+		foreach ( [ 'module', 'group' ] as $type ) {
+			if ( ! isset( $d5[ $type ] ) || ! is_array( $d5[ $type ] ) ) {
+				continue;
+			}
+			foreach ( $d5[ $type ] as $info ) {
+				$info = (array) $info;
+				if ( isset( $info['items'] ) && is_array( $info['items'] ) ) {
+					$count += count( $info['items'] );
+				}
+			}
+		}
+		return $count;
+	}
+
 	private static function collect_group_chain_refs( $d5 ) {
 		$counts        = [];
 		// Build `referenced_by` with the referencing UUID as KEY (not value)
@@ -963,11 +1091,22 @@ trait DiviOps_Agent_Preset {
 						$entry['referenced_by_presets'] = $chain['referenced_by'][ $pid ] ?? [];
 					}
 
+					// `spam_unreferenced` is the list an operator reads as "safe to
+					// delete", so it must be computed with the SAME predicate
+					// `preset_cleanup`'s removal pass uses — `! $is_ref && ! $is_default`
+					// — rather than a second, narrower one (#378). Audit used to
+					// branch on `$is_ref` alone and so advertised a bucket default as
+					// deletable while cleanup correctly refused to delete it. The
+					// entry already carries `is_default`, `referenced` and `ref_count`,
+					// so a default routed away from the delete list still reports
+					// exactly why it is protected.
+					$removable = ! $is_ref && ! $is_default;
+
 					if ( ! $has_content ) {
 						$summary['empty_defaults'][] = $entry;
-					} elseif ( $is_spam && $is_ref ) {
+					} elseif ( $is_spam && ! $removable ) {
 						$summary['spam_referenced'][] = $entry;
-					} elseif ( $is_spam && ! $is_ref ) {
+					} elseif ( $is_spam && $removable ) {
 						$summary['spam_unreferenced'][] = $entry;
 					} else {
 						$summary['descriptive'][] = $entry;
@@ -1004,7 +1143,24 @@ trait DiviOps_Agent_Preset {
 		$dry_run    = rest_sanitize_boolean( $request->get_param( 'dry_run' ) ?? true );
 		$dedup      = rest_sanitize_boolean( $request->get_param( 'dedup' ) ?? false );
 		$action     = sanitize_key( (string) ( $request->get_param( 'action' ) ?? '' ) );
-		$prefix     = sanitize_text_field( (string) ( $request->get_param( 'prefix' ) ?? '' ) );
+		// `prefix` is a literal to MATCH, not text to display, so it is validated
+		// rather than sanitized (#378). `sanitize_text_field()` ends in `trim()`,
+		// so `"DiviOps "` arrived as `"DiviOps"` and every renamed preset kept the
+		// separator the caller asked to remove — `"DiviOps Hero"` became `" Hero"`
+		// and the handler reported a clean rename. Stripping a trailing separator
+		// is the normal case for this feature. Same reasoning as
+		// `seo_validate_plain_text()` in trait-seo.php.
+		$prefix_check = self::preset_validate_prefix_literal( $request->get_param( 'prefix' ) ?? '' );
+		if ( isset( $prefix_check['error'] ) ) {
+			return self::envelope_error(
+				$prefix_check['error']['code'],
+				$prefix_check['error']['message'],
+				$prefix_check['error']['hint'] ?? null,
+				400,
+				$prefix_check['error']['data'] ?? null
+			);
+		}
+		$prefix     = $prefix_check['value'];
 		$scope_raw  = sanitize_key( (string) ( $request->get_param( 'scope' ) ?? '' ) );
 		$scope      = in_array( $scope_raw, [ 'spam', 'all' ], true ) ? $scope_raw : 'spam';
 		$d5         = self::get_d5_presets();
@@ -1068,8 +1224,15 @@ trait DiviOps_Agent_Preset {
 				unset( $info );
 			}
 
+			$cache = null;
 			if ( ! $dry_run && $modified ) {
 				self::save_d5_presets( $d5 );
+				// Site-wide, not per-post (#403). A preset is shared across posts by
+				// definition, so editing the definition can restyle every module bound
+				// to it — the compiled CSS this write invalidates is all of it. Gated on
+				// `$modified` so a run that changed nothing pays no site-wide cost, and
+				// so "nothing to do" stays distinguishable from "styles changed".
+				$cache = self::invalidate_divi_cache_sitewide();
 			}
 
 			if ( $dry_run ) {
@@ -1094,52 +1257,92 @@ trait DiviOps_Agent_Preset {
 				'renamed_count' => count( $renamed ),
 				'kept_count'    => $kept,
 				'renamed'       => $renamed,
+				'cache'         => $cache,
 			] );
 		}
 
 		// Action: remove_orphans — remove unreferenced presets.
 		// scope=spam (default): only spam-named orphans. scope=all: all non-default orphans.
 		if ( 'remove_orphans' === $action ) {
-			foreach ( [ 'module', 'group' ] as $type ) {
-				if ( ! isset( $d5[ $type ] ) ) {
-					continue;
-				}
-				foreach ( $d5[ $type ] as $mod => &$info ) {
-					if ( ! is_array( $info ) ) {
-						$info = (array) $info;
-					}
-					if ( ! isset( $info['items'] ) || ! is_array( $info['items'] ) ) {
+			// Iterate to a fixed point (#378). Removing a preset also removes its
+			// `groupPresets` chain refs, which can orphan a group preset that was
+			// only being kept alive by the preset just deleted. A single pass
+			// therefore left a registry an identical second run would cut further,
+			// and reported the doomed presets as `kept`.
+			//
+			// Only the CHAIN half of the referenced set is recomputed per pass.
+			// `$refs['all_uuids']` is page-content references, and deleting a
+			// preset does not edit a page — re-running collect_page_preset_refs()
+			// would be a get_posts() over every SCANNABLE_POST_TYPES row plus a
+			// parse_blocks() per hit to learn something that cannot have changed.
+			//
+			// Removals are applied to the in-memory `$d5` even under `dry_run`, so
+			// the preview converges on, and reports, the same closure the real run
+			// removes. Only `save_d5_presets()` is gated on `! $dry_run`.
+			$max_passes = self::preset_registry_item_count( $d5 ) + 1;
+
+			for ( $pass = 0; $pass < $max_passes; $pass++ ) {
+				$chain_now      = self::collect_group_chain_refs( $d5 );
+				$referenced_now = $refs['all_uuids'] + $chain_now['counts'];
+				$pass_removed   = 0;
+				$kept           = 0;
+
+				foreach ( [ 'module', 'group' ] as $type ) {
+					if ( ! isset( $d5[ $type ] ) ) {
 						continue;
 					}
-					$default_id = $info['default'] ?? '';
-
-					foreach ( $info['items'] as $pid => $preset ) {
-						$preset     = (array) $preset;
-						$name       = $preset['name'] ?? '';
-						$is_ref     = isset( $referenced_set[ $pid ] );
-						$is_default = $pid === $default_id;
-
-						$should_remove = ! $is_ref && ! $is_default;
-						if ( 'spam' === $scope ) {
-							$should_remove = $should_remove && self::is_spam_preset_name( $name );
+					foreach ( $d5[ $type ] as $mod => &$info ) {
+						if ( ! is_array( $info ) ) {
+							$info = (array) $info;
 						}
+						if ( ! isset( $info['items'] ) || ! is_array( $info['items'] ) ) {
+							continue;
+						}
+						$default_id = $info['default'] ?? '';
 
-						if ( $should_remove ) {
-							$removed[] = [ 'id' => $pid, 'module' => $mod, 'name' => $name ];
-							if ( ! $dry_run ) {
-								unset( $info['items'][ $pid ] );
-								$modified = true;
+						foreach ( $info['items'] as $pid => $preset ) {
+							$preset     = (array) $preset;
+							$name       = $preset['name'] ?? '';
+							$is_ref     = isset( $referenced_now[ $pid ] );
+							$is_default = $pid === $default_id;
+
+							$should_remove = ! $is_ref && ! $is_default;
+							if ( 'spam' === $scope ) {
+								$should_remove = $should_remove && self::is_spam_preset_name( $name );
 							}
-						} else {
-							$kept++;
+
+							if ( $should_remove ) {
+								$removed[] = [ 'id' => $pid, 'module' => $mod, 'name' => $name ];
+								unset( $info['items'][ $pid ] );
+								$pass_removed++;
+								if ( ! $dry_run ) {
+									$modified = true;
+								}
+							} else {
+								$kept++;
+							}
 						}
 					}
+					unset( $info );
 				}
-				unset( $info );
+
+				// `$kept` is deliberately recounted per pass rather than
+				// accumulated: only the final pass describes the registry the
+				// operator is left with.
+				if ( 0 === $pass_removed ) {
+					break;
+				}
 			}
 
+			$cache = null;
 			if ( ! $dry_run && $modified ) {
 				self::save_d5_presets( $d5 );
+				// Site-wide, not per-post (#403). A preset is shared across posts by
+				// definition, so editing the definition can restyle every module bound
+				// to it — the compiled CSS this write invalidates is all of it. Gated on
+				// `$modified` so a run that changed nothing pays no site-wide cost, and
+				// so "nothing to do" stays distinguishable from "styles changed".
+				$cache = self::invalidate_divi_cache_sitewide();
 			}
 
 			if ( $dry_run ) {
@@ -1164,6 +1367,7 @@ trait DiviOps_Agent_Preset {
 				'removed_count' => count( $removed ),
 				'kept_count'    => $kept,
 				'removed'       => $removed,
+				'cache'         => $cache,
 			] );
 		}
 
@@ -1273,8 +1477,15 @@ trait DiviOps_Agent_Preset {
 			unset( $info );
 		}
 
+		$cache = null;
 		if ( ! $dry_run && $modified ) {
 			self::save_d5_presets( $d5 );
+			// Site-wide, not per-post (#403). A preset is shared across posts by
+			// definition, so editing the definition can restyle every module bound
+			// to it — the compiled CSS this write invalidates is all of it. Gated on
+			// `$modified` so a run that changed nothing pays no site-wide cost, and
+			// so "nothing to do" stays distinguishable from "styles changed".
+			$cache = self::invalidate_divi_cache_sitewide();
 		}
 
 		if ( $dry_run ) {
@@ -1309,6 +1520,7 @@ trait DiviOps_Agent_Preset {
 			'removed'        => $removed,
 			'renamed'        => $renamed,
 			'deduped'        => $deduped,
+			'cache'          => $cache,
 		] );
 	}
 
@@ -1460,12 +1672,17 @@ trait DiviOps_Agent_Preset {
 		}
 
 		self::save_d5_presets( $d5 );
+		// Site-wide, not per-post (#403). A preset is shared across posts by
+		// definition, so a definition change can restyle every module bound to it.
+		// Once per request, after the single write.
+		$cache = self::invalidate_divi_cache_sitewide();
 
 		return self::attach_meta(
 			self::envelope_success( [
 				'success' => true,
 				'preset'  => $found,
 				'message' => "Preset '{$preset_id}' updated.",
+				'cache'   => $cache,
 			] ),
 			self::d5_preset_write_meta()
 		);
@@ -1552,11 +1769,16 @@ trait DiviOps_Agent_Preset {
 		}
 
 		self::save_d5_presets( $d5 );
+		// Site-wide, not per-post (#403). A preset is shared across posts by
+		// definition, so a definition change can restyle every module bound to it.
+		// Once per request, after the single write.
+		$cache = self::invalidate_divi_cache_sitewide();
 
 		$response = [
 			'success' => true,
 			'deleted' => $found,
 			'message' => "Preset '{$preset_id}' deleted.",
+			'cache'   => $cache,
 		];
 		if ( $default_cleared ) {
 			$response['default_cleared'] = $default_cleared;
@@ -1645,9 +1867,14 @@ trait DiviOps_Agent_Preset {
 			$d5[ $req_type ][ $req_module ] = $bucket;
 
 			self::save_d5_presets( $d5 );
+			// Site-wide, not per-post (#403). A preset is shared across posts by
+			// definition, so a definition change can restyle every module bound to it.
+			// Once per request, after the single write.
+			$cache = self::invalidate_divi_cache_sitewide();
 
 			return self::envelope_success( [
 				'success' => true,
+				'cache'   => $cache,
 				'preset'  => [
 					'id'             => '',
 					'type'           => $req_type,
@@ -1736,6 +1963,10 @@ trait DiviOps_Agent_Preset {
 		}
 
 		self::save_d5_presets( $d5 );
+		// Site-wide, not per-post (#403). A preset is shared across posts by
+		// definition, so a definition change can restyle every module bound to it.
+		// Once per request, after the single write.
+		$cache = self::invalidate_divi_cache_sitewide();
 
 		$msg = $do_unset
 			? "Default preset cleared for {$found['type']}/{$found['module']}."
@@ -1746,6 +1977,7 @@ trait DiviOps_Agent_Preset {
 				'success' => true,
 				'preset'  => $found,
 				'message' => $msg,
+				'cache'   => $cache,
 			] ),
 			self::d5_preset_write_meta()
 		);
@@ -1942,9 +2174,14 @@ trait DiviOps_Agent_Preset {
 		}
 
 		self::save_d5_presets( $d5 );
+		// Site-wide, not per-post (#403). A preset is shared across posts by
+		// definition, so a definition change can restyle every module bound to it.
+		// Once per request, after the single write.
+		$cache = self::invalidate_divi_cache_sitewide();
 
 		$response = [
 			'success' => true,
+			'cache'   => $cache,
 			'preset'  => [
 				'id'          => $uid,
 				'name'        => $name,
@@ -2619,6 +2856,13 @@ trait DiviOps_Agent_Preset {
 				// Fold the chain-updated registry into the D5 storage. Atomic write — both
 				// storage locations updated together by save_d5_presets().
 				self::save_d5_presets( $chain_result['registry'] );
+				// Site-wide on top of the per-page invalidate_divi_cache() calls in the
+				// apply loop (#403). Those cover the pages this run rewrote; this covers
+				// the preset DEFINITION the chain rewrite just changed, which reaches
+				// every page bound to it including ones this run never touched. Inside
+				// the gate, so a dry run or a reassign that swapped no chains sweeps
+				// nothing.
+				$summary['chain_cache'] = self::invalidate_divi_cache_sitewide();
 			}
 		}
 		if ( ! empty( $chain_details ) ) {

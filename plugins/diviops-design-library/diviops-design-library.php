@@ -59,6 +59,34 @@ class DiviOps_Design_Library {
 			self::VERSION,
 			[ 'in_footer' => true ]
 		);
+
+		// Keyboard and screen-reader semantics for native Divi toggles (#476).
+		// Divi's own markup gives the toggle title no button semantics, so a
+		// keyboard user cannot reach or operate one.
+		//
+		// The dependency is DIVI's handle, not ours — it comes from
+		// includes/builder-5/server/FrontEnd/Assets/DynamicAssetsUtils.php, and
+		// Divi 5 registers it through dynamic assets only when a toggle or
+		// accordion module is actually on the page. That is what scopes this
+		// script to pages with something to fix, and it is deliberate.
+		//
+		// The invisible consequence, recorded here because nothing surfaces it:
+		// when Divi does NOT register that handle, wp_enqueue_script() silently
+		// does nothing. Correct — no toggles, nothing to fix — but silent, so
+		// someone debugging "why did my a11y script not load" should land here.
+		wp_register_script(
+			'divi-faq-a11y',
+			$base_url . 'faq-toggle-a11y.js',
+			[ 'divi-script-library-toggle' ],
+			self::VERSION,
+			[ 'in_footer' => true ]
+		);
+		wp_register_style(
+			'divi-faq-a11y',
+			plugin_dir_url( __FILE__ ) . 'assets/css/faq-toggle-a11y.css',
+			[],
+			self::VERSION
+		);
 	}
 
 	/**
@@ -82,6 +110,22 @@ class DiviOps_Design_Library {
 		// Always load design-fx on Divi pages (lightweight).
 		if ( function_exists( 'et_pb_is_pagebuilder_used' ) && et_pb_is_pagebuilder_used( $post_id ) ) {
 			wp_enqueue_script( 'divi-design-fx' );
+		}
+
+		// Opt-in per page, and only where a native toggle can exist (#476). The
+		// page meta turns the ASSET on; the script's own `ddl-faq-a11y` class gate
+		// then decides which toggles it touches, so an opted-in page does not have
+		// the semantics of every toggle on it rewritten.
+		//
+		// Never inside the Visual Builder: VB manages its own toggle open/close
+		// state, and a front-end accessibility layer fighting it is worse than
+		// none. The script bails on `.et-fb` internally too — belt and braces,
+		// because the asset can already be on the page when VB opens.
+		if ( get_post_meta( $post_id, '_divi_design_faq_a11y', true ) === '1'
+			&& function_exists( 'et_pb_is_pagebuilder_used' ) && et_pb_is_pagebuilder_used( $post_id )
+			&& ! ( function_exists( 'et_fb_is_enabled' ) && et_fb_is_enabled() ) ) {
+			wp_enqueue_script( 'divi-faq-a11y' );
+			wp_enqueue_style( 'divi-faq-a11y' );
 		}
 
 		// Three.js only when explicitly requested.
@@ -171,6 +215,38 @@ class DiviOps_Design_Library {
 			.ddl-delay-4.ddl-visible { animation-delay: 0.4s; }
 			.ddl-delay-5.ddl-visible { animation-delay: 0.5s; }
 			.ddl-delay-6.ddl-visible { animation-delay: 0.6s; }
+
+			/* ===== Native Image Reveal (#487) =====
+			   Opt in with the ddl-image-reveal class on a Divi Image module.
+
+			   The baseline is VISIBLE. Nothing here clips an image until JavaScript
+			   adds ddl-image-reveal-active, so an image renders normally with CSS
+			   alone, with JS disabled, and before the observer fires. Do not move the
+			   clip onto .ddl-image-reveal itself -- that ships an invisible image to
+			   anyone whose script never runs, and it looks correct in every browser
+			   where the script does. */
+			@keyframes ddl-image-reveal {
+				from { clip-path: inset(0 100% 0 0); }
+				to   { clip-path: inset(0 0 0 0); }
+			}
+			/* Only the <img> is clipped -- clipping the module would take the link
+			   box and the focus ring with it. */
+			.et_pb_image.ddl-image-reveal .et_pb_image_wrap img.ddl-image-reveal-active {
+				animation: ddl-image-reveal 650ms cubic-bezier(0.16, 1, 0.3, 1) 1;
+			}
+			/* The Visual Builder re-renders modules as you edit; a half-run animation
+			   there is a corrupted editing surface, not a preview. */
+			#et-fb-app .et_pb_image.ddl-image-reveal .et_pb_image_wrap img.ddl-image-reveal-active,
+			.et-fb .et_pb_image.ddl-image-reveal .et_pb_image_wrap img.ddl-image-reveal-active {
+				animation: none !important;
+			}
+			/* Stated twice on purpose -- the script bails too, but this holds even if
+			   the script is cached, stale, or blocked. */
+			@media (prefers-reduced-motion: reduce) {
+				.et_pb_image.ddl-image-reveal .et_pb_image_wrap img.ddl-image-reveal-active {
+					animation: none !important;
+				}
+			}
 
 			/* ===== Animated Gradient Background ===== */
 			@keyframes ddl-gradient-shift {

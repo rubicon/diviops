@@ -29,6 +29,7 @@ WordPress plugin providing modern design effects for Divi 5 pages. CSS animation
 | `ddl-text-stroke` | Light text outline (stroke) |
 | `ddl-text-stroke-dark` | Dark text outline (stroke) |
 | `ddl-pulse-dot` | Pulsing green indicator |
+| `ddl-image-reveal` | Wipe reveal on an Image module (opt-in, scroll-triggered) |
 
 ### Three.js WebGL
 - Three.js r128 bundled locally (no CDN)

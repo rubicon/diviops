@@ -19,6 +19,7 @@
   function init() {
     setupEntranceAnimations();
     injectGooeyFilter();
+    setupImageReveals();
   }
 
   /**
@@ -55,6 +56,96 @@
       observer.observe(el);
     });
   }
+  /**
+   * Opt-in Image wipe reveal (#487).
+   * Add class "ddl-image-reveal" to a Divi Image module.
+   *
+   * This function only ever ADDS a class that CSS animates. It never hides
+   * anything: an image is fully visible before this runs, if it refuses, and
+   * if the script never loads at all. Every early return below is therefore
+   * safe by construction -- refusing costs an animation, not a visible image.
+   *
+   * The observer is attached AFTER load. Attaching it earlier lets native lazy
+   * loading satisfy the intersection while the image is still blank, which
+   * spends the reveal on nothing.
+   */
+  function setupImageReveals() {
+    if (document.querySelector('#et-fb-app, .et-fb')) return;
+    if (!('IntersectionObserver' in window) || !window.matchMedia ||
+        !window.CSS || !window.CSS.supports ||
+        !window.CSS.supports('clip-path', 'inset(0 0 0 0)')) return;
+
+    var reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    if (reducedMotion.matches) return;
+
+    forEachNode(document.querySelectorAll('.et_pb_image.ddl-image-reveal'), function (module) {
+      var img = module.querySelector('.et_pb_image_wrap img');
+      // A nested image belongs to an inner module, not this one.
+      if (!img || img.closest('.et_pb_image') !== module) return;
+
+      var observer;
+      var timer;
+      var started = false;
+      var finished = false;
+
+      // Removing the active class is the ONLY way the clip ends. Every failure
+      // path routes here, because a started-but-never-finished reveal leaves a
+      // blank space on a published page.
+      function cleanup() {
+        finished = true;
+        if (observer) observer.disconnect();
+        window.clearTimeout(timer);
+        img.removeEventListener('load', onLoad);
+        img.removeEventListener('error', cleanup);
+        img.removeEventListener('animationend', onAnimationDone);
+        img.removeEventListener('animationcancel', onAnimationDone);
+        img.classList.remove('ddl-image-reveal-active');
+      }
+
+      function onAnimationDone(event) {
+        if (event.target === img && event.animationName === 'ddl-image-reveal') cleanup();
+      }
+
+      function onLoad() {
+        if (finished || observer) return;
+        img.removeEventListener('load', onLoad);
+        // Loaded but zero-dimension: nothing to reveal.
+        if (!img.naturalWidth) {
+          cleanup();
+          return;
+        }
+
+        observer = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            if (finished || started || !entry.isIntersecting) return;
+            // Re-checked at fire time: the VB can open, and the motion
+            // preference can change, between setup and intersection.
+            if (reducedMotion.matches || document.querySelector('#et-fb-app, .et-fb')) {
+              cleanup();
+              return;
+            }
+            started = true;
+            observer.disconnect();
+            img.addEventListener('animationend', onAnimationDone);
+            img.addEventListener('animationcancel', onAnimationDone);
+            img.classList.add('ddl-image-reveal-active');
+            // Last resort: if the CSS is absent or no animation event is
+            // delivered, nothing else would ever remove the class.
+            timer = window.setTimeout(cleanup, 750);
+          });
+        }, { threshold: 0 });
+        observer.observe(img);
+      }
+
+      img.addEventListener('error', cleanup);
+      if (img.complete) {
+        onLoad();
+      } else {
+        img.addEventListener('load', onLoad);
+      }
+    });
+  }
+
   /**
    * Inject SVG filter for gooey text morph effect.
    * Only added when .ddl-gooey-wrap is present on the page.

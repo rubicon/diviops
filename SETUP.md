@@ -166,10 +166,20 @@ The remote shell is the one complaining, so the message reads like a malformed w
 
 ```bash
 #!/bin/bash
-exec ssh -o BatchMode=yes HOST "cd /srv/site && wp $(printf '%q ' "$@")"
+exec ssh -o BatchMode=yes -o RemoteCommand=none -o RequestTTY=no HOST \
+  "cd /srv/site && wp $(printf '%q ' "$@")"
 ```
 
 `printf '%q '` escapes each argument so the remote shell's re-parse reconstructs the original argv. Verified end to end, including `wp eval` with parentheses and quotes.
+
+**`RemoteCommand=none` and `RequestTTY=no` are not optional.** If the host has a `RemoteCommand` in your `~/.ssh/config` — a common way to make an interactive login land in the site directory — OpenSSH refuses to run a command argument at all:
+
+```
+$ ssh HOST 'wp option get home'
+Cannot execute command-line and remote command.     # exit 255
+```
+
+Every invocation then fails before wp-cli is reached, and the server reports it as a spawn failure, which reads like a missing binary rather than an ssh setting. Both flags are correct on a host with no `RemoteCommand` configured, so pass them unconditionally rather than waiting to find out.
 
 **Turn on connection multiplexing.** Without it every wp-cli call opens a fresh ssh session, and a managed host starts refusing them — the first connection succeeds and the next two time out. The server reports that as a spawn failure, which reads like a missing binary. In `~/.ssh/config`:
 
