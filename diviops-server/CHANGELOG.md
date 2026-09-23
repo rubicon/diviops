@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.16.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.15.0...mcp-server-v1.16.0) (2026-09-23)
+
+
+### Features
+
+* **#480:** report Divi drift beside plugin drift in meta_info ([#481](https://github.com/rubicon/diviops/issues/481)) ([8f19bd6](https://github.com/rubicon/diviops/commit/8f19bd6111326de578d7c1920379772f494ae398))
+
+
+### Bug Fixes
+
+* **#414:** write the padding corners Divi actually reads in the hover-gate bypass ([#463](https://github.com/rubicon/diviops/issues/463)) ([ce52e4b](https://github.com/rubicon/diviops/commit/ce52e4b5893f85a543191c7777595e9d65736742)), closes [#414](https://github.com/rubicon/diviops/issues/414)
+
 ## [1.15.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.14.0...mcp-server-v1.15.0) (2026-09-08)
 
 
