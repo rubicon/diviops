@@ -2547,8 +2547,8 @@ registerPluginTool(
       dry_run: DRY_RUN_FIELD,
       backup: BACKUP_FIELD,
     },
-    annotations: { idempotentHint: false },
-    _meta: { idempotent: "false" },
+    annotations: { idempotentHint: true },
+    _meta: { idempotent: "true" },
   },
   async ({ page_id, label, match_text, auto_index, occurrence, dry_run, backup }) => {
     const backupGate = backupCapabilityError("diviops_module_lock", backup);
@@ -2580,8 +2580,8 @@ registerPluginTool(
       dry_run: DRY_RUN_FIELD,
       backup: BACKUP_FIELD,
     },
-    annotations: { idempotentHint: false },
-    _meta: { idempotent: "false" },
+    annotations: { idempotentHint: true },
+    _meta: { idempotent: "true" },
   },
   async ({ page_id, label, match_text, auto_index, occurrence, dry_run, backup }) => {
     const backupGate = backupCapabilityError("diviops_module_unlock", backup);
@@ -3717,7 +3717,7 @@ registerPluginTool(
   "diviops_media_upload",
   {
     description:
-      "Upload an image into the WordPress media library from a public URL (server fetches, SSRF-guarded) or from base64 bytes. Provide exactly one of `url` or (`data_base64` + `filename`). Optional attach_to/title/alt/caption. Pass dry_run=true to preview. Returns the standard envelope; blocked internal targets return 'forbidden_target' (403), disallowed/spoofed types return 'unsupported_media_type' (415), SVG without an active sideload sanitizer returns 'svg_sanitizer_required' (415), and SVG from a caller lacking the site's configured SVG-upload capability returns 'svg_capability_required' (403).",
+      "Upload an image into the WordPress media library from a public URL (server fetches, SSRF-guarded) or from base64 bytes. Provide exactly one of `url` or (`data_base64` + `filename`). Optional attach_to/title/alt/caption. Pass dry_run=true to preview. Returns the standard envelope; blocked internal targets return 'forbidden_target' (403), disallowed/spoofed types return 'unsupported_media_type' (415), SVG without an active sideload sanitizer returns 'svg_sanitizer_required' (415), SVG from a caller lacking the site's configured SVG-upload capability returns 'svg_capability_required' (403), a fetched body over the size ceiling returns 'payload_too_large' (413), and a URL that cannot be retrieved returns 'fetch_failed' (502).",
     inputSchema: {
       url: z.string().url().optional().describe("Public http/https image URL to fetch."),
       data_base64: z.string().optional().describe("Base64-encoded file bytes (use with filename)."),
@@ -3764,7 +3764,7 @@ registerPluginTool(
   "diviops_media_list",
   {
     description:
-      "List/paginate media library attachments, optionally filtered by a mime type prefix (e.g. \"image/\") and/or a title search term. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.",
+      "List/paginate media library attachments, optionally filtered by a mime type prefix (e.g. \"image/\") and/or a `search` term. `search` is WordPress's general post search (WP_Query `s`), so it matches the attachment title, caption AND description — not the title alone. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.",
     inputSchema: {
       page: z.number().int().optional().default(1).describe("Page number"),
       per_page: z
