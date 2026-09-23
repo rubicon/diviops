@@ -339,6 +339,16 @@ trait DiviOps_Agent_Preset {
 		$chain        = self::collect_group_chain_refs( $d5 );
 		$chain_ids    = $chain['referenced_by'][ $preset_id ] ?? [];
 		$warnings     = self::preset_scope_warnings( $preset );
+		// #470: which design tokens this preset binds to — a question preset_inspect
+		// could not answer, on a real surface. Measured on staging before adopting
+		// it: 55 of 141 presets carry variable refs across 42 distinct ids, and all
+		// 42 resolve against the 196 known variables. walk_value_for_variable_refs()
+		// already had the signature; only the three bags needed walking.
+		$variable_ids = [];
+		$local_ids    = [];
+		foreach ( [ 'attrs', 'styleAttrs', 'renderAttrs' ] as $bag ) {
+			self::walk_value_for_variable_refs( $preset[ $bag ] ?? [], $variable_ids, $local_ids );
+		}
 		$noncanonical = array_filter( $occurrences, static fn( $o ) => 'd5_top_level' !== $o['provenance'] );
 		if ( count( $occurrences ) > 1 && ! empty( $noncanonical ) ) {
 			$warnings[] = [
@@ -364,6 +374,31 @@ trait DiviOps_Agent_Preset {
 			'styleAttrs'  => isset( $preset['styleAttrs'] ) ? (object) $preset['styleAttrs'] : null,
 			'renderAttrs' => isset( $preset['renderAttrs'] ) ? (object) $preset['renderAttrs'] : null,
 			'storage' => [ 'path' => $source['path'], 'provenance' => $source['provenance'], 'occurrences' => $occurrences ],
+			'variable_references' => [
+				'ids'      => array_keys( $variable_ids ),
+				'coverage' => 'Direct gvid-/gcid- names in $variable-marked strings in attrs, styleAttrs and renderAttrs only. No inherited, transitive, font-ID or computed-value resolution. Join ids to variable_list; an id absent from that list is unresolved.',
+			],
+			// #470. Both scans report separately because preset_inspect runs two —
+			// the live one and #314's revision pass — and they can disagree. `status`
+			// follows the live scan down rather than sitting at a constant 'partial'
+			// beside a block_scan of 'unavailable', which would be the same
+			// looks-fine-while-blind problem one level up.
+			'coverage' => [
+				'status'          => 'complete_within_scope' === $page_refs['scan'] ? 'partial' : $page_refs['scan'],
+				'block_scan'      => $page_refs['scan'],
+				'revision_scan'   => $revision_refs['scan'],
+				// Derived from the constant, never written beside it: upstream
+				// hardcodes "page/post", which would be false here the moment
+				// SCANNABLE_POST_TYPES changes — and is already false for the
+				// revision pass.
+				'blocks'          => 'Explicit modulePreset/groupPreset references in post_content of these post types: '
+					. implode( ', ', self::SCANNABLE_POST_TYPES )
+					. '; statuses publish, draft, private. Targeted ID prefilter, then structural block parsing.',
+				'preset_chains'   => 'Stored groupPresets / attrs.groupPreset bindings in the D5 module and group registry.',
+				'excluded'        => [ 'custom post types', 'library', 'Theme Builder', 'post meta', 'implicit defaults', 'inherited or computed usage' ],
+				'sample_limit'    => 10,
+				'zero_references' => 'No references found within this coverage does not mean safe to delete.',
+			],
 			'references' => [
 				'total'                 => $page_refs['count'] + ( $chain['counts'][ $preset_id ] ?? 0 ),
 				'block_ref_count'       => $page_refs['count'],
@@ -470,9 +505,20 @@ trait DiviOps_Agent_Preset {
 	): array {
 		global $wpdb;
 		$post_ids = [];
+		// #470: three situations produced `count => 0` and the caller could not tell
+		// them apart — scanned-and-none, could-not-scan, and nothing-in-scope. This
+		// is the surface an operator uses to decide whether a preset is safe to
+		// delete, so a zero that means "I could not look" must not render the same
+		// as one that means "I looked and there is nothing".
+		//
+		// Upstream's version of this (v1.5.64) carries two values. Ours needs three,
+		// because #314 gave this function a scope and an empty scope returns before
+		// the query — reporting that as `unavailable` would claim a database problem
+		// that did not happen.
 		if ( empty( $post_types ) || empty( $post_statuses ) ) {
-			return [ 'count' => 0, 'samples' => [] ];
+			return [ 'count' => 0, 'samples' => [], 'scan' => 'empty_scope' ];
 		}
+		$scan = 'unavailable';
 		if ( is_object( $wpdb ?? null ) && method_exists( $wpdb, 'get_col' ) && method_exists( $wpdb, 'prepare' ) && method_exists( $wpdb, 'esc_like' ) && ! empty( $wpdb->posts ) ) {
 			$type_placeholders   = implode( ',', array_fill( 0, count( $post_types ), '%s' ) );
 			$status_placeholders = implode( ',', array_fill( 0, count( $post_statuses ), '%s' ) );
@@ -484,9 +530,13 @@ trait DiviOps_Agent_Preset {
 			// phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Prepared above; this targeted prefilter avoids loading every post before structural block parsing.
 			$post_ids = $wpdb->get_col( $query );
+			// get_col() returns an array on both success and failure; last_error is
+			// what separates them. An empty array with no error really is "nothing
+			// matched", and that zero IS evidence.
+			$scan     = is_array( $post_ids ) && empty( $wpdb->last_error ) ? 'complete_within_scope' : 'unavailable';
 		}
 		if ( empty( $post_ids ) ) {
-			return [ 'count' => 0, 'samples' => [] ];
+			return [ 'count' => 0, 'samples' => [], 'scan' => $scan ];
 		}
 		$count = 0;
 		$samples = [];
@@ -507,7 +557,7 @@ trait DiviOps_Agent_Preset {
 				}
 			}
 		}
-		return [ 'count' => $count, 'samples' => array_slice( $samples, 0, 10 ) ];
+		return [ 'count' => $count, 'samples' => array_slice( $samples, 0, 10 ), 'scan' => $scan ];
 	}
 
 	private static function walk_blocks_for_preset_consumer( array $blocks, string $preset_id, $post, int &$count, array &$samples ): void {
