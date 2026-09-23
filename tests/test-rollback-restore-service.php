@@ -54,6 +54,15 @@
  * `rollback_snapshot_record_persisted()` itself IS covered, directly, in section
  * 9 — including both false cases. What is uncovered is its two call sites.
  *
+ * **The bounded recovery attempt is now reachable from exactly one place**, and
+ * that place is the declared gap. After a third review, finalisation was moved
+ * out of the response formatter and into the two branches that own the outcome:
+ * the write failing, and the write succeeding. Only the first passes
+ * `$failed = true`, so only a failing
+ * `update_post_content_with_integrity_guard()` can trigger a recovery — which is
+ * the seam the plugin does not have. A mutation removing that call survives, and
+ * it is the same gap named below rather than a new one.
+ *
  * **The bounded recovery attempt** inside
  * `rollback_snapshot_finish_recovery_point()` fires only when a write reports
  * failure AFTER changing the page. Reaching it through the real code needs
@@ -745,3 +754,95 @@ assert_same(
 foreach ( $ret_fillers as $ret_filler ) {
 	delete_option( $ret_filler );
 }
+
+/*
+ * ---------------------------------------------------------------------------
+ * 14. The formatter never writes, and never lies about what exists (#512).
+ * ---------------------------------------------------------------------------
+ *
+ * A third review found the previous fix was placed one gate too low. `$point`
+ * was dropped after FINALISATION, but two returns sit between the content write
+ * committing and that line — `side_effect_readback_failed` and `readback_failed`
+ * — and both still held a live point. `$respond` re-entered
+ * `finish_recovery_point()` with `$failed = true`, saw a page that had
+ * legitimately changed because the restore changed it, and spent the point
+ * writing the old content back. Same defect as before, one branch over.
+ *
+ * And on the one path the fix did cover it introduced a second: with `$point`
+ * nulled, the envelope reported `recovery_point.created: false` while a
+ * created, persisted, finalised, usable point sat in the store. A Pro caller
+ * gating on `created` would conclude the restore could not be undone, and the
+ * envelope never named the snapshot that would undo it.
+ *
+ * Both come from one design error: a response FORMATTER that writes to the
+ * database. It no longer does. Finalisation happens at the two branches that
+ * own the outcome — the write failing, and the write succeeding — and `$respond`
+ * reports what exists.
+ */
+
+/* C1: a post-commit failure must not undo the restore. The trigger is a stored
+ * `before.side_effects` shape the readback cannot reproduce, so the side-effect
+ * verification fails AFTER the content write has committed. */
+$commit_seed = rollback_rs_seed( 81019, 'BEFORE-81019', 'AFTER-81019' );
+$commit_rec  = get_option( $commit_seed['option'], array() );
+$commit_rec['before']['side_effects']['post_meta']['_et_pb_use_builder'] = array( 'exists' => true, 'value' => null );
+update_option( $commit_seed['option'], $commit_rec, false );
+
+$commit_result = rollback_rs_service( $commit_seed['snapshot_id'], false, true );
+
+// Control: the fixture really does reach the post-commit failure, rather than
+// being refused earlier for some unrelated reason.
+assert_same(
+	'rollback_snapshot.side_effect_readback_failed',
+	$commit_result['error']['code'] ?? null,
+	'#512: the fixture reaches the post-commit side-effect failure'
+);
+assert_same(
+	'BEFORE-81019',
+	(string) get_post( 81019 )->post_content,
+	'#512: and the committed content STAYS committed — a formatting path never undoes a restore'
+);
+assert_same(
+	false,
+	$commit_result['error']['data']['recovery_point']['recovery_attempted'] ?? null,
+	'#512: no recovery is attempted from a formatter'
+);
+
+/* C2: the same failure must report the recovery point that actually exists. */
+assert_same(
+	true,
+	$commit_result['error']['data']['recovery_point']['created'] ?? null,
+	'#512: a recovery point that was created is reported as created, not erased by the formatter'
+);
+assert_true(
+	is_string( $commit_result['error']['data']['recovery_point']['snapshot_id'] ?? null )
+		&& '' !== $commit_result['error']['data']['recovery_point']['snapshot_id'],
+	'#512: and is named, so a caller can inspect or restore it by hand'
+);
+$commit_point = get_option( 'diviops_rollback_snapshot_' . $commit_result['error']['data']['recovery_point']['snapshot_id'], null );
+assert_true( is_array( $commit_point ), '#512: and that id resolves to a real stored snapshot' );
+assert_same(
+	'AFTER-81019',
+	(string) ( $commit_point['before']['value'] ?? '' ),
+	'#512: holding the content the restore overwrote, which is what makes it a way back'
+);
+
+/* C8 from the third review: `before_checksum` is canonical and `after_checksum`
+ * is raw, so a caller diffing them got a difference on a page nothing touched —
+ * the opposite of what `state_changed` says. The canonical form of the observed
+ * bytes is now emitted alongside, so like can be compared with like. */
+$frame2_markup = '<!-- wp:divi/text {"attrs":{"url":"https:\/\/example.net"}} --><!-- /wp:divi/text -->';
+$frame2_post   = diviops_test_register_post( 81020, $frame2_markup );
+$frame2_point  = diviops_call( 'rollback_snapshot_create_for_post_write', array( $frame2_post, 'rollback_snapshot_restore', array() ) );
+$frame2_ev     = diviops_call( 'rollback_snapshot_finish_recovery_point', array( $frame2_point, true ) );
+
+assert_same( false, $frame2_ev['state_changed'] ?? null, '#512: the untouched page reports state_changed false' );
+assert_same(
+	$frame2_ev['before_checksum'] ?? null,
+	$frame2_ev['after_checksum_canonical'] ?? null,
+	'#512: and the canonical before/after checksums agree, so a caller diffing them reaches the same conclusion state_changed does'
+);
+assert_true(
+	( $frame2_ev['after_checksum'] ?? '' ) !== ( $frame2_ev['after_checksum_canonical'] ?? '' ),
+	'#512: while the raw after_checksum still describes the bytes actually on the page, which is what every other after-checksum in the file means'
+);

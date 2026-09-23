@@ -2126,8 +2126,26 @@ trait DiviOps_Agent_Rollback {
 	 * @return WP_REST_Response
 	 */
 	public static function rollback_snapshot_restore_service( $snapshot_id, bool $dry_run = false, bool $protect_current = false ) {
-		$point   = null;
-		$respond = static function ( $response ) use ( $protect_current, &$point ) {
+		$point      = null;
+		$protection = null;
+		/*
+		 * Formats a protected failure. It attaches evidence and nothing else.
+		 *
+		 * It used to FINALISE the recovery point, which meant a response formatter
+		 * could write to the database and, on a post-commit failure, spend the point
+		 * and undo a restore that had already succeeded — while the same envelope
+		 * reported `committed: true`. A first fix nulled `$point` after finalisation;
+		 * a second review showed that was one gate too low, leaving two post-commit
+		 * returns still able to do it, and that on the one path it did cover it
+		 * reported `created: false` for a recovery point that existed and was usable.
+		 *
+		 * The fix is to take the side effect out of the formatter entirely.
+		 * Finalisation now happens once, at the two places that own the decision —
+		 * the write failing, and the write succeeding — and this closure reports
+		 * whatever exists at the time. A path that has not finalised yet says so,
+		 * naming the point, rather than inventing either answer.
+		 */
+		$respond = static function ( $response ) use ( $protect_current, &$point, &$protection ) {
 			if ( ! $protect_current ) {
 				return $response;
 			}
@@ -2139,11 +2157,25 @@ trait DiviOps_Agent_Rollback {
 					$data,
 					array_flip( [ 'snapshot_id', 'record_id', 'kind', 'drift_kind', 'committed', 'changed_fields', 'prior_checksum', 'intended_checksum', 'expected_checksum', 'restored_checksum' ] )
 				);
-				$body['error']['data']['recovery_point'] = null !== $point
-					? self::rollback_snapshot_finish_recovery_point( $point, true )
-					: [ 'created' => false, 'finalized' => false, 'usable' => false, 'recovery_attempted' => false, 'recovery_verified' => false ];
-				if ( null !== $point && ! array_key_exists( 'committed', $body['error']['data'] ) ) {
-					$body['error']['data']['committed'] = $body['error']['data']['recovery_point']['state_changed'] ?? null;
+				if ( null !== $protection ) {
+					// Already finalised by whichever branch owned the outcome.
+					$body['error']['data']['recovery_point'] = $protection;
+				} elseif ( null !== $point ) {
+					// Captured, not yet finalised. Say exactly that: `usable` false
+					// because nothing has verified it, but the id is named so a caller
+					// can inspect or restore it by hand.
+					$body['error']['data']['recovery_point'] = [
+						'snapshot_id'        => $point['snapshot_id'],
+						'created'            => true,
+						'capture_verified'   => true,
+						'finalized'          => false,
+						'usable'             => false,
+						'before_checksum'    => $point['before']['checksum'],
+						'recovery_attempted' => false,
+						'recovery_verified'  => false,
+					];
+				} else {
+					$body['error']['data']['recovery_point'] = [ 'created' => false, 'finalized' => false, 'usable' => false, 'recovery_attempted' => false, 'recovery_verified' => false ];
 				}
 				$response->set_data( $body );
 			}
@@ -2287,6 +2319,13 @@ trait DiviOps_Agent_Rollback {
 			$current_content
 		);
 		if ( is_wp_error( $result ) ) {
+			// The one outcome a bounded recovery is for: the write reported failure.
+			// finish_recovery_point() distinguishes a write that never landed (marked
+			// aborted_before_write, nothing to recover) from one that changed the page
+			// before failing (one recovery attempt, then the point is spent).
+			if ( null !== $point ) {
+				$protection = self::rollback_snapshot_finish_recovery_point( $point, true );
+			}
 			return $respond( self::envelope_from_content_write_error( $result ) );
 		}
 
@@ -2334,7 +2373,11 @@ trait DiviOps_Agent_Rollback {
 			) );
 		}
 
-		$protection = null !== $point ? self::rollback_snapshot_finish_recovery_point( $point, false ) : null;
+		// The write committed and its side effects verified. Finalise once, here.
+		// Everything after this point reports $protection rather than recomputing it.
+		if ( null !== $point ) {
+			$protection = self::rollback_snapshot_finish_recovery_point( $point, false );
+		}
 		if ( null !== $protection && empty( $protection['usable'] ) ) {
 			self::invalidate_divi_cache( (int) $post->ID );
 			return self::envelope_error(
@@ -2345,17 +2388,6 @@ trait DiviOps_Agent_Rollback {
 				[ 'snapshot_id' => $snapshot_id, 'committed' => true, 'changed_fields' => [ 'post_content', 'post_meta' ], 'recovery_point' => $protection ]
 			);
 		}
-
-		// The write is committed and its recovery point is finalised. Every failure
-		// from here on is bookkeeping, and a bookkeeping failure must not cost the
-		// caller the restore that already succeeded. Dropping $point is what stops
-		// it: `$respond` would otherwise re-enter finish_recovery_point() with
-		// $failed = true, see a page that legitimately changed — the restore
-		// changed it — judge the point usable, and spend it writing the old content
-		// back, while the envelope still reported `committed: true`. Closing it
-		// here rather than at the one return that hit it means a later return
-		// cannot reintroduce it.
-		$point = null;
 
 		self::invalidate_divi_cache( (int) $post->ID );
 		$record['status']                            = 'restore_applied';
@@ -2476,6 +2508,12 @@ trait DiviOps_Agent_Rollback {
 		$evidence['state_changed'] = ! $unchanged;
 		$point                     = self::rollback_snapshot_mark_post_write( $point, $failed && $unchanged ? 'aborted_before_write' : 'write_applied', $content );
 		$evidence['after_checksum'] = $point['after']['checksum'];
+		// `before_checksum` is CANONICAL (#208 normalises at capture) and
+		// `after_checksum` is RAW, like every other after-checksum in this file. A
+		// caller diffing the two therefore gets a difference even when nothing
+		// changed, which is the opposite of what `state_changed` says. Emit the
+		// canonical form of the observed bytes too, so like can be compared with like.
+		$evidence['after_checksum_canonical'] = self::rollback_snapshot_checksum( $compare );
 		$evidence['finalized']      = self::rollback_snapshot_record_persisted( $point );
 		$evidence['usable']         = $evidence['finalized'] && 'write_applied' === $point['status'];
 
