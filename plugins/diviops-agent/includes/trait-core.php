@@ -614,9 +614,20 @@ trait DiviOps_Agent_Core {
 	 *                                            function is also the write path for raw-content
 	 *                                            callers (page_update_content, tb_layout_update)
 	 *                                            where the caller's new content is legitimately
-	 *                                            allowed to drop a wrapper on purpose. Only the
-	 *                                            parse_blocks()/serialize_blocks() round-trip
-	 *                                            sites, which never legitimately do that, pass true.
+	 *                                            allowed to drop a wrapper on purpose.
+	 *
+	 *                                            Callers that pass true are those which never
+	 *                                            legitimately drop a wrapper. That was originally
+	 *                                            only the parse_blocks()/serialize_blocks()
+	 *                                            round-trip sites; #38's bulk_find_replace now
+	 *                                            passes true as well, and is NOT a round-trip
+	 *                                            site -- it splices one opener at a time and
+	 *                                            never builds a block tree. The criterion is the
+	 *                                            caller's intent, not its mechanism: a literal
+	 *                                            find/replace never means to remove a wrapper, so
+	 *                                            a write that removed one is a corrupted splice
+	 *                                            rather than an authored change. The check is a
+	 *                                            raw-string scan, so it costs nothing.
 	 * @return array|WP_Error
 	 */
 	private static function update_post_content_with_integrity_guard( int $post_id, string $content, string $error_namespace, string $target_label, string $previous_content, bool $check_global_layout_drift = false ) {

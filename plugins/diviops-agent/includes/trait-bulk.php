@@ -1604,4 +1604,934 @@ trait DiviOps_Agent_Bulk {
 		);
 	}
 
+
+	/* ====================================================================
+	 * bulk_find_replace (#496, phase 3 of #38)
+	 *
+	 * Literal find/replace across an explicit target list, on the same harness
+	 * phase 2 proved.
+	 *
+	 * **It never builds a block tree.** Phase 0 measured
+	 * `serialize_blocks( parse_blocks_for_write( $c ) ) === $c` at 82.6% across
+	 * this repository's reference site -- one page gained 2,952 bytes through a
+	 * round trip that changed nothing, and `global_layout_write_refusal_reason()`
+	 * returned null on it. The spec's exit criterion closes the whole-tree path
+	 * permanently on anything under 100%.
+	 *
+	 * The distinction that makes the alternative safe is narrow and must not be
+	 * widened: decoding ONE opener's attribute JSON, editing a decoded string
+	 * value, and re-encoding THAT ONE OPENER touches nothing else in the document
+	 * and cannot materialise a `divi/global-layout` wrapper. Parsing the whole
+	 * document does both.
+	 * ================================================================= */
+
+	/**
+	 * Decode one block opener's attributes WITHOUT the assoc flag.
+	 *
+	 * The assoc flag is the whole point of this function existing beside
+	 * `extract_attrs_from_block_markup()`, which passes it. An adversarial review
+	 * found the consequence: `json_decode( $json, true )` turns an empty JSON
+	 * OBJECT into an empty PHP ARRAY, and re-encoding it emits `[]` rather than
+	 * `{}`.
+	 *
+	 * Concretely, on `{"decoration":{},"content":{"desktop":{"value":"Acme"}}}`,
+	 * replacing `Acme` and re-encoding silently rewrites `"decoration":{}` to
+	 * `"decoration":[]`. Every guard in this file passes it: the JSON is valid,
+	 * so the re-validation is happy; the marker census is unchanged, because no
+	 * delimiter moved; `find_malformed_block_attr_escape()` never calls
+	 * `json_decode`; `global_layout_write_refusal_reason()` only decodes
+	 * `divi/global-layout` openers; and the readback matches, because WordPress
+	 * stored exactly what was requested. **An attribute the caller never named
+	 * changes type, on up to 25 pages, silently** -- which is the whole-tree
+	 * hazard arriving through the one-opener path built to avoid it.
+	 *
+	 * `serialize_block_attrs_canonical()`'s own docblock already asks for the
+	 * stdClass tree ("so empty objects re-encode as `{}`, not `[]`"). This
+	 * honours a contract that was already written down.
+	 *
+	 * @param string $comment The opener comment, `<!-- wp:name {json} ... -->`.
+	 * @return object|null Decoded attrs as stdClass, or null when undecodable.
+	 */
+	private static function bulk_decode_opener_attrs( string $comment ) {
+		$json_start = strpos( $comment, '{' );
+		if ( false === $json_start ) {
+			// No attributes at all is not a failure: the opener simply has none.
+			return new stdClass();
+		}
+
+		$json_end = strrpos( $comment, '}' );
+		if ( false === $json_end || $json_end < $json_start ) {
+			return null;
+		}
+
+		$decoded = json_decode( substr( $comment, $json_start, $json_end - $json_start + 1 ) );
+
+		return ( $decoded instanceof stdClass ) ? $decoded : null;
+	}
+
+	/**
+	 * Replace a literal substring in every string leaf of a decoded attrs tree.
+	 *
+	 * Walks stdClass and array nodes alike and rewrites only string leaves, so a
+	 * numeric or boolean attribute is never coerced to a string on the way
+	 * through. Counts what it changed, because a replace that reports a count it
+	 * did not perform is worse than one that fails.
+	 *
+	 * @param mixed  $node    Decoded node.
+	 * @param string $search  Literal needle.
+	 * @param string $replace Replacement.
+	 * @param int    $count   Receives the number of occurrences replaced.
+	 * @return mixed Rewritten node.
+	 */
+	private static function bulk_replace_in_attrs( $node, string $search, string $replace, int &$count ) {
+		if ( is_string( $node ) ) {
+			$occurrences = substr_count( $node, $search );
+			if ( $occurrences > 0 ) {
+				$count += $occurrences;
+				return str_replace( $search, $replace, $node );
+			}
+			return $node;
+		}
+
+		if ( $node instanceof stdClass ) {
+			foreach ( get_object_vars( $node ) as $key => $value ) {
+				$node->$key = self::bulk_replace_in_attrs( $value, $search, $replace, $count );
+			}
+			return $node;
+		}
+
+		if ( is_array( $node ) ) {
+			foreach ( $node as $key => $value ) {
+				$node[ $key ] = self::bulk_replace_in_attrs( $value, $search, $replace, $count );
+			}
+			return $node;
+		}
+
+		return $node;
+	}
+
+	/**
+	 * Module openers carrying an `attrs.locked` key.
+	 *
+	 * Detection is a per-opener attrs decode, never a `strpos` for the string
+	 * `locked`, which is wrong in BOTH directions: it matches a `locked` key
+	 * nested under an unrelated attribute, and it misses key-order and
+	 * whitespace variants.
+	 *
+	 * @param string $content Raw post content.
+	 * @return array<int, array{name:string,offset:int}>
+	 */
+	private static function bulk_locked_modules( string $content ): array {
+		$locked = [];
+		foreach ( self::bulk_opener_spans( $content ) as $span ) {
+			$comment = substr( $content, $span['start'], $span['end'] - $span['start'] );
+			$attrs   = self::bulk_decode_opener_attrs( $comment );
+			if ( $attrs instanceof stdClass && property_exists( $attrs, 'locked' ) ) {
+				$locked[] = [ 'name' => $span['name'], 'offset' => $span['start'] ];
+			}
+		}
+		return $locked;
+	}
+
+	/**
+	 * Apply a literal find/replace to one document, without building a tree.
+	 *
+	 * Body-text matches are a raw splice of the raw string. Attribute matches
+	 * decode that one opener, replace on the decoded value, re-encode through
+	 * `serialize_block_attrs_canonical()`, and require the result to decode
+	 * cleanly before it is spliced back over that opener's span.
+	 *
+	 * Openers are rewritten LAST TO FIRST so every remaining span's offsets stay
+	 * valid: a replacement almost always changes length, and rewriting forwards
+	 * would invalidate every span after the first edit.
+	 *
+	 * @param string $content Raw post content.
+	 * @param string $search  Literal needle.
+	 * @param string $replace Replacement.
+	 * @param string $scope   `body`, `attrs` or `both`.
+	 * @return array{content:string,body:int,attrs:int,error:?string,error_block:?string}
+	 */
+	private static function bulk_replace_in_content( string $content, string $search, string $replace, string $scope ): array {
+		$spans      = self::bulk_opener_spans( $content );
+		$body_count = 0;
+		$attr_count = 0;
+
+		// ---- Attribute matches, last opener first ----------------------
+		if ( 'body' !== $scope ) {
+			for ( $i = count( $spans ) - 1; $i >= 0; $i-- ) {
+				$span    = $spans[ $i ];
+				$comment = substr( $content, $span['start'], $span['end'] - $span['start'] );
+				if ( false === strpos( $comment, $search ) && false === strpos( $comment, (string) self::bulk_needle_stored_form( $search ) ) ) {
+					continue;
+				}
+
+				$attrs = self::bulk_decode_opener_attrs( $comment );
+				if ( ! $attrs instanceof stdClass ) {
+					return [
+						'content'     => $content,
+						'body'        => 0,
+						'attrs'       => 0,
+						'error'       => 'bulk.attrs_decode_failed',
+						'error_block' => $span['name'],
+					];
+				}
+
+				$changed = 0;
+				$attrs   = self::bulk_replace_in_attrs( $attrs, $search, $replace, $changed );
+				if ( 0 === $changed ) {
+					continue;
+				}
+
+				$encoded = self::serialize_block_attrs_canonical( $attrs );
+				if ( ! is_string( $encoded ) || null === json_decode( $encoded ) ) {
+					// The single most important refusal in this file. A
+					// replacement containing `"` or `\` spliced raw into
+					// attribute JSON emits invalid JSON that every other guard
+					// here passes, and Divi then parses the block with empty
+					// attrs and the module's content is gone.
+					return [
+						'content'     => $content,
+						'body'        => 0,
+						'attrs'       => 0,
+						'error'       => 'bulk.attrs_reencode_invalid',
+						'error_block' => $span['name'],
+					];
+				}
+
+				$malformed = self::find_malformed_block_attr_escape( $encoded );
+				if ( null !== $malformed ) {
+					return [
+						'content'     => $content,
+						'body'        => 0,
+						'attrs'       => 0,
+						'error'       => 'bulk.attrs_escape_malformed',
+						'error_block' => $span['name'],
+					];
+				}
+
+				// Rebuild the opener around the new attrs, preserving the block
+				// name and the self-closing form exactly as they were.
+				$json_start = strpos( $comment, '{' );
+				$json_end   = strrpos( $comment, '}' );
+				$prefix     = false === $json_start ? rtrim( substr( $comment, 0, strlen( $comment ) ) ) : substr( $comment, 0, $json_start );
+				$suffix     = false === $json_end ? '' : substr( $comment, $json_end + 1 );
+				if ( false === $json_start ) {
+					// Nothing was decoded, so nothing could have changed.
+					continue;
+				}
+
+				$content     = substr( $content, 0, $span['start'] ) . $prefix . $encoded . $suffix . substr( $content, $span['end'] );
+				$attr_count += $changed;
+			}
+		}
+
+		// ---- Body-text matches -----------------------------------------
+		if ( 'attrs' !== $scope ) {
+			$spans  = self::bulk_opener_spans( $content );
+			$offset = 0;
+			$out    = '';
+			$cursor = 0;
+
+			while ( true ) {
+				$at = strpos( $content, $search, $offset );
+				if ( false === $at ) {
+					break;
+				}
+				if ( null !== self::bulk_opener_span_at( $spans, $at ) ) {
+					// Inside an opener comment: handled by the attrs pass, or
+					// deliberately skipped when scope is body.
+					$offset = $at + 1;
+					continue;
+				}
+
+				// A body match whose own span carries a block delimiter would
+				// splice a comment boundary into, or out of, the document.
+				$window = substr( $content, $at, strlen( $search ) );
+				if ( false !== strpos( $window, '<!--' ) || false !== strpos( $window, '-->' ) ) {
+					return [
+						'content'     => $content,
+						'body'        => 0,
+						'attrs'       => 0,
+						'error'       => 'bulk.match_spans_block_boundary',
+						'error_block' => null,
+					];
+				}
+				if ( false !== strpos( $replace, '<!--' ) || false !== strpos( $replace, '-->' ) ) {
+					return [
+						'content'     => $content,
+						'body'        => 0,
+						'attrs'       => 0,
+						'error'       => 'bulk.replacement_contains_block_delimiter',
+						'error_block' => null,
+					];
+				}
+
+				$out    .= substr( $content, $cursor, $at - $cursor ) . $replace;
+				$cursor  = $at + strlen( $search );
+				$offset  = $cursor;
+				$body_count++;
+			}
+
+			if ( $body_count > 0 ) {
+				$content = $out . substr( $content, $cursor );
+			}
+		}
+
+		// Canonicalise the whole document before handing it back.
+		//
+		// Not optional, and `tests/test-module-update-write-safety.php` is the
+		// ratchet that caught this being missing. WordPress canonicalises
+		// block-attribute JSON on save (#206/#208), so writing bytes that are not
+		// already canonical means the readback differs from the request and
+		// `update_post_content_with_integrity_guard()` reverts a write that
+		// actually succeeded -- on content this operation never authored, because
+		// an untouched opener stored non-canonically by an older version is
+		// enough to trip it.
+		//
+		// This is safe here for a reason worth stating, because it looks like the
+		// thing decision 6 forbids: `normalize_divi_full_content_for_write()` is a
+		// per-opener `preg_replace_callback`, NOT a block-tree parse. It never
+		// calls `parse_blocks*()` or `serialize_blocks()`, so it carries neither
+		// the #11 materialisation hazard nor the round-trip byte loss phase 0
+		// measured at 17% of real pages.
+		//
+		// What it does cost is real and is not hidden: it re-encodes every Divi
+		// opener in the document, so an untouched module whose attrs were stored
+		// non-canonically comes back canonical. That is the same cost every other
+		// content write path in this plugin already pays, and paying it here is
+		// what keeps the guard's readback meaningful.
+		$normalized = self::normalize_divi_full_content_for_write( $content );
+		if ( empty( $normalized['ok'] ) ) {
+			return [
+				'content'     => $content,
+				'body'        => 0,
+				'attrs'       => 0,
+				'error'       => 'bulk.normalize_failed',
+				'error_block' => null,
+			];
+		}
+
+		return [
+			'content'     => (string) $normalized['content'],
+			'body'        => $body_count,
+			'attrs'       => $attr_count,
+			'error'       => null,
+			'error_block' => null,
+		];
+	}
+
+	/**
+	 * The marker census invariant a bad splice violates.
+	 *
+	 * Openers, self-closers, container openers and closers must all be equal
+	 * before and after. This is cheap and it is the single check that catches a
+	 * splice which chewed a comment delimiter.
+	 *
+	 * @param string $before Content before the edit.
+	 * @param string $after  Content after the edit.
+	 * @return bool
+	 */
+	private static function bulk_marker_census_equal( string $before, string $after ): bool {
+		return self::divi_content_marker_counts( $before ) === self::divi_content_marker_counts( $after );
+	}
+
+
+	/**
+	 * Literal find/replace across an explicit target list.
+	 *
+	 * Literal only, permanently. A caller-supplied regex over serialized block
+	 * markup is an arbitrary-corruption primitive: it can rewrite block-comment
+	 * delimiters, span block boundaries and mangle attribute JSON, and no
+	 * post-hoc validation meaningfully constrains what it may already have
+	 * destroyed. A caller who needs pattern matching runs `content_search`, reads
+	 * the matches, and passes literal replacements -- which is also the only form
+	 * that can be shown honestly in a plan.
+	 *
+	 * @param WP_REST_Request $request REST request.
+	 * @return WP_REST_Response
+	 */
+	public static function bulk_find_replace( $request ) {
+		$operation = 'bulk_find_replace';
+		$user_id   = get_current_user_id();
+		$now       = time();
+
+		$targets = self::bulk_normalize_targets( $request->get_param( 'targets' ) );
+		if ( is_wp_error( $targets ) ) {
+			return self::bulk_envelope_from_error( $targets, 'Split the work into runs of at most ' . self::BULK_MAX_TARGETS . ' ids, found with diviops_content_search.' );
+		}
+
+		$search  = (string) $request->get_param( 'search' );
+		$replace = null === $request->get_param( 'replace' ) ? '' : (string) $request->get_param( 'replace' );
+		if ( '' === $search ) {
+			return self::envelope_error(
+				'invalid_input',
+				'search must be a non-empty literal string.',
+				'Pattern matching is not supported. Find the text with diviops_content_search first.',
+				400,
+				[ 'field' => 'search' ]
+			);
+		}
+		// Invalid UTF-8 is refused HERE, before any target is read, because the
+		// failure downstream is not a refusal. Core's serialize_block_attributes()
+		// passes wp_json_encode()'s return value straight into strtr() without
+		// checking it, and wp_json_encode() returns false on invalid UTF-8 -- so
+		// these bytes reach the encoder as a TypeError mid-run, after however many
+		// earlier targets in the same run had already been written.
+		foreach ( [ 'search' => $search, 'replace' => $replace ] as $field => $value ) {
+			if ( '' !== $value && false === json_encode( $value ) ) {
+				return self::envelope_error(
+					'invalid_input',
+					sprintf( '%s is not valid UTF-8 and cannot be stored in block attribute JSON.', $field ),
+					'Pass text your editor would accept. Divi stores module text as JSON, which is UTF-8 only.',
+					400,
+					[ 'field' => $field, 'json_error' => json_last_error_msg() ]
+				);
+			}
+		}
+
+		if ( $search === $replace ) {
+			return self::envelope_error(
+				'invalid_input',
+				'search and replace are identical, so this run would write every target for no change.',
+				'Change the replacement, or drop the run.',
+				400,
+				[ 'field' => 'replace' ]
+			);
+		}
+
+		$scope = (string) ( $request->get_param( 'scope' ) ?: 'both' );
+		if ( ! in_array( $scope, [ 'both', 'body', 'attrs' ], true ) ) {
+			return self::envelope_error(
+				'invalid_input',
+				"scope must be 'both', 'body' or 'attrs'.",
+				'Omit it for the default, which is both.',
+				400,
+				[ 'field' => 'scope', 'received' => $scope ]
+			);
+		}
+
+		$on_error = (string) ( $request->get_param( 'on_error' ) ?: 'continue' );
+		if ( ! in_array( $on_error, [ 'continue', 'stop' ], true ) ) {
+			return self::envelope_error(
+				'invalid_input',
+				"on_error must be 'continue' or 'stop'.",
+				'Omit it for the default, which is continue.',
+				400,
+				[ 'field' => 'on_error', 'received' => $on_error ]
+			);
+		}
+
+		$include_locked = (bool) $request->get_param( 'include_locked' );
+		$params         = [
+			'search'         => $search,
+			'replace'        => $replace,
+			'scope'          => $scope,
+			'include_locked' => $include_locked,
+		];
+
+		$state = [];
+		foreach ( $targets as $id ) {
+			$state[] = self::bulk_target_state( $id );
+		}
+
+		$prepared = self::bulk_replace_prepare( $state, $search, $replace, $scope, $include_locked );
+		$token    = $request->get_param( 'plan_token' );
+		$token    = is_string( $token ) ? trim( $token ) : '';
+		$dry_run  = null === $request->get_param( 'dry_run' ) ? true : (bool) $request->get_param( 'dry_run' );
+
+		if ( $dry_run ) {
+			return self::envelope_success(
+				self::bulk_replace_plan( $operation, $user_id, $now, $params, $state, $prepared, $on_error )
+			);
+		}
+
+		if ( '' === $token ) {
+			return self::envelope_error(
+				'invalid_input',
+				'plan_token is required to apply. Run with dry_run to get one.',
+				'Call this tool with dry_run first, read every match in the plan, then pass its plan_token back.',
+				400,
+				[ 'field' => 'plan_token' ]
+			);
+		}
+
+		$verify = self::bulk_plan_token_verify( $token, $operation, $user_id, $params, $state, $now );
+		if ( is_wp_error( $verify ) ) {
+			return self::bulk_envelope_from_error( $verify, 'Re-run with dry_run to get a fresh plan and token, then apply that one.' );
+		}
+
+		$refusals = [];
+		foreach ( $prepared as $row ) {
+			if ( null !== $row['refusal'] ) {
+				$refusals[] = [ 'id' => $row['id'], 'code' => $row['refusal'], 'detail' => $row['detail'] ];
+			}
+		}
+		if ( ! empty( $refusals ) ) {
+			return self::envelope_error(
+				'bulk.preflight_refused',
+				sprintf( '%d of %d target(s) cannot be written; the whole run is refused.', count( $refusals ), count( $state ) ),
+				'Fix or remove the named targets, then re-plan.',
+				409,
+				[ 'refused' => $refusals, 'targets' => count( $state ) ]
+			);
+		}
+
+		return self::bulk_replace_apply( $operation, $params, $state, $prepared, $on_error, $token );
+	}
+
+	/**
+	 * Compute, for every target, the replacement and every reason to refuse it.
+	 *
+	 * Done once and reused by both the plan and the apply, so the plan cannot
+	 * promise something the apply computes differently. `predicted_checksum` is
+	 * what turns the plan from a description into an assertion: at apply time the
+	 * recomputed content must hash to it, or that target is refused regardless of
+	 * whether the token matched.
+	 *
+	 * @param array  $state          Ordered per-target state.
+	 * @param string $search         Literal needle.
+	 * @param string $replace        Replacement.
+	 * @param string $scope          `both`, `body` or `attrs`.
+	 * @param bool   $include_locked Whether locked modules may be written.
+	 * @return array
+	 */
+	private static function bulk_replace_prepare( array $state, string $search, string $replace, string $scope, bool $include_locked ): array {
+		$rows = [];
+
+		foreach ( $state as $row ) {
+			$id   = (int) $row['id'];
+			$post = $row['exists'] ? get_post( $id ) : null;
+
+			$entry = [
+				'id'                  => $id,
+				'post_type'           => (string) $row['post_type'],
+				'title'               => $post ? (string) $post->post_title : '',
+				'refusal'             => null,
+				'detail'              => '',
+				'body_matches'        => 0,
+				'attr_matches'        => 0,
+				'locked_modules'      => [],
+				'has_global_layout'   => false,
+				'content'             => null,
+				'predicted_checksum'  => null,
+				'predicted_byte_delta'=> 0,
+			];
+
+			if ( ! $post ) {
+				$entry['refusal'] = 'not_found';
+				$entry['detail']  = 'No post with this id.';
+				$rows[]           = $entry;
+				continue;
+			}
+			if ( ! in_array( $entry['post_type'], self::BULK_WRITE_POST_TYPES, true ) ) {
+				$entry['refusal'] = 'bulk.post_type_not_writable';
+				$entry['detail']  = sprintf( 'post_type %s is outside the bulk write scope.', $entry['post_type'] );
+				$rows[]           = $entry;
+				continue;
+			}
+			if ( ! current_user_can( 'edit_post', $id ) ) {
+				$entry['refusal'] = 'forbidden';
+				$entry['detail']  = 'No edit_post capability for this target.';
+				$rows[]           = $entry;
+				continue;
+			}
+
+			$content                    = (string) $post->post_content;
+			$entry['has_global_layout'] = false !== strpos( $content, self::GLOBAL_LAYOUT_BLOCK_NAME );
+			$entry['locked_modules']    = self::bulk_locked_modules( $content );
+
+			if ( ! $include_locked && ! empty( $entry['locked_modules'] ) ) {
+				// The owner's approved default, and a deliberate departure from
+				// the spec's per-target `will_skip: module_locked`. A single-module
+				// tool can presume the caller meant that module, because they
+				// named it; a bulk operation names no module, so a lock means
+				// "not without naming me" -- and the honest way to be named is an
+				// explicit flag on the run, not a line in a results table nobody
+				// reads.
+				$entry['refusal'] = 'bulk.module_locked';
+				$entry['detail']  = sprintf(
+					'%d locked module(s) on this page. Pass include_locked to write them anyway.',
+					count( $entry['locked_modules'] )
+				);
+				$rows[] = $entry;
+				continue;
+			}
+
+			$result = self::bulk_replace_in_content( $content, $search, $replace, $scope );
+			if ( null !== $result['error'] ) {
+				$entry['refusal'] = $result['error'];
+				$entry['detail']  = null === $result['error_block']
+					? 'The replacement cannot be applied safely to this page.'
+					: sprintf( 'Block %s: the replacement cannot be applied safely.', $result['error_block'] );
+				$rows[] = $entry;
+				continue;
+			}
+
+			if ( ! self::bulk_marker_census_equal( $content, $result['content'] ) ) {
+				$entry['refusal'] = 'bulk.marker_census_changed';
+				$entry['detail']  = 'The edit changed the block-comment marker counts, which a correct replacement never does.';
+				$rows[]           = $entry;
+				continue;
+			}
+
+			$entry['body_matches']         = $result['body'];
+			$entry['attr_matches']         = $result['attrs'];
+			$entry['content']              = $result['content'];
+			$entry['predicted_checksum']   = 'sha256:' . hash( 'sha256', $result['content'] );
+			$entry['predicted_byte_delta'] = strlen( $result['content'] ) - strlen( $content );
+
+			$rows[] = $entry;
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * The plan, showing every match a human has to judge.
+	 *
+	 * No guard here can tell a correct replacement from a wrong one -- a
+	 * syntactically valid replacement containing the wrong words is undetectable
+	 * by every check in this file. That judgement lives entirely in a human
+	 * reading this plan, which is why it shows counts per target and why the
+	 * target cap matters more than it looks. A plan nobody reads makes every
+	 * other guard here decorative.
+	 *
+	 * @param string $operation Operation name.
+	 * @param int    $user_id   Acting user.
+	 * @param int    $now       Current unix time.
+	 * @param array  $params    Normalized parameters.
+	 * @param array  $state     Ordered per-target state.
+	 * @param array  $prepared  Prepared per-target rows.
+	 * @param string $on_error  Error policy.
+	 * @return array
+	 */
+	private static function bulk_replace_plan( string $operation, int $user_id, int $now, array $params, array $state, array $prepared, string $on_error ): array {
+		$changes  = [];
+		$warnings = [];
+		$counts   = [ 'will_apply' => 0, 'will_skip' => 0, 'will_refuse' => 0 ];
+		$delta    = 0;
+
+		foreach ( $prepared as $row ) {
+			if ( null !== $row['refusal'] ) {
+				$counts['will_refuse']++;
+				$changes[] = [
+					'id'      => $row['id'],
+					'title'   => $row['title'],
+					'verdict' => 'will_refuse:' . $row['refusal'],
+					'reason'  => $row['detail'],
+				];
+				continue;
+			}
+
+			$total = $row['body_matches'] + $row['attr_matches'];
+			if ( 0 === $total ) {
+				$counts['will_skip']++;
+				$changes[] = [
+					'id'      => $row['id'],
+					'title'   => $row['title'],
+					'verdict' => 'will_skip:already_applied',
+					'reason'  => 'The search string does not occur on this page.',
+				];
+				continue;
+			}
+
+			$counts['will_apply']++;
+			$delta += $row['predicted_byte_delta'];
+
+			$changes[] = [
+				'id'                   => $row['id'],
+				'post_type'            => $row['post_type'],
+				'title'                => $row['title'],
+				'verdict'              => 'will_apply',
+				'matches'              => [
+					'body'        => $row['body_matches'],
+					'block_attrs' => $row['attr_matches'],
+					'total'       => $total,
+				],
+				'has_global_layout'    => $row['has_global_layout'],
+				'locked_modules'       => count( $row['locked_modules'] ),
+				'predicted_checksum'   => $row['predicted_checksum'],
+				'predicted_byte_delta' => $row['predicted_byte_delta'],
+			];
+
+			if ( $row['has_global_layout'] ) {
+				$warnings[] = sprintf(
+					'#%d carries a divi/global-layout wrapper. The write is guarded against wrapper drift, but a page that shares a global layout shows this change everywhere that layout appears.',
+					$row['id']
+				);
+			}
+			if ( ! empty( $row['locked_modules'] ) ) {
+				$warnings[] = sprintf(
+					'#%d has %d locked module(s) and include_locked was passed, so they WILL be rewritten.',
+					$row['id'],
+					count( $row['locked_modules'] )
+				);
+			}
+		}
+
+		return [
+			'operation'   => $operation,
+			'dry_run'     => true,
+			'on_error'    => $on_error,
+			'max_targets' => self::BULK_MAX_TARGETS,
+			'plan'        => [
+				'summary'          => sprintf(
+					'Would replace "%s" with "%s" on %d of %d target(s); %d already applied, %d refused. Net %+d bytes.',
+					$params['search'],
+					$params['replace'],
+					$counts['will_apply'],
+					count( $state ),
+					$counts['will_skip'],
+					$counts['will_refuse'],
+					$delta
+				),
+				'changes'          => $changes,
+				'warnings'         => $warnings,
+				'counts'           => $counts,
+				'total_byte_delta' => $delta,
+			],
+			'plan_token'  => self::bulk_plan_token_mint( $operation, $now, $user_id, $params, $state ),
+			'recovery'    => 'Each written target gets a rollback snapshot of its prior post_content, which for THIS operation is a genuine recovery record: restore it with diviops_rollback_snapshot_restore and the page returns to its prior bytes.',
+		];
+	}
+
+	/**
+	 * Apply the replacement, one guarded target at a time.
+	 *
+	 * @param string $operation Operation name.
+	 * @param array  $params    Normalized parameters.
+	 * @param array  $state     Ordered per-target state.
+	 * @param array  $prepared  Prepared per-target rows.
+	 * @param string $on_error  Error policy.
+	 * @param string $token     Verified plan token.
+	 * @return WP_REST_Response
+	 */
+	private static function bulk_replace_apply( string $operation, array $params, array $state, array $prepared, string $on_error, string $token ) {
+		$run = self::rollback_snapshot_run_begin(
+			'diviops_' . $operation,
+			[ 'tool_operation' => 'bulk.find_replace', 'search' => $params['search'] ]
+		);
+
+		$manifest = [
+			'run_id'            => $run['run_id'],
+			'operation'         => $operation,
+			'on_error'          => $on_error,
+			'params'            => $params,
+			'token_fingerprint' => substr( hash( 'sha256', $token ), 0, 16 ),
+			'created_at'        => gmdate( 'c' ),
+			'targets'           => [],
+		];
+		self::bulk_run_manifest_save( $manifest );
+
+		$by_id = [];
+		foreach ( $prepared as $row ) {
+			$by_id[ $row['id'] ] = $row;
+		}
+
+		$results = [];
+		$counts  = [ 'applied' => 0, 'skipped' => 0, 'failed' => 0, 'not_attempted' => 0 ];
+		$stopped = false;
+
+		foreach ( $state as $planned ) {
+			$id = (int) $planned['id'];
+
+			if ( $stopped ) {
+				$counts['not_attempted']++;
+				$results[] = [ 'id' => $id, 'status' => 'not_attempted' ];
+				continue;
+			}
+
+			$outcome = self::bulk_replace_apply_one( $run, $planned, $by_id[ $id ] ?? null, $params );
+			$results[] = $outcome['result'];
+			$counts[ $outcome['bucket'] ]++;
+			$manifest['targets'][] = $outcome['manifest'];
+			self::bulk_run_manifest_save( $manifest );
+
+			if ( 'failed' === $outcome['bucket'] && 'stop' === $on_error ) {
+				$stopped = true;
+			}
+		}
+
+		$chunks    = self::rollback_snapshot_run_flush( $run );
+		$chunk_ids = [];
+		foreach ( (array) $chunks as $option_name ) {
+			$chunk_id = self::rollback_snapshot_id_from_option_name( (string) $option_name );
+			if ( is_string( $chunk_id ) && '' !== $chunk_id ) {
+				$chunk_ids[] = $chunk_id;
+			}
+		}
+
+		$manifest['snapshot_chunks'] = $chunk_ids;
+		$manifest['counts']          = $counts;
+		$manifest['finished_at']     = gmdate( 'c' );
+		self::bulk_run_manifest_save( $manifest );
+
+		$record = [
+			'run_id'          => $run['run_id'],
+			'operation'       => $operation,
+			'on_error'        => $on_error,
+			'targets'         => $results,
+			'counts'          => $counts,
+			'snapshot_chunks' => $chunk_ids,
+		];
+
+		if ( $counts['failed'] > 0 ) {
+			return self::envelope_error(
+				'bulk.partial_failure',
+				sprintf(
+					'%d of %d target(s) failed. %d applied, %d skipped, %d not attempted.',
+					$counts['failed'],
+					count( $state ),
+					$counts['applied'],
+					$counts['skipped'],
+					$counts['not_attempted']
+				),
+				'Read data.targets for each failure, then re-plan the ids you still want.',
+				409,
+				$record
+			);
+		}
+
+		return self::envelope_success( $record );
+	}
+
+	/**
+	 * One target's guarded content write.
+	 *
+	 * @param array      $run     Snapshot run.
+	 * @param array      $planned Plan-time state.
+	 * @param array|null $row     Prepared row.
+	 * @param array      $params  Normalized parameters.
+	 * @return array{result:array,bucket:string,manifest:array}
+	 */
+	private static function bulk_replace_apply_one( array &$run, array $planned, ?array $row, array $params ): array {
+		$id = (int) $planned['id'];
+
+		$fail = static function ( $code, $post ) use ( $id, $planned ) {
+			return [
+				'bucket'   => 'failed',
+				'result'   => [ 'id' => $id, 'status' => 'failed', 'code' => $code ],
+				'manifest' => self::bulk_run_manifest_entry( $planned, $post, 'failed', null, $code ),
+			];
+		};
+
+		$live = self::bulk_target_state( $id );
+		$post = $live['exists'] ? get_post( $id ) : null;
+
+		if ( ! $live['exists']
+			|| $live['content_checksum'] !== $planned['content_checksum']
+			|| $live['post_status'] !== $planned['post_status']
+			|| $live['post_modified_gmt'] !== $planned['post_modified_gmt'] ) {
+			return $fail( 'bulk.target_drifted', $post );
+		}
+		if ( ! current_user_can( 'edit_post', $id ) ) {
+			return $fail( 'forbidden', $post );
+		}
+		if ( null === $row ) {
+			return $fail( 'bulk.target_unplanned', $post );
+		}
+		if ( null !== $row['refusal'] ) {
+			return $fail( $row['refusal'], $post );
+		}
+
+		if ( 0 === $row['body_matches'] + $row['attr_matches'] ) {
+			return [
+				'bucket'   => 'skipped',
+				'result'   => [ 'id' => $id, 'status' => 'skipped', 'reason' => 'already_applied' ],
+				'manifest' => self::bulk_run_manifest_entry( $planned, $post, 'skipped', null ),
+			];
+		}
+
+		// Recompute from LIVE bytes and require the plan's promise to hold. This
+		// is what makes the plan a contract rather than a description: if the
+		// replacement now yields different bytes, the target is refused
+		// regardless of whether the token matched.
+		$recomputed = self::bulk_replace_in_content(
+			(string) $post->post_content,
+			$params['search'],
+			$params['replace'],
+			$params['scope']
+		);
+		if ( null !== $recomputed['error'] ) {
+			return $fail( $recomputed['error'], $post );
+		}
+		if ( 'sha256:' . hash( 'sha256', $recomputed['content'] ) !== $row['predicted_checksum'] ) {
+			return $fail( 'bulk.prediction_mismatch', $post );
+		}
+		if ( ! self::bulk_marker_census_equal( (string) $post->post_content, $recomputed['content'] ) ) {
+			return $fail( 'bulk.marker_census_changed', $post );
+		}
+
+		// Canonicality re-checked HERE, immediately before the write, rather than
+		// trusted from the prepare pass. `normalize_divi_full_content_for_write()`
+		// must be a no-op on bytes that are already canonical, so running it again
+		// and requiring the output to be byte-identical asserts exactly the
+		// property the guarded write depends on: WordPress canonicalises block
+		// attribute JSON on save (#206/#208), so writing non-canonical bytes makes
+		// the readback differ from the request and reverts a write that succeeded.
+		//
+		// This also puts the canonicalisation call in the function that actually
+		// writes, which is what `tests/test-module-update-write-safety.php` scans
+		// for. It is a real invariant check rather than a marker placed to satisfy
+		// the scan -- a comment-only mention would pass that scan and is the
+		// false negative the gate's own docblock warns about.
+		$canonical = self::normalize_divi_full_content_for_write( $recomputed['content'] );
+		if ( empty( $canonical['ok'] ) || (string) $canonical['content'] !== $recomputed['content'] ) {
+			return $fail( 'bulk.not_canonical', $post );
+		}
+
+		if ( ! self::bulk_target_lock_acquire( $id ) ) {
+			return $fail( 'bulk.target_locked', $post );
+		}
+
+		$captured = self::rollback_snapshot_run_capture( $run, $post );
+		if ( false === $captured ) {
+			self::bulk_target_lock_release( $id );
+			return $fail( 'rollback_snapshot.storage_failed', $post );
+		}
+
+		// The guarded write, WITH global-layout drift checking. A literal
+		// find/replace never legitimately drops a wrapper, unlike the raw-content
+		// callers that parameter was written for.
+		$written = self::update_post_content_with_integrity_guard(
+			$id,
+			$recomputed['content'],
+			'bulk',
+			sprintf( 'page #%d', $id ),
+			(string) $post->post_content,
+			true
+		);
+		if ( is_wp_error( $written ) ) {
+			self::rollback_snapshot_run_mark_from_write_error( $run, $id, $written );
+			self::bulk_target_lock_release( $id );
+			return [
+				'bucket'   => 'failed',
+				'result'   => [
+					'id'     => $id,
+					'status' => 'failed',
+					'code'   => (string) $written->get_error_code(),
+					'detail' => $written->get_error_message(),
+				],
+				'manifest' => self::bulk_run_manifest_entry( $planned, $post, 'failed', null, (string) $written->get_error_code() ),
+			];
+		}
+
+		$after = get_post( $id );
+		self::rollback_snapshot_run_mark( $run, $id, 'write_applied', $after ? (string) $after->post_content : '' );
+		self::invalidate_divi_cache( $id );
+		self::bulk_target_lock_release( $id );
+
+		return [
+			'bucket'   => 'applied',
+			'result'   => [
+				'id'      => $id,
+				'status'  => 'applied',
+				'matches' => [ 'body' => $row['body_matches'], 'block_attrs' => $row['attr_matches'] ],
+				'before'  => [ 'checksum' => $planned['content_checksum'] ],
+				'after'   => [ 'checksum' => $row['predicted_checksum'] ],
+			],
+			'manifest' => self::bulk_run_manifest_entry( $planned, $post, 'applied', $run['run_id'] ),
+		];
+	}
+
 }
