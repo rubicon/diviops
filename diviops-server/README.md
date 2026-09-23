@@ -84,7 +84,7 @@ The skill enforces the Divi block format, the design system, and the response co
 
 ## Tools at a glance
 
-The server exposes **117 always-on tools** across the categories below. Each category names representative tool prefixes; for one row per tool, with inputs and idempotency, see the [Per-tool reference](#per-tool-reference).
+The server exposes **118 always-on tools** across the categories below. Each category names representative tool prefixes; for one row per tool, with inputs and idempotency, see the [Per-tool reference](#per-tool-reference).
 
 | Category | Use case | Tool prefixes |
 |----------|----------|---------------|
@@ -159,7 +159,7 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 
 > Generated mechanically by `diviops-server/scripts/regen-tool-reference.mjs` from the tool-registration call sites in `diviops-server/src/index.ts`. Everything between the `BEGIN GENERATED:tool-reference:*` / `END GENERATED:tool-reference:*` HTML-comment sentinels is rewritten on regen (see `diviops-server/CONTRIBUTING.md`). Do **not** edit between sentinels — edits are clobbered.
 
-117 always-on tools (105 plugin-backed, 12 server-local) and 30 conditionally-registered Pro tools.
+118 always-on tools (106 plugin-backed, 12 server-local) and 30 conditionally-registered Pro tools.
 
 **Inputs** lists each tool's top-level input fields in schema order; a trailing `?` marks a field the schema makes optional or gives a default, and `_(none)_` marks a tool that takes no arguments. **Idempotent** is the tool's own `_meta.idempotent` marker ([what the values mean](#_metaidempotent-markers)). **Summary** is the first sentence of the tool's MCP `description`, which is the full reference for its response payload and error codes; a trailing `…` marks a description that continues, and an `…` inside the text marks a value the server fills in at handshake time. Every tool returns the [standardized envelope](#response-contract).
 
@@ -178,6 +178,7 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 | `diviops_canvas_list` | plugin | `parent_page_id?`, `per_page?` | true | List canvases (off-canvas workspaces). … |
 | `diviops_canvas_orphan_audit` | plugin | `parent_page_id?`, `include_global?`, `include_context?`, `status?`, `per_page?` | true | Read-only audit of et_pb_canvas posts and off-canvas reference evidence. … |
 | `diviops_canvas_update` | plugin | `canvas_post_id`, `content?`, `title?`, `append_to_main?`, `z_index?`, `dry_run?` | conditional | Update a canvas's content and/or metadata. … |
+| `diviops_content_search` | plugin | `search`, `post_types?`, `limit?`, `max_matches_per_post?`, `context_chars?` | true | Search every page/post for a literal string, read-only. Searches BOTH the literal bytes and the escaped form Divi stores inside block-attribute JSON, and reports which matched, whether the hit is in `block_attrs` or `body`, the owning block name, and the decoded value for attribute matches. The discovery half of bulk operations: the write tools take explicit ids, never a query. … |
 | `diviops_cross_env_source_export_get` | plugin | `source_id`, `source_kind?`, `dry_run?` | true | Export read-only, secret-free source-site payload for an offline cross-environment Theme Builder … preflight. … |
 | `diviops_cross_env_target_context_get` | plugin | `destination_id`, `destination_kind?`, `source_asset_hints?`, `source_attachment_ids?`, `dry_run?` | true | Export read-only, secret-free target-site context for an offline cross-environment Theme Builder … preflight. … |
 | `diviops_design_system_apply` | plugin | `colors`, `namespace?`, `overwrite?`, `dry_run?` | conditional | Apply a whole colour design system in one call, from a style guide's token set, instead of one diviops_global_color_create per token. … |
