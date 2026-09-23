@@ -17,6 +17,8 @@ parameters:
     ignoreErrors:
         - '#^Function et_get_option not found\.$#'
         - '#^Function et_update_option not found\.$#'
+        - '#^Function et_core_portability_register not found\.$#'
+        - '#^Function et_core_portability_load not found\.$#'
         - '#^Function tsf not found\.$#'
         - '#^Call to static method \S+\(\) on an unknown class ET\\Builder\\.*$#'
         -
