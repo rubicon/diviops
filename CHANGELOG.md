@@ -10,6 +10,27 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.26.0](https://github.com/rubicon/diviops/compare/v1.25.0...v1.26.0) (2026-09-23)
+
+
+### Features
+
+* **#356:** adopt upstream's two-pass narrowing in cross_env_attachment_candidates() ([#469](https://github.com/rubicon/diviops/issues/469)) ([210b90a](https://github.com/rubicon/diviops/commit/210b90aafe349a9e05605cf2883f2dd548d1e83d))
+* **#470:** expose preset variable-reference IDs and an honest scan status ([#471](https://github.com/rubicon/diviops/issues/471)) ([5e90003](https://github.com/rubicon/diviops/commit/5e900033b938c0761f739f94787e5b11a802991a))
+* **#472:** make tb_body_layout a first-class cross-environment kind ([#473](https://github.com/rubicon/diviops/issues/473)) ([f428dd5](https://github.com/rubicon/diviops/commit/f428dd5ef11801354ae2f7ee901819daaddfc093))
+* **#474:** adopt upstream's authoring-shape resource budget for full-content writes ([#475](https://github.com/rubicon/diviops/issues/475)) ([c0eb6cb](https://github.com/rubicon/diviops/commit/c0eb6cb3b3c77c822e7cddbc9d8033c4a96fa75a))
+* **#476:** adopt upstream's FAQ/toggle accessibility layer ([#477](https://github.com/rubicon/diviops/issues/477)) ([aee40dc](https://github.com/rubicon/diviops/commit/aee40dca6b2471d3e3e59eff695784478e09417a))
+* **#480:** report Divi drift beside plugin drift in meta_info ([#481](https://github.com/rubicon/diviops/issues/481)) ([8f19bd6](https://github.com/rubicon/diviops/commit/8f19bd6111326de578d7c1920379772f494ae398))
+* **#487:** adopt upstream's ddl-image-reveal Image wipe effect ([#489](https://github.com/rubicon/diviops/issues/489)) ([63de90a](https://github.com/rubicon/diviops/commit/63de90adb904711f812ae61a503a56f56b0f4785))
+
+
+### Bug Fixes
+
+* **#378:** make preset_cleanup idempotent and stop it disagreeing with preset_audit ([#459](https://github.com/rubicon/diviops/issues/459)) ([a5c2690](https://github.com/rubicon/diviops/commit/a5c26904bcc11125960683a0d6ca67cf568c8d61)), closes [#378](https://github.com/rubicon/diviops/issues/378)
+* **#403:** invalidate Divi's compiled CSS site-wide on preset registry writes ([#468](https://github.com/rubicon/diviops/issues/468)) ([5249a82](https://github.com/rubicon/diviops/commit/5249a8296ce0c52507dd386b2d7d8b1cdc8141de))
+* **#414:** write the padding corners Divi actually reads in the hover-gate bypass ([#463](https://github.com/rubicon/diviops/issues/463)) ([ce52e4b](https://github.com/rubicon/diviops/commit/ce52e4b5893f85a543191c7777595e9d65736742)), closes [#414](https://github.com/rubicon/diviops/issues/414)
+* **#460:** make rollback `restorable` mean verified, not merely present ([#467](https://github.com/rubicon/diviops/issues/467)) ([6ff4516](https://github.com/rubicon/diviops/commit/6ff4516d59b4685db12a66e70a60c7d189917a6c))
+
 ## [1.25.0](https://github.com/rubicon/diviops/compare/v1.24.0...v1.25.0) (2026-09-14)
 
 
