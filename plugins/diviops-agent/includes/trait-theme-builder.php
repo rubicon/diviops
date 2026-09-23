@@ -454,8 +454,8 @@ trait DiviOps_Agent_ThemeBuilder {
 		if ( '' === $expected_type ) {
 			return self::envelope_error(
 				'invalid_input',
-				'Only destination_kind=tb_header_layout or tb_footer_layout is supported for this read-only target context export.',
-				'Use an existing same-kind Theme Builder header or footer layout ID.',
+				'Only destination_kind=tb_header_layout, tb_footer_layout or tb_body_layout is supported for this read-only target context export.',
+				'Use an existing same-kind Theme Builder header, body or footer layout ID.',
 				400,
 				[ 'received' => $destination_kind ]
 			);
@@ -553,7 +553,7 @@ trait DiviOps_Agent_ThemeBuilder {
 		if ( '' === $expected_type ) {
 			return self::envelope_error(
 				'invalid_input',
-				'Only source_kind=tb_header_layout or tb_footer_layout is supported for this read-only source export.',
+				'Only source_kind=tb_header_layout, tb_footer_layout or tb_body_layout is supported for this read-only source export.',
 				'Use an existing source Theme Builder header or footer layout ID.',
 				400,
 				[ 'received' => $source_kind ]
@@ -615,11 +615,19 @@ trait DiviOps_Agent_ThemeBuilder {
 		return [
 			'tb_header_layout' => 'et_header_layout',
 			'tb_footer_layout' => 'et_footer_layout',
+			'tb_body_layout'   => 'et_body_layout',
 		];
 	}
 
 	private static function cross_env_template_linkage( int $layout_id, string $kind, string $post_type ): array {
-		$slot = 'tb_header_layout' === $kind ? 'header' : 'footer';
+		// A lookup, not a ternary (#472). `'tb_header_layout' === $kind ? 'header' :
+		// 'footer'` was correct only while the kind map above admitted exactly two
+		// values, so "not header" really did mean footer. With a third kind it would
+		// derive `footer` for a body layout and read `_et_footer_layout_id` —
+		// returning a well-formed linkage describing the wrong slot, carrying a
+		// sha256 digest over it that a consumer is meant to trust. Silent, signed
+		// and wrong is the worst of the three failure shapes available here.
+		$slot = [ 'tb_header_layout' => 'header', 'tb_footer_layout' => 'footer', 'tb_body_layout' => 'body' ][ $kind ];
 		$id_key = '_et_' . $slot . '_layout_id';
 		$enabled_key = '_et_' . $slot . '_layout_enabled';
 		$master_id = self::find_active_master();

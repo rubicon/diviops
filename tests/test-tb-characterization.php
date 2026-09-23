@@ -113,12 +113,25 @@ assert_same( 400, $response->get_status(), 'a non-positive source_id is a 400' )
 assert_same( 'source_id', $body['error']['data']['field'] ?? null, 'the refusal names the offending field' );
 
 diviops_tbc_post( 5400, '', 'et_header_layout', 'Site Header' );
+// tb_body_layout is a supported kind since #472, so asking for one and handing
+// over a HEADER layout now fails the post-type check rather than the kind gate.
+// The refusal moved from invalid_input to not_found, which is the more accurate
+// of the two: the kind is fine, the post is not that kind.
 $body = diviops_tbc_call(
 	'cross_env_source_export_get',
 	array( 'source_id' => 5400, 'source_kind' => 'tb_body_layout' )
 )->get_data();
-assert_same( 'invalid_input', $body['error']['code'] ?? null, 'only header and footer kinds are exportable' );
-assert_same( 'tb_body_layout', $body['error']['data']['received'] ?? null, 'the refusal echoes the rejected kind' );
+assert_same( 'not_found', $body['error']['code'] ?? null, 'a supported kind with a wrong-type post is not_found, not an invalid kind' );
+
+// The kind gate itself still exists and still echoes what it rejected — proven
+// with a kind that really is unsupported, so widening the map did not quietly
+// remove the gate along with the limit.
+$body = diviops_tbc_call(
+	'cross_env_source_export_get',
+	array( 'source_id' => 5400, 'source_kind' => 'tb_sidebar_layout' )
+)->get_data();
+assert_same( 'invalid_input', $body['error']['code'] ?? null, 'an unsupported source kind is still refused' );
+assert_same( 'tb_sidebar_layout', $body['error']['data']['received'] ?? null, 'the refusal echoes the rejected kind' );
 
 diviops_tbc_post( 5401, '', 'page', 'Not a layout' );
 $response = diviops_tbc_call( 'cross_env_source_export_get', array( 'source_id' => 5401 ) );
@@ -193,12 +206,19 @@ $body     = $response->get_data();
 assert_same( 'invalid_input', $body['error']['code'] ?? null, 'target context refuses a non-positive destination_id' );
 assert_same( 'destination_id', $body['error']['data']['field'] ?? null, 'the refusal names destination_id' );
 
+// Same move as the source-export pair above (#472).
 $body = diviops_tbc_call(
 	'cross_env_target_context_get',
 	array( 'destination_id' => 5400, 'destination_kind' => 'tb_body_layout' )
 )->get_data();
-assert_same( 'invalid_input', $body['error']['code'] ?? null, 'target context supports header and footer kinds only' );
-assert_same( 'tb_body_layout', $body['error']['data']['received'] ?? null, 'the refusal echoes the rejected kind' );
+assert_same( 'not_found', $body['error']['code'] ?? null, 'a supported kind with a wrong-type destination is not_found' );
+
+$body = diviops_tbc_call(
+	'cross_env_target_context_get',
+	array( 'destination_id' => 5400, 'destination_kind' => 'tb_sidebar_layout' )
+)->get_data();
+assert_same( 'invalid_input', $body['error']['code'] ?? null, 'an unsupported destination kind is still refused' );
+assert_same( 'tb_sidebar_layout', $body['error']['data']['received'] ?? null, 'the refusal echoes the rejected kind' );
 
 $response = diviops_tbc_call( 'cross_env_target_context_get', array( 'destination_id' => 5401 ) );
 assert_same( 'not_found', $response->get_data()['error']['code'] ?? null, 'a wrong-type destination is not_found' );
