@@ -1350,6 +1350,14 @@ trait DiviOps_Agent_ThemeBuilder {
 				400
 			);
 		}
+
+		// #474: budget before plan. Refusing an oversized payload here costs one
+		// walk; discovering it inside parse_blocks() during the write costs the
+		// process and leaves a half-written page.
+		$shape = self::authoring_shape_preflight( [ $content ] );
+		if ( is_wp_error( $shape ) ) {
+			return self::envelope_error( 'invalid_input', $shape->get_error_message(), null, 400 );
+		}
 		$normalized = self::normalize_divi_full_content_for_write( $content );
 		if ( empty( $normalized['ok'] ) ) {
 			$error = $normalized['error'] ?? [];
@@ -2063,6 +2071,14 @@ trait DiviOps_Agent_ThemeBuilder {
 				null,
 				400
 			);
+		}
+
+		// #474: budget before plan. Refusing an oversized payload here costs one
+		// walk; discovering it inside parse_blocks() during the write costs the
+		// process and leaves a half-written page.
+		$shape = self::authoring_shape_preflight( [ $header_content, $footer_content, $body_content ] );
+		if ( is_wp_error( $shape ) ) {
+			return self::envelope_error( 'invalid_input', $shape->get_error_message(), null, 400 );
 		}
 
 		// "default" (case-insensitive) and empty string are both treated as

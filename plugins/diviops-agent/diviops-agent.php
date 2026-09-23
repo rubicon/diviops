@@ -24,6 +24,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 // Loaded before the class declaration so trait names resolve when
 // the class declares `use ...;`. Each trait file has its own
 // ABSPATH guard, so direct loading is rejected.
+require_once __DIR__ . '/includes/trait-authoring-shape.php';
 require_once __DIR__ . '/includes/trait-canvas.php';
 require_once __DIR__ . '/includes/trait-core.php';
 require_once __DIR__ . '/includes/trait-dynamic-content.php';
@@ -53,6 +54,7 @@ class DiviOps_Agent {
 	// Each trait contributes a slice of the REST surface. The traits
 	// are required in the file-scope bootstrap below; methods on each
 	// trait are mixed into this class.
+	use DiviOps_Agent_AuthoringShape;
 	use DiviOps_Agent_Canvas;
 	use DiviOps_Agent_Core;
 	use DiviOps_Agent_DynamicContent;
@@ -277,6 +279,22 @@ class DiviOps_Agent {
 	 *
 	 * @var array<string, array{0: string, 1: int}>
 	 */
+	/**
+	 * Resource budget for full-content authoring writes (#474).
+	 *
+	 * Adopted from upstream as published, after measuring against real content:
+	 * the worst page/post/layout/canvas on staging is 273,774 bytes, 332 blocks
+	 * and depth 12 — 3.8x, 12x and 5.3x headroom. A limit set below real content
+	 * would refuse legitimate writes and nothing in the code would say so.
+	 */
+	private const AUTHORING_SHAPE_LIMITS = [
+		'input_bytes'  => 1048576,
+		'blocks'       => 4096,
+		'depth'        => 64,
+		'fields'       => 8192,
+		'string_bytes' => 1048576,
+	];
+
 	private const FRAMEWORK_ERROR_ENVELOPE = [
 		'rest_invalid_param'          => [ 'invalid_input', 400 ],
 		'rest_missing_callback_param' => [ 'invalid_input', 400 ],
