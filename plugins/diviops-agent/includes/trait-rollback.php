@@ -2126,7 +2126,7 @@ trait DiviOps_Agent_Rollback {
 				$data                  = self::rollback_snapshot_as_array( $body['error']['data'] ?? [] );
 				$body['error']['data'] = array_intersect_key(
 					$data,
-					array_flip( [ 'snapshot_id', 'record_id', 'kind', 'committed', 'changed_fields', 'prior_checksum', 'intended_checksum', 'expected_checksum', 'restored_checksum' ] )
+					array_flip( [ 'snapshot_id', 'record_id', 'kind', 'drift_kind', 'committed', 'changed_fields', 'prior_checksum', 'intended_checksum', 'expected_checksum', 'restored_checksum' ] )
 				);
 				$body['error']['data']['recovery_point'] = null !== $point
 					? self::rollback_snapshot_finish_recovery_point( $point, true )
@@ -2211,6 +2211,11 @@ trait DiviOps_Agent_Rollback {
 				409,
 				[
 					'snapshot_id' => $snapshot_id,
+					// Which KIND of drift, as a bare string. `drift` below carries
+					// post-meta and is stripped on the protected path, which left a
+					// protected refusal with nothing to act on but the id. This says
+					// what changed without saying what it changed to.
+					'drift_kind'  => $content_drift && $side_effect_drift ? 'both' : ( $content_drift ? 'content' : 'side_effects' ),
 					'drift'       => [
 						'content'      => $content_drift,
 						'side_effects' => $side_effect_drift,
@@ -2328,6 +2333,17 @@ trait DiviOps_Agent_Rollback {
 			);
 		}
 
+		// The write is committed and its recovery point is finalised. Every failure
+		// from here on is bookkeeping, and a bookkeeping failure must not cost the
+		// caller the restore that already succeeded. Dropping $point is what stops
+		// it: `$respond` would otherwise re-enter finish_recovery_point() with
+		// $failed = true, see a page that legitimately changed — the restore
+		// changed it — judge the point usable, and spend it writing the old content
+		// back, while the envelope still reported `committed: true`. Closing it
+		// here rather than at the one return that hit it means a later return
+		// cannot reintroduce it.
+		$point = null;
+
 		self::invalidate_divi_cache( (int) $post->ID );
 		$record['status']                            = 'restore_applied';
 		$record['restore']                           = self::rollback_snapshot_as_array( $record['restore'] ?? [] );
@@ -2378,7 +2394,15 @@ trait DiviOps_Agent_Rollback {
 	 * @return bool
 	 */
 	private static function rollback_snapshot_record_persisted( array $record ): bool {
-		$stored = get_option( self::rollback_snapshot_option_name( (string) $record['snapshot_id'] ), null );
+		// rollback_snapshot_normalize_record() tolerates a record with no
+		// `snapshot_id`, falling back to the id in its option name, so such records
+		// restore normally and only reach this function. Reading the key unguarded
+		// emitted an undefined-index warning; `?? ''` is the whole fix. No further
+		// guard is needed and one was removed as an equivalent mutant: an empty id
+		// addresses the bare option prefix, which holds nothing, so the function
+		// still returns false — the honest answer, since claiming verified without
+		// evidence is the failure #460 exists to stop.
+		$stored = get_option( self::rollback_snapshot_option_name( (string) ( $record['snapshot_id'] ?? '' ) ), null );
 		return is_array( $stored ) && self::rollback_snapshot_normalize_nested_value( $stored ) === self::rollback_snapshot_normalize_nested_value( $record );
 	}
 
@@ -2418,9 +2442,22 @@ trait DiviOps_Agent_Rollback {
 			return $evidence;
 		}
 
-		$content   = (string) $post->post_content;
-		$meta      = self::rollback_snapshot_capture_side_effects( (int) $post->ID );
-		$unchanged = $point['before']['value'] === $content
+		$content = (string) $post->post_content;
+		$meta    = self::rollback_snapshot_capture_side_effects( (int) $post->ID );
+
+		// `before.value` is CANONICAL — #208 normalises at capture so a restore does
+		// not fight WordPress's own save-time canonicalisation — while the page on
+		// disk is raw. Comparing the two directly made any page with non-canonical
+		// stored bytes read as changed when nothing had touched it, which on the
+		// failure path opened the bounded recovery attempt against a page no one had
+		// written to. #208's own note records that such content exists: content
+		// stored by a pre-#206 module_update is non-canonical on disk.
+		//
+		// Only the COMPARISON moves frame. `after.checksum` below stays raw, because
+		// every other after-checksum in this file is the bytes actually on the page.
+		$observed  = self::normalize_divi_full_content_for_write( $content );
+		$compare   = ! empty( $observed['ok'] ) ? (string) $observed['content'] : $content;
+		$unchanged = $point['before']['value'] === $compare
 			&& self::rollback_snapshot_side_effects_equal( $point['before']['side_effects'], $meta );
 
 		$evidence['state_changed'] = ! $unchanged;

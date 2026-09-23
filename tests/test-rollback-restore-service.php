@@ -33,25 +33,46 @@
  *
  * ── What this does NOT cover, and why ─────────────────────────────────────
  *
- * The bounded single recovery attempt inside
- * `rollback_snapshot_finish_recovery_point()` on the failure path fires only
- * when a write reports failure AFTER having changed the page. Reaching it
- * through the real code needs `update_post_content_with_integrity_guard()` to
- * both mutate and fail, which the shim cannot produce without modelling a
- * corrupting write — and per CONTRIBUTING.md's shim contract, widening the
- * shared shim to manufacture that is how a false green outlives its test. The
- * redaction and evidence shape ARE covered below, through the drift refusal,
- * which reaches `$respond` without needing a half-applied write. The recovery
- * attempt itself is a reported gap: the stub that would be required is a
- * write-guard seam the plugin does not have today.
+ * This list was wrong once already. An adversarial review before merge mutated
+ * the handler 28 ways and found six survivors where this docblock declared one;
+ * section 12 exists because of that, and closes four of them. What follows is
+ * the re-measured list, and every entry has been confirmed to survive a mutation
+ * rather than assumed.
+ *
+ * **Two fields cannot be false in any reachable fixture, so asserting them pins
+ * a literal rather than a mechanism.** `capture_verified` and `finalized` are
+ * both `rollback_snapshot_record_persisted()` results, and that function can
+ * only return false when the option store fails to read back what it was given.
+ * `tests/wp-shim.php`'s `update_option()` always succeeds, so the false branch —
+ * and with it the `capture_readback_failed` refusal — is unreachable. **The stub
+ * that would be required is an option store that can be told to drop or corrupt
+ * one write**, which is a shim capability this repository does not have; per
+ * CONTRIBUTING.md widening the SHARED shim to manufacture it is how a false
+ * green outlives its test. The two assertions on those fields say so in their
+ * own messages rather than claiming coverage they do not have.
+ *
+ * `rollback_snapshot_record_persisted()` itself IS covered, directly, in section
+ * 9 — including both false cases. What is uncovered is its two call sites.
+ *
+ * **The bounded recovery attempt** inside
+ * `rollback_snapshot_finish_recovery_point()` fires only when a write reports
+ * failure AFTER changing the page. Reaching it through the real code needs
+ * `update_post_content_with_integrity_guard()` to both mutate and fail; the stub
+ * required is a write-guard seam the plugin does not have. Section 10 does reach
+ * `$respond` with a live `$point` — which the review found nothing else did —
+ * and asserts the attempt does NOT fire there, which is the property that
+ * matters.
  *
  * ── Expected values ───────────────────────────────────────────────────────
  *
- * Every status code and error code below is cited to the branch that sets it in
- * `plugins/diviops-agent/includes/trait-rollback.php`, never read off a run.
- * The checksum algorithm is `rollback_snapshot_checksum()` — `'sha256:'` then
- * `hash( 'sha256', $value )` — reproduced in the fixture builder rather than
- * called, so an assertion cannot pass by sharing a broken implementation.
+ * Every error code below is cited to the branch that sets it in
+ * `plugins/diviops-agent/includes/trait-rollback.php`, never read off a run. No
+ * HTTP status code is asserted — the envelope helper owns the mapping and
+ * `test-core-characterization.php` pins it, so repeating it here would be a
+ * second copy to drift. The checksum algorithm is
+ * `rollback_snapshot_checksum()` — `'sha256:'` then `hash( 'sha256', $value )` —
+ * reproduced in the fixture builder rather than called, so an assertion cannot
+ * pass by sharing a broken implementation.
  *
  * @package DiviOps
  */
@@ -259,8 +280,8 @@ assert_same(
 
 $backup = $protected['data']['restore_backup'] ?? array();
 assert_same( true, $backup['created'] ?? null, 'the protected restore reports a recovery point was created' );
-assert_same( true, $backup['capture_verified'] ?? null, 'and that the capture was read back from storage rather than assumed' );
-assert_same( true, $backup['finalized'] ?? null, 'and that the recovery point was finalised against the observed after-state' );
+assert_same( true, $backup['capture_verified'] ?? null, 'and reports capture_verified (see the declared gap: this pins the field, not the read-back)' );
+assert_same( true, $backup['finalized'] ?? null, 'and reports finalized (see the declared gap: the false case needs a store that drops a write)' );
 assert_same( true, $backup['usable'] ?? null, 'and that it is usable, which is the only claim a caller can act on' );
 assert_same( false, $backup['recovery_attempted'] ?? null, 'no recovery is attempted when the restore succeeded' );
 assert_same(
@@ -450,3 +471,216 @@ assert_same(
 	diviops_call( 'rollback_snapshot_record_persisted', array( $persisted_record ) ),
 	'#512: a record the store returns ALTERED does not read back as persisted, which is the case update_option cannot report'
 );
+
+/*
+ * ---------------------------------------------------------------------------
+ * 10. A committed restore is never undone by a bookkeeping failure (#512).
+ * ---------------------------------------------------------------------------
+ *
+ * Found by adversarial review before merge. `$respond` was applied to EVERY
+ * protected-path failure, including ones raised after the content write had
+ * already committed and verified. On those, re-entering
+ * `rollback_snapshot_finish_recovery_point()` with `$failed = true` sees a page
+ * that legitimately changed — the restore changed it — decides the recovery
+ * point is usable, and spends it: the successful restore is written back out,
+ * while the envelope still says `committed: true` and "The content change
+ * stands." Both were then false.
+ *
+ * `finalization_failed` already returned directly for exactly this reason;
+ * `status_readback_failed` did not. The fix closes the class rather than the
+ * instance — past the commit there is no `$point` left to spend.
+ *
+ * The trigger below is a record stored without a `snapshot_id` key.
+ * `rollback_snapshot_normalize_record()` deliberately tolerates that (it falls
+ * back to the id in the option name), so such a record restores normally; only
+ * the storage read-back notices. That is a real shape, not a contrived one, and
+ * it makes the failure reachable without mocking the option store.
+ */
+
+$bookkeeping = rollback_rs_seed( 81009, 'BEFORE-81009', 'AFTER-81009' );
+$bk_record   = get_option( $bookkeeping['option'], array() );
+unset( $bk_record['snapshot_id'] );
+update_option( $bookkeeping['option'], $bk_record, false );
+
+// Control: the record still restores, i.e. the fixture reaches the write and is
+// not refused earlier for being malformed.
+$bk = rollback_rs_service( $bookkeeping['snapshot_id'], false, true );
+
+assert_same(
+	'BEFORE-81009',
+	(string) get_post( 81009 )->post_content,
+	'#512: a restore that committed stays committed even when its own bookkeeping read-back fails'
+);
+assert_same(
+	false,
+	$bk['error']['data']['recovery_point']['recovery_attempted'] ?? false,
+	'#512: and no recovery is attempted, because past the commit there is nothing to recover from'
+);
+
+/*
+ * ---------------------------------------------------------------------------
+ * 11. The recovery point compares like with like (#512, #208).
+ * ---------------------------------------------------------------------------
+ *
+ * Also from the pre-merge review. `before.value` is captured CANONICAL — #208
+ * normalises it in `rollback_snapshot_before_from_post()` so a restore does not
+ * fight WordPress's own save-time canonicalisation. The page on disk is raw.
+ * `rollback_snapshot_finish_recovery_point()` compared the two directly, so any
+ * page whose stored bytes are non-canonical read as "changed" when nothing had
+ * touched it — and on the failure path that opens the bounded recovery attempt,
+ * which then writes to a page no one had written to.
+ *
+ * #208's own comment records that such content exists in the wild: "Content
+ * stored by a pre-#206 module_update is non-canonical on disk."
+ */
+
+$raw_markup = '<!-- wp:divi/text {"attrs":{"url":"https:\/\/example.com"}} --><!-- /wp:divi/text -->';
+$frame_post = diviops_test_register_post( 81010, $raw_markup );
+$frame_point = diviops_call( 'rollback_snapshot_create_for_post_write', array( $frame_post, 'rollback_snapshot_restore', array() ) );
+
+// Control: the fixture really does straddle the two frames. Without this the
+// assertions below would pass on any page at all.
+assert_true(
+	$frame_point['before']['value'] !== $raw_markup,
+	'#208: the fixture is non-canonical on disk, so capture and page bytes genuinely differ'
+);
+
+$frame_evidence = diviops_call( 'rollback_snapshot_finish_recovery_point', array( $frame_point, true ) );
+
+assert_same(
+	false,
+	$frame_evidence['state_changed'] ?? null,
+	'#512: a page nobody touched reports state_changed false even when its stored bytes are non-canonical'
+);
+assert_same(
+	false,
+	$frame_evidence['recovery_attempted'] ?? null,
+	'#512: so no recovery write fires against it'
+);
+assert_same(
+	$raw_markup,
+	(string) get_post( 81010 )->post_content,
+	'#512: and the page is left byte-for-byte as it was'
+);
+
+/*
+ * ---------------------------------------------------------------------------
+ * 12. Holes found by adversarial review of this very file (#512).
+ * ---------------------------------------------------------------------------
+ *
+ * A pre-merge review mutated the handler 28 ways and found that six survived
+ * everything above — including three of the things `$protect_current` exists to
+ * do. Every assertion in this section exists because a specific mutation lived.
+ * The surviving mutation is named above each one, because that is the only
+ * honest record of why the assertion is worth its line.
+ */
+
+/* Mutation: delete `unset( $data['readback']['side_effects'] )` on the success
+ * path. Section 5 covers the FAILURE-path allow-list; nothing covered this. The
+ * trait calls historical post-meta "the caller's least business on the path that
+ * exists to hand evidence to another plugin" — so it is a contract, not tidying. */
+$redact = rollback_rs_seed( 81011, 'BEFORE-81011', 'AFTER-81011' );
+$redact_protected = rollback_rs_service( $redact['snapshot_id'], false, true );
+assert_true(
+	! isset( $redact_protected['data']['readback']['side_effects'] ),
+	'#512: a protected restore omits post-meta from its success readback'
+);
+
+$redact_plain = rollback_rs_seed( 81012, 'BEFORE-81012', 'AFTER-81012' );
+$redact_open  = rollback_rs_service( $redact_plain['snapshot_id'] );
+assert_true(
+	isset( $redact_open['data']['readback']['side_effects'] ),
+	'#512: while an unprotected restore still reports them, so the omission is the protected path and not a lost field'
+);
+
+/* Mutation: delete the `$protect_current` write-safety preflight entirely. It is
+ * item 1 of the three things the trait says protection adds — "so a recovery
+ * point is never created that could not itself be restored" — and every fixture
+ * above uses plain strings that pass it, so removing it changed nothing.
+ *
+ * The fixture has to be aimed precisely. The preflight checks TWO contents: the
+ * one about to be written and the one about to be overwritten. Making the
+ * RESTORE content unsafe proves nothing, because
+ * `update_post_content_with_integrity_guard()` refuses that downstream anyway —
+ * measured, both paths return the identical `invalid_input` and the same
+ * "unbalanced or mis-nested" message, so the preflight could be deleted with no
+ * visible change. The preflight's unique contribution is the CURRENT content: the
+ * bytes that would go into the recovery point, which nothing else validates.
+ *
+ * So `before` is safe and the page holds unsafe bytes.
+ * `assert_divi_full_content_safe_for_write()` (trait-core.php:584-599) refuses on
+ * unbalanced container markers, so an opener with no closer reaches it. */
+$unsafe_current = '<!-- wp:divi/section {"attrs":{}} -->';
+$unsafe = rollback_rs_seed( 81013, 'BEFORE-81013', $unsafe_current );
+
+$unsafe_guarded = rollback_rs_service( $unsafe['snapshot_id'], false, true );
+assert_same( false, $unsafe_guarded['ok'] ?? null, '#512: a protected restore refuses when the content it would overwrite could not itself be restored' );
+assert_same( $unsafe_current, (string) get_post( 81013 )->post_content, '#512: and writes nothing' );
+assert_same(
+	false,
+	$unsafe_guarded['error']['data']['recovery_point']['created'] ?? null,
+	'#512: refusing before the capture means no recovery point was created'
+);
+
+// The paired control, and the load-bearing half: the SAME snapshot restores
+// without protection. Without it the assertion above would pass for any refusal
+// at all — including the downstream write guard — and would not show that the
+// preflight is what protection adds.
+$unsafe_plain = rollback_rs_service( $unsafe['snapshot_id'] );
+assert_same( true, $unsafe_plain['ok'] ?? null, '#512: the unprotected path runs no such preflight, so the same snapshot still restores over those bytes' );
+
+/* Mutation: source `$content` in finish_recovery_point from `$point['before']['value']`
+ * instead of the live page — i.e. record intent instead of observation, which the
+ * trait docblock calls out as deliberately not what it does. Nothing asserted
+ * `after_checksum`, so the swap was invisible. */
+$observe = rollback_rs_seed( 81014, 'BEFORE-81014', 'AFTER-81014' );
+$observe_result = rollback_rs_service( $observe['snapshot_id'], false, true );
+assert_same(
+	rollback_rs_checksum( 'BEFORE-81014' ),
+	$observe_result['data']['restore_backup']['after_checksum'] ?? null,
+	'#512: the recovery point records the page as it IS after the write, not the content the write intended'
+);
+
+/* Mutation: collapse `$failed && $unchanged ? 'aborted_before_write' : 'write_applied'`
+ * to always `'write_applied'`. A point over a page that never changed has nothing
+ * to give back, and saying otherwise offers a caller a recovery that would write
+ * the same bytes twice. Section 11 reaches this branch; nothing read the status. */
+$aborted_markup = '<!-- wp:divi/text {"attrs":{"url":"https:\/\/example.org"}} --><!-- /wp:divi/text -->';
+$aborted_post   = diviops_test_register_post( 81015, $aborted_markup );
+$aborted_point  = diviops_call( 'rollback_snapshot_create_for_post_write', array( $aborted_post, 'rollback_snapshot_restore', array() ) );
+diviops_call( 'rollback_snapshot_finish_recovery_point', array( $aborted_point, true ) );
+$aborted_stored = get_option( 'diviops_rollback_snapshot_' . $aborted_point['snapshot_id'], array() );
+assert_same(
+	'aborted_before_write',
+	$aborted_stored['status'] ?? null,
+	'#512: a recovery point over a page that never changed is stored as aborted_before_write, not as an applied write'
+);
+
+/* From the same review: the protected allow-list correctly strips `drift`, which
+ * carries post-meta — but that left a protected drift refusal carrying nothing a
+ * caller could act on beyond the snapshot id. `drift_kind` is the leak-free
+ * discriminator. Asserted on both paths so it cannot quietly become
+ * protected-only or leak the payload back. */
+$kind_seed = rollback_rs_seed( 81016, 'BEFORE-81016', 'AFTER-81016' );
+get_post( 81016 )->post_content = 'EDITED-ELSEWHERE';
+
+$kind_guarded = rollback_rs_service( $kind_seed['snapshot_id'], false, true );
+assert_same( 'content', $kind_guarded['error']['data']['drift_kind'] ?? null, '#512: a protected drift refusal still names which kind of drift it found' );
+assert_true( ! isset( $kind_guarded['error']['data']['drift'] ), '#512: without carrying the payload that named it' );
+
+$kind_plain = rollback_rs_service( $kind_seed['snapshot_id'] );
+assert_same( 'content', $kind_plain['error']['data']['drift_kind'] ?? null, '#512: and the unprotected refusal reports the same kind' );
+assert_true( isset( $kind_plain['error']['data']['drift'] ), '#512: alongside the full diagnostics it has always carried' );
+
+/* `drift_kind` had only its `content` case covered, so collapsing the whole
+ * expression to the literal `'content'` survived. Side-effect drift is the other
+ * branch: the page's bytes still match, but the Divi post-meta the snapshot
+ * captured does not. */
+$se_seed = rollback_rs_seed( 81017, 'BEFORE-81017', 'AFTER-81017' );
+update_post_meta( 81017, '_et_pb_use_builder', 'on' );
+
+$se_drift = rollback_rs_service( $se_seed['snapshot_id'] );
+assert_same( false, $se_drift['ok'] ?? null, '#512: post-meta that changed after the snapshot write is drift too' );
+assert_same( 'side_effects', $se_drift['error']['data']['drift_kind'] ?? null, '#512: and drift_kind names it as side_effects, not content' );
+assert_same( false, $se_drift['error']['data']['drift']['content'] ?? null, '#512: with content drift explicitly false, so the two kinds are distinguishable' );
+assert_same( 'AFTER-81017', (string) get_post( 81017 )->post_content, '#512: and nothing is written' );
