@@ -21,8 +21,11 @@
  *    with the trailing `)$`.
  *  - Do NOT emit `attrs.font`/`attrs.spacing` top-level, `renderAttrs`, or
  *    `button.decoration.button.desktop.value.*` — unless
- *    `bypass_hover_padding_gate: true`, which adds only
- *    `button.decoration.button.desktop.value.padding.top: "0px"`.
+ *    `bypass_hover_padding_gate: true`, which adds
+ *    `button.decoration.button.desktop.value.padding` with `top`, `right` and
+ *    `left` all `"0px"`. Divi 5.12.1+ reads only `right` and `left`, and reads
+ *    them under two independent guards, so a single corner suppresses nothing
+ *    (#414); `top` is retained for the pre-refactor branch that still reads it.
  */
 
 import {
@@ -193,8 +196,26 @@ export function composeButtonAttrs(
   }
 
   // --- hover-padding-gate bypass (opt-in only) -----------------------
+  //
+  // Writes left and right, not just top (#414). Divi 5.12.1 refactored
+  // `Packages/Module/Options/Button/Style/StyleDeclarations.php`: the gate now
+  // computes `$effective_right_padding` / `$effective_left_padding` from ONLY
+  // the `right` and `left` keys and emits `padding-right` / `padding-left`
+  // under two independent guards, deliberately avoiding the shorthand fallback
+  // so hover top/bottom custom values survive. It no longer reads `top`, so the
+  // previous `{ top: "0px" }` suppressed nothing — confirmed in a live render
+  // on staging under Divi 5.13, not just by direct invocation.
+  //
+  // `top` is kept alongside them because `$has_desktop_padding` still exists
+  // tree-wide in the pre-refactor 5.12.0 shape — `WooCommerceProductAddToCartModule.php:734`
+  // defines it and `:739` is the verbatim old branch, where ANY corner
+  // suppresses the gate. Dropping `top` would fix `divi/button` and regress
+  // whatever still runs the old branch. A corner Divi does not read is inert,
+  // so writing all three satisfies both shapes at no cost.
   if (input.bypass_hover_padding_gate === true) {
-    decoration.button = { desktop: { value: { padding: { top: "0px" } } } };
+    decoration.button = {
+      desktop: { value: { padding: { top: "0px", right: "0px", left: "0px" } } },
+    };
   }
 
   return { button: { decoration } };
