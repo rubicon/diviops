@@ -819,6 +819,84 @@ trait DiviOps_Agent_Preset {
 	 * `presetId` in either shape is sometimes a single string and sometimes an array (Divi
 	 * accepts both via the stacking convention) — handle both.
 	 */
+	/**
+	 * Validate the `rename_strip_prefix` literal without altering it (#378).
+	 *
+	 * Returns `[ 'value' => string ]` or `[ 'error' => [...] ]`. The value is
+	 * passed through byte for byte: this parameter is compared against stored
+	 * preset names with `substr()`, so any normalisation here silently changes
+	 * which names match and by how many bytes they are cut.
+	 *
+	 * An empty string is valid and means "no prefix action", which the caller
+	 * already treats as a no-op.
+	 *
+	 * @param mixed $value Raw request parameter.
+	 * @return array
+	 */
+	private static function preset_validate_prefix_literal( $value ): array {
+		if ( ! is_string( $value ) ) {
+			return [ 'error' => [
+				'code'    => 'invalid_input',
+				'message' => 'prefix must be a plain string.',
+				'hint'    => 'Pass the literal prefix to strip, including any trailing separator.',
+				'data'    => [ 'field' => 'prefix', 'received_type' => gettype( $value ) ],
+			] ];
+		}
+		if ( '' !== $value && 1 !== preg_match( '//u', $value ) ) {
+			return [ 'error' => [
+				'code'    => 'invalid_input',
+				'message' => 'prefix must contain valid UTF-8.',
+				'hint'    => 'Re-encode the prefix as valid UTF-8 before retrying.',
+				'data'    => [ 'field' => 'prefix', 'reason' => 'invalid_encoding' ],
+			] ];
+		}
+		if ( preg_match( '/[\x{0000}-\x{001F}\x{007F}-\x{009F}]/u', $value ) ) {
+			return [ 'error' => [
+				'code'    => 'invalid_input',
+				'message' => 'prefix contains control characters.',
+				'hint'    => 'Pass one line of plain text without control bytes.',
+				'data'    => [ 'field' => 'prefix', 'reason' => 'control_character' ],
+			] ];
+		}
+		if ( strlen( $value ) > 255 ) {
+			return [ 'error' => [
+				'code'    => 'invalid_input',
+				'message' => 'prefix is longer than 255 bytes.',
+				'hint'    => 'A preset-name prefix this long is almost certainly a mistake.',
+				'data'    => [ 'field' => 'prefix', 'reason' => 'too_long', 'length' => strlen( $value ) ],
+			] ];
+		}
+		return [ 'value' => $value ];
+	}
+
+	/**
+	 * Count every preset item across both buckets.
+	 *
+	 * Used only as the loop bound on `remove_orphans`' fixed-point iteration
+	 * (#378). Each pass that does any work removes at least one item, so the
+	 * iteration cannot run more times than there are items — the bound is a
+	 * structural guarantee against a spin, not a tuning knob, and reaching it
+	 * would mean a pass removed nothing yet reported otherwise.
+	 *
+	 * @param mixed $d5 Registry payload.
+	 * @return int
+	 */
+	private static function preset_registry_item_count( $d5 ): int {
+		$count = 0;
+		foreach ( [ 'module', 'group' ] as $type ) {
+			if ( ! isset( $d5[ $type ] ) || ! is_array( $d5[ $type ] ) ) {
+				continue;
+			}
+			foreach ( $d5[ $type ] as $info ) {
+				$info = (array) $info;
+				if ( isset( $info['items'] ) && is_array( $info['items'] ) ) {
+					$count += count( $info['items'] );
+				}
+			}
+		}
+		return $count;
+	}
+
 	private static function collect_group_chain_refs( $d5 ) {
 		$counts        = [];
 		// Build `referenced_by` with the referencing UUID as KEY (not value)
@@ -1013,11 +1091,22 @@ trait DiviOps_Agent_Preset {
 						$entry['referenced_by_presets'] = $chain['referenced_by'][ $pid ] ?? [];
 					}
 
+					// `spam_unreferenced` is the list an operator reads as "safe to
+					// delete", so it must be computed with the SAME predicate
+					// `preset_cleanup`'s removal pass uses — `! $is_ref && ! $is_default`
+					// — rather than a second, narrower one (#378). Audit used to
+					// branch on `$is_ref` alone and so advertised a bucket default as
+					// deletable while cleanup correctly refused to delete it. The
+					// entry already carries `is_default`, `referenced` and `ref_count`,
+					// so a default routed away from the delete list still reports
+					// exactly why it is protected.
+					$removable = ! $is_ref && ! $is_default;
+
 					if ( ! $has_content ) {
 						$summary['empty_defaults'][] = $entry;
-					} elseif ( $is_spam && $is_ref ) {
+					} elseif ( $is_spam && ! $removable ) {
 						$summary['spam_referenced'][] = $entry;
-					} elseif ( $is_spam && ! $is_ref ) {
+					} elseif ( $is_spam && $removable ) {
 						$summary['spam_unreferenced'][] = $entry;
 					} else {
 						$summary['descriptive'][] = $entry;
@@ -1054,7 +1143,24 @@ trait DiviOps_Agent_Preset {
 		$dry_run    = rest_sanitize_boolean( $request->get_param( 'dry_run' ) ?? true );
 		$dedup      = rest_sanitize_boolean( $request->get_param( 'dedup' ) ?? false );
 		$action     = sanitize_key( (string) ( $request->get_param( 'action' ) ?? '' ) );
-		$prefix     = sanitize_text_field( (string) ( $request->get_param( 'prefix' ) ?? '' ) );
+		// `prefix` is a literal to MATCH, not text to display, so it is validated
+		// rather than sanitized (#378). `sanitize_text_field()` ends in `trim()`,
+		// so `"DiviOps "` arrived as `"DiviOps"` and every renamed preset kept the
+		// separator the caller asked to remove — `"DiviOps Hero"` became `" Hero"`
+		// and the handler reported a clean rename. Stripping a trailing separator
+		// is the normal case for this feature. Same reasoning as
+		// `seo_validate_plain_text()` in trait-seo.php.
+		$prefix_check = self::preset_validate_prefix_literal( $request->get_param( 'prefix' ) ?? '' );
+		if ( isset( $prefix_check['error'] ) ) {
+			return self::envelope_error(
+				$prefix_check['error']['code'],
+				$prefix_check['error']['message'],
+				$prefix_check['error']['hint'] ?? null,
+				400,
+				$prefix_check['error']['data'] ?? null
+			);
+		}
+		$prefix     = $prefix_check['value'];
 		$scope_raw  = sanitize_key( (string) ( $request->get_param( 'scope' ) ?? '' ) );
 		$scope      = in_array( $scope_raw, [ 'spam', 'all' ], true ) ? $scope_raw : 'spam';
 		$d5         = self::get_d5_presets();
@@ -1150,42 +1256,74 @@ trait DiviOps_Agent_Preset {
 		// Action: remove_orphans — remove unreferenced presets.
 		// scope=spam (default): only spam-named orphans. scope=all: all non-default orphans.
 		if ( 'remove_orphans' === $action ) {
-			foreach ( [ 'module', 'group' ] as $type ) {
-				if ( ! isset( $d5[ $type ] ) ) {
-					continue;
-				}
-				foreach ( $d5[ $type ] as $mod => &$info ) {
-					if ( ! is_array( $info ) ) {
-						$info = (array) $info;
-					}
-					if ( ! isset( $info['items'] ) || ! is_array( $info['items'] ) ) {
+			// Iterate to a fixed point (#378). Removing a preset also removes its
+			// `groupPresets` chain refs, which can orphan a group preset that was
+			// only being kept alive by the preset just deleted. A single pass
+			// therefore left a registry an identical second run would cut further,
+			// and reported the doomed presets as `kept`.
+			//
+			// Only the CHAIN half of the referenced set is recomputed per pass.
+			// `$refs['all_uuids']` is page-content references, and deleting a
+			// preset does not edit a page — re-running collect_page_preset_refs()
+			// would be a get_posts() over every SCANNABLE_POST_TYPES row plus a
+			// parse_blocks() per hit to learn something that cannot have changed.
+			//
+			// Removals are applied to the in-memory `$d5` even under `dry_run`, so
+			// the preview converges on, and reports, the same closure the real run
+			// removes. Only `save_d5_presets()` is gated on `! $dry_run`.
+			$max_passes = self::preset_registry_item_count( $d5 ) + 1;
+
+			for ( $pass = 0; $pass < $max_passes; $pass++ ) {
+				$chain_now      = self::collect_group_chain_refs( $d5 );
+				$referenced_now = $refs['all_uuids'] + $chain_now['counts'];
+				$pass_removed   = 0;
+				$kept           = 0;
+
+				foreach ( [ 'module', 'group' ] as $type ) {
+					if ( ! isset( $d5[ $type ] ) ) {
 						continue;
 					}
-					$default_id = $info['default'] ?? '';
-
-					foreach ( $info['items'] as $pid => $preset ) {
-						$preset     = (array) $preset;
-						$name       = $preset['name'] ?? '';
-						$is_ref     = isset( $referenced_set[ $pid ] );
-						$is_default = $pid === $default_id;
-
-						$should_remove = ! $is_ref && ! $is_default;
-						if ( 'spam' === $scope ) {
-							$should_remove = $should_remove && self::is_spam_preset_name( $name );
+					foreach ( $d5[ $type ] as $mod => &$info ) {
+						if ( ! is_array( $info ) ) {
+							$info = (array) $info;
 						}
+						if ( ! isset( $info['items'] ) || ! is_array( $info['items'] ) ) {
+							continue;
+						}
+						$default_id = $info['default'] ?? '';
 
-						if ( $should_remove ) {
-							$removed[] = [ 'id' => $pid, 'module' => $mod, 'name' => $name ];
-							if ( ! $dry_run ) {
-								unset( $info['items'][ $pid ] );
-								$modified = true;
+						foreach ( $info['items'] as $pid => $preset ) {
+							$preset     = (array) $preset;
+							$name       = $preset['name'] ?? '';
+							$is_ref     = isset( $referenced_now[ $pid ] );
+							$is_default = $pid === $default_id;
+
+							$should_remove = ! $is_ref && ! $is_default;
+							if ( 'spam' === $scope ) {
+								$should_remove = $should_remove && self::is_spam_preset_name( $name );
 							}
-						} else {
-							$kept++;
+
+							if ( $should_remove ) {
+								$removed[] = [ 'id' => $pid, 'module' => $mod, 'name' => $name ];
+								unset( $info['items'][ $pid ] );
+								$pass_removed++;
+								if ( ! $dry_run ) {
+									$modified = true;
+								}
+							} else {
+								$kept++;
+							}
 						}
 					}
+					unset( $info );
 				}
-				unset( $info );
+
+				// `$kept` is deliberately recounted per pass rather than
+				// accumulated: only the final pass describes the registry the
+				// operator is left with.
+				if ( 0 === $pass_removed ) {
+					break;
+				}
 			}
 
 			if ( ! $dry_run && $modified ) {
