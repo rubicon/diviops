@@ -56,6 +56,11 @@ import {
   loadSourcePayloadRef,
   type SourcePayloadRef,
 } from "./cross-env-preflight/source-payload-ref.js";
+import {
+  createPageExportRef,
+  PageExportChecksumError,
+  type PageExportRef,
+} from "./page-export-ref.js";
 import { moduleMapAnswer } from "./module-map.js";
 import { optimizeSchema } from "./schema-optimizer.js";
 import { schemaModuleRoute } from "./schema-route.js";
@@ -2724,6 +2729,93 @@ registerPluginTool(
     return {
       content: [
         { type: "text" as const, text: serializeEnvelope(result, "diviops_page_duplicate") },
+      ],
+    };
+  },
+);
+
+/**
+ * What `/page/export/<id>` answers with (#382). `artifact_json` is a STRING
+ * holding the exact bytes the plugin hashed — not an object — so this server can
+ * prove the bytes it writes are the bytes that were checksummed without ever
+ * re-encoding them. `manifest` is the summary this tool returns in its place.
+ */
+type PageExportData = {
+  artifact_json?: unknown;
+  manifest?: { sha256?: unknown; byte_length?: unknown } & Record<string, unknown>;
+};
+
+registerPluginTool(
+  "diviops_page_export",
+  {
+    description:
+      "Export a page as Divi's own portability artifact — the same schema the Visual Builder's Export button produces, so a VB Import on another site consumes it verbatim. " +
+      "That artifact embeds EVERY image as base64 (local attachments are read off disk and base64-encoded; remote ones are fetched and base64-encoded too), so a photo-heavy page is MEGABYTES. " +
+      "By default the payload is therefore NOT returned: the server writes it to its own local artifact store and returns `artifact_ref` { handle, checksum, algorithm, storage, format, expires_at } plus a `manifest` " +
+      "{ page_id, page_title, post_type, byte_length, sha256, images { referenced, encoded, skipped }, global_colors, presets, attachment_ids, third_party_namespaces }. " +
+      "Pass return_payload: true ONLY when you genuinely need the bytes in the conversation — it inlines the full base64 artifact and can be many megabytes of context, which is usually a waste and can exceed the client's limit. " +
+      "INCOMPLETE BY CONSTRUCTION, and manifest.artifact_omits names how: Divi computes global_variables, page_settings_meta and thumbnails in the Visual Builder's JavaScript and POSTs them up, so no server-side seam produces them — Divi's own headless export route returns them empty too. Treat this as a layout+presets+colors export, not as a full site-to-site move. " +
+      "The stored file is the raw artifact JSON and nothing else, written 0600 under .diviops-tmp/page-exports/ (override the root with DIVIOPS_PAGE_EXPORT_REF_DIR, the 24h retention with DIVIOPS_PAGE_EXPORT_REF_TTL_SECONDS); each export sweeps its own expired artifacts first. " +
+      "The server recomputes sha256 over the artifact it received and compares it against manifest.sha256 before writing: on mismatch nothing is written, no ref is returned, and the error carries both digests. " +
+      "Read-only on the site. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; a missing page returns 'not_found', a digest disagreement returns 'page_export.checksum_mismatch' with error.data = { declared, computed, declared_byte_length, computed_byte_length }.",
+    inputSchema: {
+      page_id: z.number().int().positive().describe("WordPress post/page ID to export."),
+      return_payload: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe(
+          "Inline the full artifact in the tool result alongside the ref. WARNING: the artifact embeds every image as base64 and can be many megabytes. Default false writes it to the server's artifact store and returns only the ref plus the manifest.",
+        ),
+    },
+    annotations: { idempotentHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ page_id, return_payload }) => {
+    const result = await wrapResponse(async () => {
+      const response = await wp.requestEnveloped<PageExportData>(
+        `/page/export/${page_id}`,
+      );
+      // envelopeMap runs the projection on the success branch only, so a
+      // plugin error envelope reaches the caller untouched and — because the
+      // ref is created inside it — nothing is written for a failed export.
+      return envelopeMap(response, (data) => {
+        if (data?.artifact_json === undefined) {
+          withCode(
+            ErrorCodes.WP_ERROR,
+            "page export response carried no artifact.",
+            "The connected plugin answered /page/export without an `artifact_json` key; a plugin that still returns `artifact` as an object predates this contract. Update it.",
+          );
+        }
+        let ref: PageExportRef;
+        try {
+          ref = createPageExportRef(
+            page_id,
+            data.artifact_json,
+            data.manifest?.sha256,
+            data.manifest?.byte_length,
+          );
+        } catch (e) {
+          if (e instanceof PageExportChecksumError) {
+            withCode(
+              "page_export.checksum_mismatch",
+              e.message,
+              "The artifact bytes this server received do not hash to the digest the plugin declared. Nothing was written. The plugin sends the exact bytes it hashed and this server never re-encodes them, so this is transport corruption or a truncated response rather than an encoding disagreement — retry, and if it persists capture the response size against manifest.byte_length.",
+              e.mismatch,
+            );
+          }
+          throw e;
+        }
+        return {
+          artifact_ref: ref,
+          manifest: data.manifest,
+          ...(return_payload ? { artifact_json: data.artifact_json } : {}),
+        };
+      });
+    });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_page_export") },
       ],
     };
   },
@@ -5746,58 +5838,6 @@ registerPluginTool(
     return {
       content: [
         { type: "text" as const, text: serializeEnvelope(result, "diviops_bulk_status_change") },
-      ],
-    };
-  },
-);
-
-registerPluginTool(
-  "diviops_bulk_find_replace",
-  {
-    description:
-      "Replace a LITERAL string across an explicit list of post ids. The most dangerous tool in this plugin; read all of this. " +
-      "LITERAL ONLY, permanently — there is no regex and there will not be. A caller-supplied pattern over Divi block markup can rewrite comment delimiters, span block boundaries and mangle attribute JSON, and nothing can constrain afterwards what it already destroyed. Find the text with diviops_content_search, read the matches, pass a literal replacement. " +
-      "TWO-STEP, ALWAYS: call with dry_run (the default) to get a plan plus a plan_token showing every match per target, then call again with dry_run:false and that token. dry_run:false without a token is refused. The token binds each target's content checksum, status and modified time, so any drift refuses the run. " +
-      "IT NEVER BUILDS A BLOCK TREE. Taking a page apart and reassembling it is byte-lossy on real pages (measured at 82.6% identity on the reference site; one page gained 2,952 bytes through a round trip that changed nothing, and every existing guard passed it). Instead it decodes ONE block opener's attribute JSON at a time, replaces the decoded value, re-encodes that one opener and splices it back. " +
-      "SCOPE defaults to both, and that matters: in Divi 5 module text lives inside the block comment's attribute JSON, so a body-text-only run finds almost nothing. Attribute matches are decoded, replaced, re-encoded and required to parse again before anything is written; a replacement containing a quote or a backslash that would emit invalid JSON refuses that target with bulk.attrs_reencode_invalid rather than corrupting it. " +
-      "A page containing a LOCKED module refuses the whole run unless include_locked is passed. A bulk operation names no module, so a lock means 'not without naming me'. " +
-      "Guards: marker-census equality before and after, canonical re-serialisation, malformed-escape detection, a per-target readback-and-revert write guard with global-layout drift checking, and a forced rollback snapshot per target — which for THIS operation is a genuine recovery record, because it captures the post_content that actually changed. " +
-      "WHAT NO GUARD CAN CATCH: a replacement that is valid but WRONG. That judgement is yours, reading the plan. " +
-      "A bulk apply consumes one write-rate-limit slot per target. page and post only. Returns the standardized envelope.",
-    inputSchema: {
-      targets: z
-        .array(z.number().int().positive())
-        .min(1)
-        .max(25)
-        .describe("Explicit post ids, at most 25. Never a query — a query re-evaluated at apply time is not the set you reviewed."),
-      search: z.string().min(1).describe("The literal text to find. Not a pattern. Case-sensitive."),
-      replace: z.string().optional().describe("The literal replacement. Omit or pass an empty string to delete the search text."),
-      scope: z
-        .enum(["both", "body", "attrs"])
-        .optional()
-        .describe("Default both. body only touches text between block comments; attrs only touches decoded attribute values. Restricting to body is a default that cannot do the job in Divi 5."),
-      include_locked: z
-        .boolean()
-        .optional()
-        .describe("Default false. When false, a target containing any module with attrs.locked refuses the WHOLE run, naming them."),
-      dry_run: z.boolean().optional().describe("Defaults to TRUE. Writing requires passing false explicitly AND a plan_token."),
-      plan_token: z.string().optional().describe("The token from this tool's own dry-run plan. Valid 15 minutes against the exact state it was minted for."),
-      on_error: z.enum(["continue", "stop"]).optional().describe("Default continue. Every refusal here is page-specific, so stopping leaves a half-changed site."),
-    },
-    annotations: { destructiveHint: true },
-    // Conditional: a re-run whose search string no longer occurs reports
-    // already_applied and writes nothing, so it is idempotent on its own output.
-    // But a replacement that reintroduces the search string is not.
-    _meta: { idempotent: "conditional" },
-  },
-  async ({ targets, search, replace, scope, include_locked, dry_run, plan_token, on_error }) => {
-    const result = await wp.requestEnveloped("/bulk/find-replace", {
-      method: "POST",
-      body: { targets, search, replace, scope, include_locked, dry_run, plan_token, on_error },
-    });
-    return {
-      content: [
-        { type: "text" as const, text: serializeEnvelope(result, "diviops_bulk_find_replace") },
       ],
     };
   },

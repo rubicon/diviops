@@ -29,6 +29,7 @@ const EXPECTED_ALWAYS_ON = 121;
 const EXPECTED_NAMES = [
   'diviops_meta_info',
   'diviops_page_get',
+  'diviops_page_export',
   'diviops_module_update',
   'diviops_preset_inspect',
   'diviops_variable_update',
