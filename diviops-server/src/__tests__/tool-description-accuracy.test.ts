@@ -81,6 +81,8 @@ describe("tool descriptions that disagreed with their handlers (#510)", () => {
       "payload_too_large",
       "fetch_failed",
       "upload_failed",
+      "forbidden",
+      "invalid_input",
     ]) {
       assert.match(block, new RegExp(`'${code}'`), `${code} is documented`);
     }
