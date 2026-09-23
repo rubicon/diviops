@@ -10,6 +10,22 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.27.0](https://github.com/rubicon/diviops/compare/v1.26.0...v1.27.0) (2026-09-23)
+
+
+### Features
+
+* **#382:** page_export — Divi's portability payload, and the three keys it cannot carry ([#505](https://github.com/rubicon/diviops/issues/505)) ([26012e4](https://github.com/rubicon/diviops/commit/26012e45d50aae6cc9ae08cc4f2e05994db9745e))
+* **#494:** content_search — the read half of [#38](https://github.com/rubicon/diviops/issues/38)'s bulk operations ([#497](https://github.com/rubicon/diviops/issues/497)) ([6efda73](https://github.com/rubicon/diviops/commit/6efda7397280ed9b6d57e099ff9422d83d4d53cf))
+* **#495:** the bulk write harness + bulk_status_change ([#38](https://github.com/rubicon/diviops/issues/38) phase 2) ([#500](https://github.com/rubicon/diviops/issues/500)) ([9eced4f](https://github.com/rubicon/diviops/commit/9eced4f07a992e3de7f894c2274b4fb55610d78e)), closes [#495](https://github.com/rubicon/diviops/issues/495)
+* **#496:** bulk_find_replace — phase 3 of [#38](https://github.com/rubicon/diviops/issues/38), on phase 2's harness ([#503](https://github.com/rubicon/diviops/issues/503)) ([099025e](https://github.com/rubicon/diviops/commit/099025e4ace909d73cd6eff898ed7a2590601136))
+* **#64:** document loop-scoped $variable() bindings and Divi Interactions ([#492](https://github.com/rubicon/diviops/issues/492)) ([3a6c4fa](https://github.com/rubicon/diviops/commit/3a6c4fae6370870a7b27310d8a787f14ed37751e))
+
+
+### Bug Fixes
+
+* **#491:** Domain Path, so a bundled translation can load at all ([#502](https://github.com/rubicon/diviops/issues/502)) ([1f6330e](https://github.com/rubicon/diviops/commit/1f6330e719447c03dce8bb5c40e6ce99858931b4))
+
 ## [1.26.0](https://github.com/rubicon/diviops/compare/v1.25.0...v1.26.0) (2026-09-23)
 
 
