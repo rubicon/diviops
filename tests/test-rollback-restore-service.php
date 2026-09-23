@@ -684,3 +684,64 @@ assert_same( false, $se_drift['ok'] ?? null, '#512: post-meta that changed after
 assert_same( 'side_effects', $se_drift['error']['data']['drift_kind'] ?? null, '#512: and drift_kind names it as side_effects, not content' );
 assert_same( false, $se_drift['error']['data']['drift']['content'] ?? null, '#512: with content drift explicitly false, so the two kinds are distinguishable' );
 assert_same( 'AFTER-81017', (string) get_post( 81017 )->post_content, '#512: and nothing is written' );
+
+/*
+ * ---------------------------------------------------------------------------
+ * 13. Retention must not evict the snapshot being restored (#512, #514).
+ * ---------------------------------------------------------------------------
+ *
+ * Raised as SUSPECTED by the pre-merge review ("consequence looks cosmetic"),
+ * then measured. It is not cosmetic, and this PR is what makes it reachable:
+ * before `$protect_current` existed a restore never captured, so
+ * `rollback_snapshot_enforce_retention()` never ran during one.
+ *
+ * `enforce_retention()` deletes oldest-first past the 500-row cap, with no
+ * notion of a row an in-flight operation is holding. A protected restore of an
+ * OLD snapshot captures its recovery point first — which runs retention — which
+ * can delete the very row the restore is working from. The restore then
+ * finishes and `update_option()` writes that record back, which on a deleted row
+ * is an INSERT, not an update.
+ *
+ * Measured before the fix: the target's `option_id` went 1 → 523. The row
+ * survives and the content is correct, so nothing looks wrong — but the snapshot
+ * has been silently promoted from oldest to newest in the retention order, and
+ * genuinely newer snapshots will now be evicted ahead of it. A store that
+ * quietly reorders its own eviction queue during a read-and-restore is the kind
+ * of wrong that only shows up as "why is that old snapshot still here and my
+ * recent one gone".
+ *
+ * The fixture has to exceed the real cap for retention to fire at all, so it
+ * builds 520 filler rows and removes them again — `test-rollback-retention.php`
+ * asserts an absolute row count, and leaving them behind would break it.
+ */
+
+$ret_seed   = rollback_rs_seed( 81018, 'BEFORE-81018', 'AFTER-81018' );
+$ret_row_id = diviops_test_option_row( $ret_seed['option'] )['option_id'];
+
+$ret_fillers = array();
+for ( $i = 0; $i < 520; $i++ ) {
+	$ret_fillers[] = 'diviops_rollback_snapshot_zzfill' . $i;
+	update_option( 'diviops_rollback_snapshot_zzfill' . $i, array( 'snapshot_id' => 'zzfill' . $i, 'status' => 'write_applied' ), false );
+}
+
+// Control: the fixture really is over the cap and the target really is among the
+// oldest, which is what puts it in the delete slice. Without this the assertion
+// below passes on a store retention never touched.
+assert_true(
+	rollback_rs_option_count() > 500,
+	'#514: the fixture exceeds the retention cap, so enforce_retention() actually runs'
+);
+
+$ret_result = rollback_rs_service( $ret_seed['snapshot_id'], false, true );
+assert_same( true, $ret_result['ok'] ?? null, '#514: the restore itself still succeeds' );
+assert_same( 'BEFORE-81018', (string) get_post( 81018 )->post_content, '#514: and writes the right content' );
+
+assert_same(
+	$ret_row_id,
+	diviops_test_option_row( $ret_seed['option'] )['option_id'],
+	'#514: retention does not evict the snapshot the restore is holding, so its place in the eviction order is unchanged'
+);
+
+foreach ( $ret_fillers as $ret_filler ) {
+	delete_option( $ret_filler );
+}

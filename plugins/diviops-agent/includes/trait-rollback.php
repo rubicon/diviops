@@ -1168,7 +1168,7 @@ trait DiviOps_Agent_Rollback {
 	 *
 	 * @return int Rows actually deleted.
 	 */
-	private static function rollback_snapshot_enforce_retention(): int {
+	private static function rollback_snapshot_enforce_retention( string $exempt_option = '' ): int {
 		global $wpdb;
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || empty( $wpdb->options ) ) {
 			return 0;
@@ -1190,6 +1190,17 @@ trait DiviOps_Agent_Rollback {
 			if ( false === self::rollback_snapshot_id_from_option_name( $option_name ) ) {
 				continue;
 			}
+			// Never evict a row an in-flight operation is holding (#514). A
+			// protected restore captures its recovery point BEFORE writing, and
+			// that capture runs retention — which on a full store could delete the
+			// very snapshot being restored. The restore then wrote the record back,
+			// and on a deleted row `update_option()` INSERTS, so the snapshot was
+			// silently promoted from oldest to newest in the eviction order and
+			// genuinely newer snapshots were evicted ahead of it. Measured before
+			// the fix: option_id 1 -> 523.
+			if ( '' !== $exempt_option && $option_name === $exempt_option ) {
+				continue;
+			}
 			if ( delete_option( $option_name ) ) {
 				++$deleted;
 			}
@@ -1198,7 +1209,7 @@ trait DiviOps_Agent_Rollback {
 		return $deleted;
 	}
 
-	private static function rollback_snapshot_create_for_post_write( $post, string $tool, array $operation ) {
+	private static function rollback_snapshot_create_for_post_write( $post, string $tool, array $operation, string $exempt_option = '' ) {
 		$snapshot_id = self::rollback_snapshot_generate_id( (int) $post->ID, $tool );
 		$created_at  = self::rollback_snapshot_now();
 		$expires_at  = gmdate( 'c', time() + self::rollback_snapshot_expiry_seconds() );
@@ -1239,7 +1250,7 @@ trait DiviOps_Agent_Rollback {
 			);
 		}
 
-		self::rollback_snapshot_enforce_retention();
+		self::rollback_snapshot_enforce_retention( $exempt_option );
 
 		return $record;
 	}
@@ -2246,7 +2257,9 @@ trait DiviOps_Agent_Rollback {
 			);
 		}
 		if ( $protect_current ) {
-			$captured = self::rollback_snapshot_create_for_post_write( $post, 'rollback_snapshot_restore', [ 'snapshot_id' => $snapshot_id ] );
+			// $option_name is exempt from retention: capturing the recovery point
+			// must not evict the snapshot this restore is reading from (#514).
+			$captured = self::rollback_snapshot_create_for_post_write( $post, 'rollback_snapshot_restore', [ 'snapshot_id' => $snapshot_id ], $option_name );
 			if ( is_wp_error( $captured ) ) {
 				return $respond( self::envelope_from_content_write_error( $captured ) );
 			}
