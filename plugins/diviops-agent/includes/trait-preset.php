@@ -1224,8 +1224,15 @@ trait DiviOps_Agent_Preset {
 				unset( $info );
 			}
 
+			$cache = null;
 			if ( ! $dry_run && $modified ) {
 				self::save_d5_presets( $d5 );
+				// Site-wide, not per-post (#403). A preset is shared across posts by
+				// definition, so editing the definition can restyle every module bound
+				// to it — the compiled CSS this write invalidates is all of it. Gated on
+				// `$modified` so a run that changed nothing pays no site-wide cost, and
+				// so "nothing to do" stays distinguishable from "styles changed".
+				$cache = self::invalidate_divi_cache_sitewide();
 			}
 
 			if ( $dry_run ) {
@@ -1250,6 +1257,7 @@ trait DiviOps_Agent_Preset {
 				'renamed_count' => count( $renamed ),
 				'kept_count'    => $kept,
 				'renamed'       => $renamed,
+				'cache'         => $cache,
 			] );
 		}
 
@@ -1326,8 +1334,15 @@ trait DiviOps_Agent_Preset {
 				}
 			}
 
+			$cache = null;
 			if ( ! $dry_run && $modified ) {
 				self::save_d5_presets( $d5 );
+				// Site-wide, not per-post (#403). A preset is shared across posts by
+				// definition, so editing the definition can restyle every module bound
+				// to it — the compiled CSS this write invalidates is all of it. Gated on
+				// `$modified` so a run that changed nothing pays no site-wide cost, and
+				// so "nothing to do" stays distinguishable from "styles changed".
+				$cache = self::invalidate_divi_cache_sitewide();
 			}
 
 			if ( $dry_run ) {
@@ -1352,6 +1367,7 @@ trait DiviOps_Agent_Preset {
 				'removed_count' => count( $removed ),
 				'kept_count'    => $kept,
 				'removed'       => $removed,
+				'cache'         => $cache,
 			] );
 		}
 
@@ -1461,8 +1477,15 @@ trait DiviOps_Agent_Preset {
 			unset( $info );
 		}
 
+		$cache = null;
 		if ( ! $dry_run && $modified ) {
 			self::save_d5_presets( $d5 );
+			// Site-wide, not per-post (#403). A preset is shared across posts by
+			// definition, so editing the definition can restyle every module bound
+			// to it — the compiled CSS this write invalidates is all of it. Gated on
+			// `$modified` so a run that changed nothing pays no site-wide cost, and
+			// so "nothing to do" stays distinguishable from "styles changed".
+			$cache = self::invalidate_divi_cache_sitewide();
 		}
 
 		if ( $dry_run ) {
@@ -1497,6 +1520,7 @@ trait DiviOps_Agent_Preset {
 			'removed'        => $removed,
 			'renamed'        => $renamed,
 			'deduped'        => $deduped,
+			'cache'          => $cache,
 		] );
 	}
 
@@ -1648,12 +1672,17 @@ trait DiviOps_Agent_Preset {
 		}
 
 		self::save_d5_presets( $d5 );
+		// Site-wide, not per-post (#403). A preset is shared across posts by
+		// definition, so a definition change can restyle every module bound to it.
+		// Once per request, after the single write.
+		$cache = self::invalidate_divi_cache_sitewide();
 
 		return self::attach_meta(
 			self::envelope_success( [
 				'success' => true,
 				'preset'  => $found,
 				'message' => "Preset '{$preset_id}' updated.",
+				'cache'   => $cache,
 			] ),
 			self::d5_preset_write_meta()
 		);
@@ -1740,11 +1769,16 @@ trait DiviOps_Agent_Preset {
 		}
 
 		self::save_d5_presets( $d5 );
+		// Site-wide, not per-post (#403). A preset is shared across posts by
+		// definition, so a definition change can restyle every module bound to it.
+		// Once per request, after the single write.
+		$cache = self::invalidate_divi_cache_sitewide();
 
 		$response = [
 			'success' => true,
 			'deleted' => $found,
 			'message' => "Preset '{$preset_id}' deleted.",
+			'cache'   => $cache,
 		];
 		if ( $default_cleared ) {
 			$response['default_cleared'] = $default_cleared;
@@ -1833,9 +1867,14 @@ trait DiviOps_Agent_Preset {
 			$d5[ $req_type ][ $req_module ] = $bucket;
 
 			self::save_d5_presets( $d5 );
+			// Site-wide, not per-post (#403). A preset is shared across posts by
+			// definition, so a definition change can restyle every module bound to it.
+			// Once per request, after the single write.
+			$cache = self::invalidate_divi_cache_sitewide();
 
 			return self::envelope_success( [
 				'success' => true,
+				'cache'   => $cache,
 				'preset'  => [
 					'id'             => '',
 					'type'           => $req_type,
@@ -1924,6 +1963,10 @@ trait DiviOps_Agent_Preset {
 		}
 
 		self::save_d5_presets( $d5 );
+		// Site-wide, not per-post (#403). A preset is shared across posts by
+		// definition, so a definition change can restyle every module bound to it.
+		// Once per request, after the single write.
+		$cache = self::invalidate_divi_cache_sitewide();
 
 		$msg = $do_unset
 			? "Default preset cleared for {$found['type']}/{$found['module']}."
@@ -1934,6 +1977,7 @@ trait DiviOps_Agent_Preset {
 				'success' => true,
 				'preset'  => $found,
 				'message' => $msg,
+				'cache'   => $cache,
 			] ),
 			self::d5_preset_write_meta()
 		);
@@ -2130,9 +2174,14 @@ trait DiviOps_Agent_Preset {
 		}
 
 		self::save_d5_presets( $d5 );
+		// Site-wide, not per-post (#403). A preset is shared across posts by
+		// definition, so a definition change can restyle every module bound to it.
+		// Once per request, after the single write.
+		$cache = self::invalidate_divi_cache_sitewide();
 
 		$response = [
 			'success' => true,
+			'cache'   => $cache,
 			'preset'  => [
 				'id'          => $uid,
 				'name'        => $name,
@@ -2807,6 +2856,13 @@ trait DiviOps_Agent_Preset {
 				// Fold the chain-updated registry into the D5 storage. Atomic write — both
 				// storage locations updated together by save_d5_presets().
 				self::save_d5_presets( $chain_result['registry'] );
+				// Site-wide on top of the per-page invalidate_divi_cache() calls in the
+				// apply loop (#403). Those cover the pages this run rewrote; this covers
+				// the preset DEFINITION the chain rewrite just changed, which reaches
+				// every page bound to it including ones this run never touched. Inside
+				// the gate, so a dry run or a reassign that swapped no chains sweeps
+				// nothing.
+				$summary['chain_cache'] = self::invalidate_divi_cache_sitewide();
 			}
 		}
 		if ( ! empty( $chain_details ) ) {
