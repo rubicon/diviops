@@ -47,3 +47,11 @@ vendor/
 # extracted or copied anywhere in the tree is the same licensing incident.
 diviops-agent-pro*
 diviops-pro-suite-*
+
+# Working notes are for the maintainer, not for a public repository. A session
+# log was committed here once (#506) and reached two pushed branches before an
+# adversarial review caught it: 71 lines of handoff, including a "Mistakes I
+# made" section, in a repo whose visibility is PUBLIC. Neither PR body mentioned
+# the file. These belong in .remember/ or in chat, never in the tree.
+session-log.md
+/.remember/
