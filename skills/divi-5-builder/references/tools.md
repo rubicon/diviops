@@ -85,7 +85,7 @@ All namespaces have adopted the envelope as of the last wave (`module_*` + `sect
 
 - `diviops_meta_ping` — verify WordPress + plugin connection
 - `diviops_meta_info` — DiviOps server identity, version, license type, capabilities
-- `diviops_page_list` / `diviops_page_get` / `diviops_page_get_layout` — read pages (layout returns slim targeting metadata by default; use `full: true` for complete attrs)
+- `diviops_page_list` / `diviops_page_get` / `diviops_page_get_layout` — read pages (layout returns slim targeting metadata by default; use `full: true` for complete attrs). **`diviops_page_get` refuses a page past roughly 85 KB of `post_content`** — the MCP client's response cap, reached before any Divi logic runs, so it fails rather than truncating. Route around it with `diviops_page_get_layout` + `diviops_section_get`; `full: true` hits the same cap. See Known Limitations in [SKILL.md](../SKILL.md) for the measured figures.
 - `diviops_schema_list_modules` / `diviops_schema_get_module` — discover modules and attributes (optimized schema by default). `diviops_schema_get_module({ mode: "dump_all" })` snapshots every Divi module + a `schema_version` hash + `divi_version` in one call — build-time entry point for the skill regen pipeline, not a normal authoring step
 - `diviops_schema_get_settings` / `diviops_global_color_list` / `diviops_global_font_list` — site config. `diviops_global_font_list` always returns `{count, fonts}` even on empty substrates (never bare `false`)
 - `diviops_meta_find_icon` — search 1,989 icons by keyword (returns unicode, type, weight)
