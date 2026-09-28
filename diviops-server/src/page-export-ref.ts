@@ -40,7 +40,7 @@
  * `DIVIOPS_CROSS_ENV_PAYLOAD_REF_*` pair.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /** Reference handed back to the caller in place of the artifact bytes. */
@@ -230,4 +230,66 @@ export function createPageExportRef(
     format: "diviops.page_export.artifact.v1",
     ...(expiresAt ? { expires_at: expiresAt } : {}),
   };
+}
+
+/**
+ * Read an artifact back out of this store by its handle.
+ *
+ * The read half of `createPageExportRef()`, and the reason `page_export` and
+ * `page_layout_import` compose at all: `page_export` returns only an
+ * `artifact_ref` unless asked for the bytes, so an importer that accepted only
+ * inline JSON would force every caller to re-export with `return_payload: true`
+ * and carry a multi-megabyte base64 artifact through the conversation — the exact
+ * thing that tool's description tells them not to do.
+ *
+ * Three refusals, kept distinct because they send a caller to different places:
+ * an invalid or traversing handle is a malformed argument; a well-formed handle
+ * with no file is the EXPIRED case a TTL sweep produces and is what a caller
+ * actually hits a day later; and stored bytes that no longer hash to the handle's
+ * checksum are corruption, refused here rather than written onto a page.
+ *
+ * @param handle The `artifact_ref.handle` from a page_export result.
+ * @returns The stored bytes and their verified checksum.
+ */
+export function readPageExportArtifact(handle: string): { json: string; checksum: string } {
+  const path = pageExportPath(handle);
+
+  if (!existsSync(path)) {
+    throw new Error(
+      `page_export artifact ${handle} is expired or not found. Artifacts are pruned on a TTL; re-run diviops_page_export to mint a fresh one.`,
+    );
+  }
+
+  const json = readFileSync(path, "utf8");
+  const computed = sha256(json);
+
+  // The handle embeds the FIRST 16 HEX CHARACTERS of the checksum it was minted
+  // with (handleFor() slices it), so this compares the bytes on disk against the
+  // identity they were stored under. Sixteen hex characters is 64 bits, which is
+  // an integrity check against truncation and accidental overwrite, not a
+  // signature -- that is what it is used for here.
+  const expected = handleChecksumPrefix(handle);
+  if (expected !== null && expected !== computed.slice(0, 16)) {
+    throw new Error(
+      `page_export artifact ${handle} failed its checksum: stored bytes hash to ${computed}. The artifact store entry is corrupt; re-run diviops_page_export.`,
+    );
+  }
+
+  return { json, checksum: computed };
+}
+
+/**
+ * The 16-hex-character checksum prefix embedded in a minted handle, or null when
+ * this handle carries none.
+ *
+ * Null rather than a throw: a handle valid by `HANDLE_PATTERN` but carrying no
+ * recoverable digest must still be readable, and treating "no digest to compare"
+ * as "digest mismatch" would refuse every such artifact. The shape is
+ * `pe-<slug>-<16 hex>-<8 hex>` from `handleFor()`, and the slug may itself be
+ * digits, so the digest is taken as the LAST 16-hex group rather than the first
+ * -- a page id of 1234567890123456 would otherwise match ahead of it.
+ */
+function handleChecksumPrefix(handle: string): string | null {
+  const groups = handle.match(/[0-9a-f]{16}/g);
+  return groups && groups.length > 0 ? groups[groups.length - 1] : null;
 }

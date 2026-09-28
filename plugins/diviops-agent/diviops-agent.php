@@ -39,6 +39,7 @@ require_once __DIR__ . '/includes/trait-module-schema.php';
 require_once __DIR__ . '/includes/trait-menu.php';
 require_once __DIR__ . '/includes/trait-page.php';
 require_once __DIR__ . '/includes/trait-portability.php';
+require_once __DIR__ . '/includes/trait-layout-import.php';
 require_once __DIR__ . '/includes/trait-preset.php';
 require_once __DIR__ . '/includes/trait-render.php';
 require_once __DIR__ . '/includes/trait-revision.php';
@@ -72,6 +73,7 @@ use DiviOps_Agent_Canvas;
 	use DiviOps_Agent_ModuleSchema;
 	use DiviOps_Agent_Page;
 	use DiviOps_Agent_Portability;
+	use DiviOps_Agent_Layout_Import;
 	use DiviOps_Agent_Preset;
 	use DiviOps_Agent_Render;
 	use DiviOps_Agent_Revision;
@@ -142,6 +144,8 @@ use DiviOps_Agent_Canvas;
 		'page_trash', 'page_update_content', 'page_update_content_backup', 'page_update_content_expected_checksum', 'page_update_meta', 'page_update_status',
 		// portability (#382) — raw Divi export payload + manifest for one page
 		'page_export',
+		// portability (#490) — import a layout payload back onto a page
+		'page_layout_import',
 		// preset
 		'preset_audit', 'preset_audit_storage', 'preset_cleanup', 'preset_create', 'preset_delete', 'preset_inspect', 'preset_registry_doctor',
 		'preset_reassign', 'preset_scan_orphans', 'preset_set_default', 'preset_update',
@@ -1078,6 +1082,24 @@ use DiviOps_Agent_Canvas;
 			'permission_callback' => [ __CLASS__, 'check_read_permission' ],
 			'args'                => [
 				'id' => [ 'required' => true, 'type' => 'integer', 'minimum' => 1 ],
+			],
+		] );
+
+		// Import (#490). check_write_permission at the route; the row-level
+		// edit_post gate is applied to the resolved target inside the handler,
+		// because the target may not exist yet (the default creates a page).
+		register_rest_route( self::REST_NAMESPACE, '/page/layout-import', [
+			'methods'             => 'POST',
+			'callback'            => [ __CLASS__, 'page_layout_import' ],
+			'permission_callback' => [ __CLASS__, 'check_write_permission' ],
+			'args'                => [
+				'artifact_json'            => [ 'required' => true,  'type' => 'string' ],
+				'expected_artifact_sha256' => [ 'required' => false, 'type' => 'string' ],
+				'target'                   => [ 'required' => false ],
+				'title'                    => [ 'required' => false, 'type' => 'string' ],
+				'expected_checksum'        => [ 'required' => false, 'type' => 'string' ],
+				'allow_reference_collisions' => [ 'required' => false, 'type' => 'boolean' ],
+				'dry_run'                  => [ 'required' => false, 'type' => 'boolean' ],
 			],
 		] );
 
