@@ -85,6 +85,22 @@ trait DiviOps_Agent_Page {
 			return self::envelope_object_read_forbidden( $post_id, 'page' );
 		}
 
+		$bounded  = rest_sanitize_boolean( $request->get_param( 'bounded' ) ?? false );
+		$offset   = $request->get_param( 'offset' );
+		$expected = $request->get_param( 'expected_checksum' );
+
+		if ( ! $bounded && ( null !== $offset || null !== $expected ) ) {
+			return self::envelope_error(
+				'invalid_input',
+				'offset and expected_checksum require bounded:true.',
+				'Pass bounded:true to walk the content in chunks, or omit both to read it whole.',
+				400
+			);
+		}
+		if ( $bounded ) {
+			return self::page_get_bounded_chunk( $post, $offset, $expected );
+		}
+
 		return self::envelope_success( [
 			'id'           => $post->ID,
 			'title'        => $post->post_title,
@@ -95,6 +111,141 @@ trait DiviOps_Agent_Page {
 			'has_divi'     => self::post_uses_divi( $post ),
 			'content_raw'  => $post->post_content,
 			'content_checksum' => self::page_content_checksum( (string) $post->post_content ),
+		] );
+	}
+
+	/**
+	 * Raw bytes per bounded chunk.
+	 *
+	 * Not a tunable on its own. The server's BOUNDED_PAGE_TEXT_LIMIT has to stay
+	 * above this times the worst-case JSON escaping factor across both escaping
+	 * layers — a control byte becomes `\u0001` and the outer layer escapes the
+	 * backslash again, so about 7x — plus MCP metadata. 4096 x 7 = 28,672 fits
+	 * under 32 KiB, which is why upstream chose this pair. Raising one number
+	 * alone makes every chunk fail the server's own validator;
+	 * `tests/test-page-bounded-read.php` asserts the ratio for that reason.
+	 *
+	 * @return int
+	 */
+	private static function page_bounded_chunk_bytes(): int {
+		return 4096;
+	}
+
+	/**
+	 * The largest offset the wire contract can carry.
+	 *
+	 * JavaScript's `Number.MAX_SAFE_INTEGER`, because the server validates every
+	 * offset against it. A larger value would survive PHP and be rejected there.
+	 *
+	 * @return int
+	 */
+	private static function page_bounded_max_offset(): int {
+		return 9007199254740991;
+	}
+
+	/**
+	 * One UTF-8-safe chunk of a page's raw content (#516).
+	 *
+	 * Adopted from upstream `e1a4d59` (v1.5.66), reshaped onto this fork's
+	 * helpers: the checksum comes from `page_content_checksum()` (#391) rather
+	 * than a second inline hash, and every refusal carries the `hint` this
+	 * fork's envelopes include and upstream's omit.
+	 *
+	 * The checksum is over the WHOLE content, never the chunk. That is the only
+	 * thing that makes drift detectable: a per-chunk digest would agree with
+	 * itself while the rest of the page moved underneath the walk.
+	 *
+	 * Drift has no force path on purpose. A forced continuation would splice
+	 * bytes from two versions of a page into one result that parses cleanly and
+	 * is wrong, which is the failure this whole contract exists to prevent.
+	 *
+	 * This bounds the RESPONSE, not plugin memory: the full content is still
+	 * read and hashed on every call.
+	 *
+	 * @param object          $post     The post, already permission-checked.
+	 * @param int|string|null $offset   Byte offset, or null for the first chunk.
+	 * @param string|null     $expected Whole-content checksum pinning the walk.
+	 * @return WP_REST_Response
+	 */
+	private static function page_get_bounded_chunk( $post, $offset, $expected ) {
+		$offset = $offset ?? 0;
+
+		$offset_ok = is_int( $offset )
+			|| ( is_string( $offset ) && 1 === preg_match( '/^(0|[1-9][0-9]*)$/D', $offset ) );
+		$sum_ok    = null === $expected
+			|| ( is_string( $expected ) && 1 === preg_match( '/^sha256:[a-f0-9]{64}$/D', $expected ) );
+
+		if ( ! $offset_ok || ! $sum_ok
+			|| (int) $offset < 0 || (int) $offset > self::page_bounded_max_offset()
+			|| ( (int) $offset > 0 && null === $expected ) ) {
+			return self::envelope_error(
+				'invalid_input',
+				'Use a nonnegative byte offset and an exact expected_checksum for every continuation.',
+				'Read offset 0 first, then send its content_checksum back as expected_checksum together with next_offset.',
+				400
+			);
+		}
+
+		$content  = (string) $post->post_content;
+		$checksum = self::page_content_checksum( $content );
+
+		if ( null !== $expected && ! hash_equals( $checksum, $expected ) ) {
+			return self::envelope_error(
+				'page.content_drift',
+				'Page content changed; restart the bounded read at offset zero.',
+				'Discard the chunks already collected. There is no way to splice them onto the new version, which is why this refuses rather than forcing.',
+				409,
+				[
+					'expected_checksum' => $expected,
+					'current_checksum'  => $checksum,
+				]
+			);
+		}
+
+		$total  = strlen( $content );
+		$offset = (int) $offset;
+
+		if ( $offset > $total ) {
+			return self::envelope_error(
+				'invalid_input',
+				'Byte offset exceeds total_bytes.',
+				"This page is {$total} bytes; an offset equal to that is the terminal empty chunk.",
+				400,
+				[ 'total_bytes' => $total ]
+			);
+		}
+		if ( 1 !== preg_match( '//u', $content ) ) {
+			return self::envelope_error(
+				'page.invalid_encoding',
+				'Bounded UTF-8 reads require valid UTF-8 content; no bytes were returned.',
+				'Read this page without bounded:true — the unbounded read does not decode the content and is unaffected.',
+				422
+			);
+		}
+		if ( $offset < $total && 0x80 === ( ord( $content[ $offset ] ) & 0xc0 ) ) {
+			return self::envelope_error(
+				'invalid_input',
+				'Byte offset must be a UTF-8 character boundary.',
+				'Use the next_offset the previous chunk reported rather than computing an offset.',
+				400
+			);
+		}
+
+		$end = min( $offset + self::page_bounded_chunk_bytes(), $total );
+		while ( $end < $total && 0x80 === ( ord( $content[ $end ] ) & 0xc0 ) ) {
+			--$end;
+		}
+
+		return self::envelope_success( [
+			'id'               => (int) $post->ID,
+			'encoding'         => 'utf-8',
+			'content_raw'      => substr( $content, $offset, $end - $offset ),
+			'content_checksum' => $checksum,
+			'total_bytes'      => $total,
+			'offset'           => $offset,
+			'chunk_bytes'      => $end - $offset,
+			'next_offset'      => $end === $total ? null : $end,
+			'complete'         => $end === $total,
 		] );
 	}
 
