@@ -59,6 +59,7 @@ import {
 import {
   createPageExportRef,
   PageExportChecksumError,
+  readPageExportArtifact,
   type PageExportRef,
 } from "./page-export-ref.js";
 import { moduleMapAnswer } from "./module-map.js";
@@ -2958,6 +2959,143 @@ registerPluginTool(
     return {
       content: [
         { type: "text" as const, text: serializeEnvelope(result, "diviops_page_export") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
+  "diviops_page_layout_import",
+  {
+    description:
+      "Import a Divi portability layout JSON onto a page — the write half of diviops_page_export. " +
+      "TWO-STEP. dry_run DEFAULTS TO TRUE, inverting this server's usual convention: forgetting the flag on a single-page tool costs one page, forgetting it here writes a whole layout over one. Read the plan, then call again with dry_run:false. " +
+      "PASS artifact_json VERBATIM. It is the string diviops_page_export returned, and manifest.sha256 covers exactly those bytes — re-encoding it (parse then stringify) changes them, because PHP and JavaScript escape `/` and non-ASCII differently. Pin the two together with expected_artifact_sha256 to catch a payload mangled in transit; a mismatch is layout_import.artifact_drift. " +
+      "GLOBAL DATA IS REPORTED, NEVER MERGED. Every preset and global colour the payload declares is classified `resolved` (present here with the same value), `collision` (present with a DIFFERENT value) or `missing`, with counts in reference_summary. " +
+      "A COLLISION REFUSES THE IMPORT by default, as layout_import.reference_collision: the page would render with THIS site's values rather than the exported ones, and nothing would report the difference. Pass allow_reference_collisions:true to accept the target's values deliberately — the references stay reported as collisions either way. `missing` does NOT refuse, because Divi falls back to defaults and refusing would break a same-site re-import merely because a preset was deleted after the export. " +
+      "To make a collision go away, reconcile it first with diviops_preset_update or diviops_global_color_update; this tool never writes global data. " +
+      "DESTINATION: omit target to create a new page (the id comes back in page_id, with created:true). Naming an existing target ALSO requires expected_checksum from diviops_page_get, and a stale one is layout_import.content_drift with NO force option. " +
+      "REFUSALS WORTH KNOWING: layout_import.invalid_json (bad bytes) is distinct from layout_import.malformed_artifact (valid JSON, wrong document); layout_import.shortcode_payload_unsupported means a Divi 4 payload this tool will not convert — re-export it from the Divi 5 builder, because shortcodes written into a D5 page render as literal text rather than failing; layout_import.not_divi_content means no Divi block at all. " +
+      "RECOVERY: an overwrite captures the target's content into a rollback snapshot BEFORE writing, and refuses outright if that capture fails, so restoring the snapshot undoes the import. The write itself goes through the same integrity guard and global-layout drift check every content write here uses. " +
+      "Returns the standardized envelope { ok, data?, error: { code, message, hint? } }.",
+    inputSchema: {
+      artifact_json: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("The payload string, VERBATIM. Do not parse and re-stringify it. Usually you want artifact_ref_handle instead — diviops_page_export only inlines this under return_payload:true."),
+      artifact_ref_handle: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("PREFERRED. The `artifact_ref.handle` diviops_page_export returned. The server reads the artifact from its own store, so the payload never passes through the conversation. Pass exactly one of this or artifact_json."),
+      expected_artifact_sha256: z
+        .string()
+        .optional()
+        .describe("manifest.sha256 from the same export, to pin the payload bytes. Format sha256:<64 hex>."),
+      target: z
+        .union([z.number().int().positive(), z.literal("new")])
+        .optional()
+        .describe("Omit (or \"new\") to create a page. An id overwrites that page and then expected_checksum is required."),
+      title: z
+        .string()
+        .optional()
+        .describe("Title for the created page. Ignored when overwriting. Defaults to \"Imported layout\"."),
+      expected_checksum: z
+        .string()
+        .optional()
+        .describe("REQUIRED when target names an existing page: its content_checksum from diviops_page_get. Guards against overwriting a layout you have not seen."),
+      allow_reference_collisions: z
+        .boolean()
+        .optional()
+        .describe("Default false. True accepts THIS site's values for any colliding preset or colour instead of refusing. They remain reported as collisions."),
+      dry_run: z
+        .boolean()
+        .optional()
+        .describe("Defaults to TRUE. The plan carries the full reference classification and writes nothing."),
+    },
+    annotations: { destructiveHint: true },
+    // A second identical apply is not a no-op: with no target it creates ANOTHER
+    // page, and with a target the first write invalidates the expected_checksum the
+    // second would carry, so the retry refuses as content_drift rather than
+    // repeating. Neither is the "same result" a blind retry wants.
+    _meta: { idempotent: "false" },
+  },
+  async ({ artifact_json, artifact_ref_handle, expected_artifact_sha256, target, title, expected_checksum, allow_reference_collisions, dry_run }) => {
+    // Exactly one source. Accepting both and preferring one would silently ignore
+    // the other, which on a payload this large is the difference between importing
+    // the page the caller meant and a different one entirely.
+    if ((artifact_json === undefined) === (artifact_ref_handle === undefined)) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: serializeEnvelope(
+              {
+                ok: false,
+                error: {
+                  code: "invalid_input",
+                  message: "Pass exactly one of artifact_ref_handle or artifact_json.",
+                  hint: "artifact_ref_handle is the handle from diviops_page_export's artifact_ref. Use artifact_json only when you already hold the bytes from return_payload:true.",
+                },
+              },
+              "diviops_page_layout_import",
+            ),
+          },
+        ],
+      };
+    }
+
+    let payload = artifact_json;
+    let pinned = expected_artifact_sha256;
+
+    if (artifact_ref_handle !== undefined) {
+      let stored: { json: string; checksum: string };
+      try {
+        stored = readPageExportArtifact(artifact_ref_handle);
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: serializeEnvelope(
+                {
+                  ok: false,
+                  error: {
+                    code: "layout_import.artifact_ref_unreadable",
+                    message: error instanceof Error ? error.message : String(error),
+                    hint: "Re-run diviops_page_export to mint a fresh artifact_ref; the store prunes on a TTL.",
+                  },
+                },
+                "diviops_page_layout_import",
+              ),
+            },
+          ],
+        };
+      }
+      payload = stored.json;
+      // The store's checksum is BARE hex and the plugin wants `sha256:<hex>`, so
+      // the prefix is added here. Defaulting the pin from the store means a ref
+      // import is integrity-checked end to end without the caller doing anything,
+      // while an explicit pin still wins so a caller can assert its own value.
+      pinned = expected_artifact_sha256 ?? `sha256:${stored.checksum}`;
+    }
+
+    const result = await wp.requestEnveloped("/page/layout-import", {
+      method: "POST",
+      body: {
+        artifact_json: payload,
+        expected_artifact_sha256: pinned,
+        target,
+        title,
+        expected_checksum,
+        allow_reference_collisions,
+        dry_run,
+      },
+    });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_page_layout_import") },
       ],
     };
   },

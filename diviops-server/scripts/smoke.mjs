@@ -18,10 +18,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// 112 plugin + 12 local registrations. The 30 Pro tools are deliberately NOT
+// 113 plugin + 12 local registrations. The 30 Pro tools are deliberately NOT
 // counted: they register only when a live handshake reports the Pro target, so a
 // credential-free run must not see them.
-const EXPECTED_ALWAYS_ON = 124;
+const EXPECTED_ALWAYS_ON = 125;
 
 // A representative slice spanning several capability domains. If the registry
 // silently emptied or a domain stopped registering, a bare count check could
@@ -33,6 +33,7 @@ const EXPECTED_NAMES = [
   'diviops_divi_conditions_read',
   'diviops_page_export',
   'diviops_bulk_find_replace',
+  'diviops_page_layout_import',
   'diviops_module_update',
   'diviops_preset_inspect',
   'diviops_variable_update',

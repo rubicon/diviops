@@ -84,7 +84,7 @@ The skill enforces the Divi block format, the design system, and the response co
 
 ## Tools at a glance
 
-The server exposes **124 always-on tools** across the categories below. Each category names representative tool prefixes; for one row per tool, with inputs and idempotency, see the [Per-tool reference](#per-tool-reference).
+The server exposes **125 always-on tools** across the categories below. Each category names representative tool prefixes; for one row per tool, with inputs and idempotency, see the [Per-tool reference](#per-tool-reference).
 
 | Category | Use case | Tool prefixes |
 |----------|----------|---------------|
@@ -159,7 +159,7 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 
 > Generated mechanically by `diviops-server/scripts/regen-tool-reference.mjs` from the tool-registration call sites in `diviops-server/src/index.ts`. Everything between the `BEGIN GENERATED:tool-reference:*` / `END GENERATED:tool-reference:*` HTML-comment sentinels is rewritten on regen (see `diviops-server/CONTRIBUTING.md`). Do **not** edit between sentinels — edits are clobbered.
 
-124 always-on tools (112 plugin-backed, 12 server-local) and 30 conditionally-registered Pro tools.
+125 always-on tools (113 plugin-backed, 12 server-local) and 30 conditionally-registered Pro tools.
 
 **Inputs** lists each tool's top-level input fields in schema order; a trailing `?` marks a field the schema makes optional or gives a default, and `_(none)_` marks a tool that takes no arguments. **Idempotent** is the tool's own `_meta.idempotent` marker ([what the values mean](#_metaidempotent-markers)). **Summary** is the first sentence of the tool's MCP `description`, which is the full reference for its response payload and error codes; a trailing `…` marks a description that continues, and an `…` inside the text marks a value the server fills in at handshake time. Every tool returns the [standardized envelope](#response-contract).
 
@@ -236,6 +236,7 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 | `diviops_page_export` | plugin | `page_id`, `return_payload?` | true | Export a page as Divi's own portability artifact — the same schema the Visual Builder's Export button produces, so a VB Import on another site consumes it verbatim. … |
 | `diviops_page_get` | plugin | `page_id`, `bounded?`, `offset?`, `expected_checksum?` | true | Get detailed info about a specific page including its raw Divi block content and a content_checksum (`sha256:` over the exact post_content bytes) to pass back to diviops_page_update_content as a stale-write guard. … |
 | `diviops_page_get_layout` | plugin | `page_id`, `full?` | true | Get the parsed block tree for a page. … |
+| `diviops_page_layout_import` | plugin | `artifact_json?`, `artifact_ref_handle?`, `expected_artifact_sha256?`, `target?`, `title?`, `expected_checksum?`, `allow_reference_collisions?`, `dry_run?` | false | Import a Divi portability layout JSON onto a page — the write half of diviops_page_export. … |
 | `diviops_page_list` | plugin | `post_type?`, `per_page?`, `page?` | true | List pages/posts in the WordPress site. … |
 | `diviops_page_trash` | plugin | `post_id`, `force?`, `dry_run?` | true | Trash or permanently delete a page/post. … |
 | `diviops_page_update_content` | plugin | `page_id`, `content`, `expected_checksum?`, `dry_run?`, `backup?` | conditional | Update the content of a page with Divi block markup. … |
