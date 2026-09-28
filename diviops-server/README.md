@@ -84,7 +84,7 @@ The skill enforces the Divi block format, the design system, and the response co
 
 ## Tools at a glance
 
-The server exposes **121 always-on tools** across the categories below. Each category names representative tool prefixes; for one row per tool, with inputs and idempotency, see the [Per-tool reference](#per-tool-reference).
+The server exposes **123 always-on tools** across the categories below. Each category names representative tool prefixes; for one row per tool, with inputs and idempotency, see the [Per-tool reference](#per-tool-reference).
 
 | Category | Use case | Tool prefixes |
 |----------|----------|---------------|
@@ -159,7 +159,7 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 
 > Generated mechanically by `diviops-server/scripts/regen-tool-reference.mjs` from the tool-registration call sites in `diviops-server/src/index.ts`. Everything between the `BEGIN GENERATED:tool-reference:*` / `END GENERATED:tool-reference:*` HTML-comment sentinels is rewritten on regen (see `diviops-server/CONTRIBUTING.md`). Do **not** edit between sentinels — edits are clobbered.
 
-121 always-on tools (109 plugin-backed, 12 server-local) and 30 conditionally-registered Pro tools.
+123 always-on tools (111 plugin-backed, 12 server-local) and 30 conditionally-registered Pro tools.
 
 **Inputs** lists each tool's top-level input fields in schema order; a trailing `?` marks a field the schema makes optional or gives a default, and `_(none)_` marks a tool that takes no arguments. **Idempotent** is the tool's own `_meta.idempotent` marker ([what the values mean](#_metaidempotent-markers)). **Summary** is the first sentence of the tool's MCP `description`, which is the full reference for its response payload and error codes; a trailing `…` marks a description that continues, and an `…` inside the text marks a value the server fills in at handshake time. Every tool returns the [standardized envelope](#response-contract).
 
@@ -184,6 +184,8 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 | `diviops_cross_env_source_export_get` | plugin | `source_id`, `source_kind?`, `dry_run?` | true | Export read-only, secret-free source-site payload for an offline cross-environment Theme Builder … preflight. … |
 | `diviops_cross_env_target_context_get` | plugin | `destination_id`, `destination_kind?`, `source_asset_hints?`, `source_attachment_ids?`, `dry_run?` | true | Export read-only, secret-free target-site context for an offline cross-environment Theme Builder … preflight. … |
 | `diviops_design_system_apply` | plugin | `colors`, `namespace?`, `overwrite?`, `dry_run?` | conditional | Apply a whole colour design system in one call, from a style guide's token set, instead of one diviops_global_color_create per token. … |
+| `diviops_divi_conditions_read` | plugin | `subroute`, `args?` | true | Read one of Divi's own `option-data/conditions/*` REST routes — the option lists behind Divi's Display Conditions UI (post types, posts, categories, tags, authors, user roles, post-meta field names). … |
+| `diviops_divi_loop_read` | plugin | `subroute`, `args?` | true | Read one of Divi's own `loop/*` REST routes (Loop/Post Filter data: queryable post types, taxonomies, order-by options, custom-field options, query results). … |
 | `diviops_dynamic_content_build` | plugin | `name`, `settings?`, `type?`, `post_id?`, `context?` | true | Validate a dynamic-content `name` + `settings` against the live registry (diviops_dynamic_content_list), then return the exact $variable({...})$ token Divi's own Conversion::formatDynamicContent() would emit for the same inputs — byte-identical encoding, including empty settings serializing as {} not []. … |
 | `diviops_dynamic_content_list` | plugin | `post_id?`, `context?` | true | List the live Divi dynamic-content option registry (apply_filters('divi_module_dynamic_content_options', ...)) for this site — includes ACF/SCF fields that actually exist here, not a static catalog. … |
 | `diviops_dynamic_content_validate` | plugin | `name?`, `settings?`, `value?`, `post_id?`, `context?` | true | Validate a dynamic-content binding against the live registry. … |
@@ -231,7 +233,7 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 | `diviops_page_create` | plugin | `title`, `content?`, `status?`, `post_type?`, `dry_run?` | false | Create a new WordPress page — or, via post_type, a post or custom post type — optionally with Divi block content. … |
 | `diviops_page_duplicate` | plugin | `page_id`, `title?`, `status?`, `post_type?`, `dry_run?` | false | Duplicate a page/post on the SAME site — a first-class operation instead of hand-rolling diviops_page_get_layout + diviops_page_create. … |
 | `diviops_page_export` | plugin | `page_id`, `return_payload?` | true | Export a page as Divi's own portability artifact — the same schema the Visual Builder's Export button produces, so a VB Import on another site consumes it verbatim. … |
-| `diviops_page_get` | plugin | `page_id` | true | Get detailed info about a specific page including its raw Divi block content and a content_checksum (`sha256:` over the exact post_content bytes) to pass back to diviops_page_update_content as a stale-write guard. … |
+| `diviops_page_get` | plugin | `page_id`, `bounded?`, `offset?`, `expected_checksum?` | true | Get detailed info about a specific page including its raw Divi block content and a content_checksum (`sha256:` over the exact post_content bytes) to pass back to diviops_page_update_content as a stale-write guard. … |
 | `diviops_page_get_layout` | plugin | `page_id`, `full?` | true | Get the parsed block tree for a page. … |
 | `diviops_page_list` | plugin | `post_type?`, `per_page?`, `page?` | true | List pages/posts in the WordPress site. … |
 | `diviops_page_trash` | plugin | `post_id`, `force?`, `dry_run?` | true | Trash or permanently delete a page/post. … |

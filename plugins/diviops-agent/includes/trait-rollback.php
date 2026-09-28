@@ -2115,13 +2115,26 @@ trait DiviOps_Agent_Rollback {
 	 *      plus at most one bounded recovery attempt when the write failed after
 	 *      changing the page.
 	 *
+	 * **A protected dry run can refuse.** The preflight in (1) deliberately runs
+	 * BEFORE the `$dry_run` return, so with `$protect_current = true` a dry run
+	 * answers "would this restore succeed?" rather than "show me the plan": when
+	 * the page it would overwrite already holds unsafe markup it returns the
+	 * write-safety refusal, not a plan. Owner ruling (#514). Handing back a plan
+	 * the real write is guaranteed to reject is the reports-success-then-fails
+	 * shape this file exists to prevent. Unprotected dry runs are unchanged and
+	 * always report a plan; `tests/test-rollback-restore-service.php` section 15
+	 * pins both halves against the same unsafe page, so moving either the
+	 * preflight or the `$dry_run` return fails the suite.
+	 *
 	 * On the protected path a failure envelope is narrowed to an allow-list
 	 * before it is returned. A Pro-side caller asked to restore one snapshot has
 	 * no business receiving page content or historical post-meta, and the drift
 	 * payload carries both.
 	 *
 	 * @param string $snapshot_id     Snapshot id.
-	 * @param bool   $dry_run         Report the plan without writing.
+	 * @param bool   $dry_run         Report the plan without writing. On the
+	 *                                protected path it can refuse instead; see
+	 *                                above.
 	 * @param bool   $protect_current Capture and finalise a recovery point.
 	 * @return WP_REST_Response
 	 */

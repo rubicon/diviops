@@ -78,6 +78,10 @@ import {
 } from "./health-tools.js";
 import { CanonicalToolRegistry } from "./canonical-tool-registry.js";
 import {
+  BOUNDED_PAGE_CAPABILITY,
+  serializeBoundedPageRead,
+} from "./bounded-page-read.js";
+import {
   runWithRequestContext,
   type RequestContext,
 } from "./request-context.js";
@@ -854,22 +858,160 @@ registerPluginTool(
   },
 );
 
+// #504: two read-only Divi REST families, forwarded server-side. The nonce is
+// minted and consumed inside WordPress and never reaches this server or the
+// caller, which is the deliberate difference from the nonce-handoff the issue
+// proposed. Everything Divi returns arrives under `data.divi`.
+const DIVI_ARGS_SCHEMA = z
+  .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+  .optional()
+  .describe(
+    "Optional flat map of query parameters forwarded to Divi verbatim, e.g. { \"post_type\": \"page\" }. Scalars only — a nested value is refused before anything is dispatched, as is a key outside ^[a-z][a-z0-9_]*$.",
+  );
+
+registerPluginTool(
+  "diviops_divi_loop_read",
+  {
+    description:
+      "Read one of Divi's own `loop/*` REST routes (Loop/Post Filter data: queryable post types, taxonomies, order-by options, custom-field options, query results). This is a READ-ONLY bridge to Divi's own surface, not a DiviOps route: the plugin mints Divi's `X-ET-Nonce`, dispatches the GET inside WordPress, and returns Divi's payload verbatim under `data.divi` alongside the `route` it resolved. Only the nine subroutes in the enum are permitted — this is an allowlist, not a proxy, and an unlisted name is refused as 'invalid_input' with the permitted set in `error.data.allowed` without calling Divi at all. When Divi itself refuses, the reply is 'divi_route_failed' carrying Divi's own HTTP status and code in `error.data` rather than a flattened success. Use it to discover what a Loop module can actually be pointed at on this site; the data is Divi's and its shape is Divi's, so treat it as input to a decision rather than as a DiviOps contract. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; 'divi_unavailable' (503) means Divi 5 is not active, in which case every Divi route would answer 400 invalid_nonce.",
+    inputSchema: {
+      subroute: z
+        .enum([
+        "custom-field-options",
+        "custom-field-value-options",
+        "field-list-items",
+        "product-price-range",
+        "query-order-by",
+        "query-posts",
+        "query-results",
+        "query-taxonomies",
+        "query-types",
+      ])
+        .describe("Which of Divi's loop/* routes to read."),
+      args: DIVI_ARGS_SCHEMA,
+    },
+    annotations: { idempotentHint: true, readOnlyHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ subroute, args }) => {
+    const result = await wp.requestEnveloped(
+      `/divi/loop/${subroute}`,
+      args ? { params: Object.fromEntries(Object.entries(args).map(([k, v]) => [`args[${k}]`, String(v)])) } : {},
+    );
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_divi_loop_read") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
+  "diviops_divi_conditions_read",
+  {
+    description:
+      "Read one of Divi's own `option-data/conditions/*` REST routes — the option lists behind Divi's Display Conditions UI (post types, posts, categories, tags, authors, user roles, post-meta field names). Same read-only bridge as diviops_divi_loop_read: the plugin mints Divi's `X-ET-Nonce`, dispatches the GET inside WordPress, and returns Divi's payload verbatim under `data.divi`. Only the seven subroutes in the enum are permitted; an unlisted name is refused as 'invalid_input' with the permitted set in `error.data.allowed` and nothing is dispatched. Use it when authoring `module.decoration.conditions` so the values written are ones this site actually offers, rather than plausible guesses. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; Divi's own refusal surfaces as 'divi_route_failed' with its status and code in `error.data`, and 'divi_unavailable' (503) means Divi 5 is not active.",
+    inputSchema: {
+      subroute: z
+        .enum([
+        "author",
+        "categories",
+        "post-meta-fields",
+        "post-type",
+        "posts",
+        "tags",
+        "user-role",
+      ])
+        .describe("Which of Divi's option-data/conditions/* routes to read."),
+      args: DIVI_ARGS_SCHEMA,
+    },
+    annotations: { idempotentHint: true, readOnlyHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ subroute, args }) => {
+    const result = await wp.requestEnveloped(
+      `/divi/conditions/${subroute}`,
+      args ? { params: Object.fromEntries(Object.entries(args).map(([k, v]) => [`args[${k}]`, String(v)])) } : {},
+    );
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_divi_conditions_read") },
+      ],
+    };
+  },
+);
+
 registerPluginTool(
   "diviops_page_get",
   {
     description:
-      "Get detailed info about a specific page including its raw Divi block content and a content_checksum (`sha256:` over the exact post_content bytes) to pass back to diviops_page_update_content as a stale-write guard. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; missing page_id returns ok:false with code 'not_found' and a hint pointing to diviops_page_list.",
+      "Get detailed info about a specific page including its raw Divi block content and a content_checksum (`sha256:` over the exact post_content bytes) to pass back to diviops_page_update_content as a stale-write guard. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; missing page_id returns ok:false with code 'not_found' and a hint pointing to diviops_page_list. " +
+      "For a page whose content is too large to return in one response, pass `bounded: true` to read it in UTF-8-safe chunks: the reply carries `content_raw` (one chunk), `content_checksum` (over the WHOLE content), `total_bytes`, `offset`, `chunk_bytes`, `next_offset` and `complete`. Walk it by passing back `next_offset` as `offset` together with that same `content_checksum` as `expected_checksum` — every continuation requires it. If the page changed mid-walk the read refuses with 'page.content_drift' (HTTP 409) and there is NO force option: discard the chunks and restart at offset 0, because splicing chunks from two versions produces a result that parses cleanly and is wrong. Content that is not valid UTF-8 refuses with 'page.invalid_encoding' (HTTP 422) and returns no bytes. `offset` and `expected_checksum` without `bounded: true` are refused as 'invalid_input'. Bounded reads need the plugin capability `page_get_bounded_utf8_v1`; without it this tool returns capability_missing for the bounded path only, and the default read is unaffected.",
     inputSchema: {
       page_id: z.number().describe("WordPress post/page ID"),
+      bounded: z
+        .boolean()
+        .optional()
+        .describe(
+          "Read the content in UTF-8-safe chunks instead of whole. Use for pages too large to return in one response.",
+        ),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe(
+          "Byte offset to resume at. Use the previous chunk's next_offset verbatim rather than computing one; an offset landing mid-character is refused. Requires bounded:true and expected_checksum.",
+        ),
+      expected_checksum: z
+        .string()
+        .optional()
+        .describe(
+          "The content_checksum from the first chunk, pinning the version being walked. Required on every continuation. Requires bounded:true.",
+        ),
     },
     annotations: { idempotentHint: true },
     _meta: { idempotent: "true" },
   },
-  async ({ page_id }) => {
-    const result = await wp.requestEnveloped(`/page/get/${page_id}`);
+  async ({ page_id, bounded, offset, expected_checksum }) => {
+    // Forwarded even on the unbounded branch so the plugin stays the single
+    // owner of the "these require bounded:true" refusal, rather than this
+    // server having a second, drifting copy of the same rule.
+    const params: Record<string, string> = {};
+    if (bounded !== undefined) params.bounded = bounded ? "1" : "0";
+    if (offset !== undefined) params.offset = String(offset);
+    if (expected_checksum !== undefined) params.expected_checksum = expected_checksum;
+    const hasParams = Object.keys(params).length > 0;
+
+    if (bounded !== true) {
+      const result = await wp.requestEnveloped(
+        `/page/get/${page_id}`,
+        hasParams ? { params } : {},
+      );
+      return {
+        content: [
+          { type: "text" as const, text: serializeEnvelope(result, "diviops_page_get") },
+        ],
+      };
+    }
+
+    // Gated here and not at registration: gating the tool itself would remove
+    // diviops_page_get entirely against a plugin without the key, which is a
+    // far worse outcome than refusing one optional mode.
+    requireCapability(BOUNDED_PAGE_CAPABILITY);
+
+    const at = offset ?? 0;
+    const result = await wp.requestEnveloped(`/page/get/${page_id}`, { params });
     return {
       content: [
-        { type: "text" as const, text: serializeEnvelope(result, "diviops_page_get") },
+        {
+          type: "text" as const,
+          text: serializeBoundedPageRead(result, {
+            page_id,
+            offset: at,
+            expected_checksum,
+          }),
+        },
       ],
     };
   },
