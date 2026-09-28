@@ -858,6 +858,89 @@ registerPluginTool(
   },
 );
 
+// #504: two read-only Divi REST families, forwarded server-side. The nonce is
+// minted and consumed inside WordPress and never reaches this server or the
+// caller, which is the deliberate difference from the nonce-handoff the issue
+// proposed. Everything Divi returns arrives under `data.divi`.
+const DIVI_ARGS_SCHEMA = z
+  .record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))
+  .optional()
+  .describe(
+    "Optional flat map of query parameters forwarded to Divi verbatim, e.g. { \"post_type\": \"page\" }. Scalars only — a nested value is refused before anything is dispatched, as is a key outside ^[a-z][a-z0-9_]*$.",
+  );
+
+registerPluginTool(
+  "diviops_divi_loop_read",
+  {
+    description:
+      "Read one of Divi's own `loop/*` REST routes (Loop/Post Filter data: queryable post types, taxonomies, order-by options, custom-field options, query results). This is a READ-ONLY bridge to Divi's own surface, not a DiviOps route: the plugin mints Divi's `X-ET-Nonce`, dispatches the GET inside WordPress, and returns Divi's payload verbatim under `data.divi` alongside the `route` it resolved. Only the nine subroutes in the enum are permitted — this is an allowlist, not a proxy, and an unlisted name is refused as 'invalid_input' with the permitted set in `error.data.allowed` without calling Divi at all. When Divi itself refuses, the reply is 'divi_route_failed' carrying Divi's own HTTP status and code in `error.data` rather than a flattened success. Use it to discover what a Loop module can actually be pointed at on this site; the data is Divi's and its shape is Divi's, so treat it as input to a decision rather than as a DiviOps contract. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; 'divi_unavailable' (503) means Divi 5 is not active, in which case every Divi route would answer 400 invalid_nonce.",
+    inputSchema: {
+      subroute: z
+        .enum([
+        "custom-field-options",
+        "custom-field-value-options",
+        "field-list-items",
+        "product-price-range",
+        "query-order-by",
+        "query-posts",
+        "query-results",
+        "query-taxonomies",
+        "query-types",
+      ])
+        .describe("Which of Divi's loop/* routes to read."),
+      args: DIVI_ARGS_SCHEMA,
+    },
+    annotations: { idempotentHint: true, readOnlyHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ subroute, args }) => {
+    const result = await wp.requestEnveloped(
+      `/divi/loop/${subroute}`,
+      args ? { params: Object.fromEntries(Object.entries(args).map(([k, v]) => [`args[${k}]`, String(v)])) } : {},
+    );
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_divi_loop_read") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
+  "diviops_divi_conditions_read",
+  {
+    description:
+      "Read one of Divi's own `option-data/conditions/*` REST routes — the option lists behind Divi's Display Conditions UI (post types, posts, categories, tags, authors, user roles, post-meta field names). Same read-only bridge as diviops_divi_loop_read: the plugin mints Divi's `X-ET-Nonce`, dispatches the GET inside WordPress, and returns Divi's payload verbatim under `data.divi`. Only the seven subroutes in the enum are permitted; an unlisted name is refused as 'invalid_input' with the permitted set in `error.data.allowed` and nothing is dispatched. Use it when authoring `module.decoration.conditions` so the values written are ones this site actually offers, rather than plausible guesses. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; Divi's own refusal surfaces as 'divi_route_failed' with its status and code in `error.data`, and 'divi_unavailable' (503) means Divi 5 is not active.",
+    inputSchema: {
+      subroute: z
+        .enum([
+        "author",
+        "categories",
+        "post-meta-fields",
+        "post-type",
+        "posts",
+        "tags",
+        "user-role",
+      ])
+        .describe("Which of Divi's option-data/conditions/* routes to read."),
+      args: DIVI_ARGS_SCHEMA,
+    },
+    annotations: { idempotentHint: true, readOnlyHint: true },
+    _meta: { idempotent: "true" },
+  },
+  async ({ subroute, args }) => {
+    const result = await wp.requestEnveloped(
+      `/divi/conditions/${subroute}`,
+      args ? { params: Object.fromEntries(Object.entries(args).map(([k, v]) => [`args[${k}]`, String(v)])) } : {},
+    );
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_divi_conditions_read") },
+      ],
+    };
+  },
+);
+
 registerPluginTool(
   "diviops_page_get",
   {

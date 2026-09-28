@@ -44,6 +44,7 @@ require_once __DIR__ . '/includes/trait-render.php';
 require_once __DIR__ . '/includes/trait-revision.php';
 require_once __DIR__ . '/includes/trait-rollback.php';
 require_once __DIR__ . '/includes/trait-compatibility.php';
+require_once __DIR__ . '/includes/trait-divi-read.php';
 require_once __DIR__ . '/includes/trait-seo.php';
 require_once __DIR__ . '/includes/trait-theme-builder.php';
 require_once __DIR__ . '/includes/trait-validate.php';
@@ -76,6 +77,7 @@ use DiviOps_Agent_Canvas;
 	use DiviOps_Agent_Revision;
 	use DiviOps_Agent_Rollback;
 	use DiviOps_Agent_Compatibility;
+	use DiviOps_Agent_Divi_Read;
 	use DiviOps_Agent_SEO;
 	use DiviOps_Agent_ThemeBuilder;
 	use DiviOps_Agent_Validate;
@@ -127,6 +129,8 @@ use DiviOps_Agent_Canvas;
 		'media_upload', 'media_get', 'media_list', 'media_set_featured_image', 'media_update_meta',
 		// meta
 		'meta_find_icon', 'meta_flush_cache', 'theme_options_update',
+		// divi read bridge (#504) — two allowlisted read-only Divi REST families
+		'divi_conditions_read', 'divi_loop_read',
 		// menu
 		'menu_create', 'menu_delete', 'menu_get', 'menu_item_add_custom', 'menu_item_add_page', 'menu_item_remove', 'menu_item_reorder', 'menu_list', 'menu_location_assign', 'menu_location_unassign',
 		// module
@@ -1008,6 +1012,45 @@ use DiviOps_Agent_Canvas;
 					'required' => false,
 					'type'     => 'string',
 					'pattern'  => '^sha256:[a-f0-9]{64}$',
+				],
+			],
+		] );
+
+		// #504: two read-only Divi REST families, forwarded in-process. The
+		// subroute pattern is deliberately narrow AND the handler re-checks it
+		// against the family allowlist -- the regex stops a traversal shape from
+		// ever reaching PHP, the allowlist decides which names are permitted, and
+		// neither substitutes for the other.
+		register_rest_route( self::REST_NAMESPACE, '/divi/loop/(?P<subroute>[a-z0-9-]+)', [
+			'methods'             => 'GET',
+			'callback'            => [ __CLASS__, 'divi_loop_read' ],
+			'permission_callback' => [ __CLASS__, 'check_read_permission' ],
+			'args'                => [
+				'subroute' => [
+					'required' => true,
+					'type'     => 'string',
+					'pattern'  => '^[a-z0-9-]+$',
+				],
+				'args'     => [
+					'required' => false,
+					'type'     => 'object',
+				],
+			],
+		] );
+
+		register_rest_route( self::REST_NAMESPACE, '/divi/conditions/(?P<subroute>[a-z0-9-]+)', [
+			'methods'             => 'GET',
+			'callback'            => [ __CLASS__, 'divi_conditions_read' ],
+			'permission_callback' => [ __CLASS__, 'check_read_permission' ],
+			'args'                => [
+				'subroute' => [
+					'required' => true,
+					'type'     => 'string',
+					'pattern'  => '^[a-z0-9-]+$',
+				],
+				'args'     => [
+					'required' => false,
+					'type'     => 'object',
 				],
 			],
 		] );
