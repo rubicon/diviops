@@ -573,6 +573,221 @@ assert_same(
 );
 
 printf(
-	"layout import: %d assertion group(s) — payload refusals, reference classification, guarded write; no Divi seam reached\n",
-	3
+	"layout import: %d slice(s) — payload refusals, reference classification, guarded write, cross-site remap; no Divi seam reached\n",
+	4
+);
+
+/* -------------------------------------------------------------------------
+ * SLICE 4: cross-site reference remapping (#96).
+ *
+ * #96's own acceptance criteria are about the PLAN and the reporting discipline,
+ * not about successfully rewriting every reference class: a logged per-class
+ * policy, a dry run showing every reference and its disposition, and unresolved
+ * references reported rather than silently guessed. That is what this slice
+ * delivers, extending page_layout_import rather than adding a second route --
+ * two write paths would each need the canonicalisation/guard pairing that
+ * test-module-update-write-safety.php asserts per function body.
+ *
+ * REMAPPING IS URL-LEVEL, AND IDS ARE REPORTED RATHER THAN REWRITTEN. That split
+ * is deliberate and is the whole design. A full URL is a long unique string, so
+ * replacing it cannot collide; a bare attachment id is four digits that could
+ * equally be a font size or a z-index, and locating the ones that are really
+ * attachment references needs the coverage of Divi's PROTECTED get_data_images()
+ * -- six attribute basenames across three responsive suffixes plus gallery ids --
+ * which this plugin reaches by ReflectionMethod precisely because a second copy
+ * would drift. Rewriting ids by guessing at their locations is how an import
+ * silently breaks images, so ids are reported with a disposition and left alone.
+ *
+ * The rewriting itself reuses bulk_replace_in_content(), which decodes one
+ * opener's attribute JSON, replaces on the decoded tree and re-encodes. A raw
+ * byte splice over serialized markup is what empties a module when a replacement
+ * carries `"` or `\`.
+ * ---------------------------------------------------------------------- */
+
+const DIVIOPS_LI_SRC_HOME = 'https://source.example.test';
+
+/**
+ * A payload whose content references two images on the source site, one of which
+ * the caller will map and one of which it will not.
+ *
+ * @return string
+ */
+function diviops_li_remap_json(): string {
+	$content = '<!-- wp:divi/image {"attrs":{"module":{"advanced":{"src":{"desktop":{"value":'
+		. '"' . DIVIOPS_LI_SRC_HOME . '/wp-content/uploads/hero.png"}}}}}} --><!-- /wp:divi/image -->'
+		. '<!-- wp:divi/text {"attrs":{}} --><p>See <a href="' . DIVIOPS_LI_SRC_HOME . '/about">about</a></p><!-- /wp:divi/text -->';
+
+	return diviops_li_json( $content, array(
+		'images' => array(
+			DIVIOPS_LI_SRC_HOME . '/wp-content/uploads/hero.png' => array(
+				'url' => DIVIOPS_LI_SRC_HOME . '/wp-content/uploads/hero.png',
+				'id'  => 77,
+			),
+			DIVIOPS_LI_SRC_HOME . '/wp-content/uploads/unused.png' => array(
+				'url' => DIVIOPS_LI_SRC_HOME . '/wp-content/uploads/unused.png',
+				'id'  => 88,
+			),
+			// On a THIRD host, and load-bearing: without it every image in this
+			// fixture sits on the source host, so a disposition that ignored the
+			// host prefix entirely would be indistinguishable from the correct one.
+			// A surviving mutant proved exactly that before this entry existed.
+			'https://cdn.example.net/logo.png' => array(
+				'url' => 'https://cdn.example.net/logo.png',
+				'id'  => 99,
+			),
+		),
+	) );
+}
+
+/**
+ * The remap section of a plan.
+ *
+ * @param array $plan Plan payload.
+ * @return array
+ */
+function diviops_li_remap( array $plan ): array {
+	return isset( $plan['remap'] ) && is_array( $plan['remap'] ) ? $plan['remap'] : array();
+}
+
+/**
+ * One attachment row's disposition from a plan.
+ *
+ * @param array $plan Plan payload.
+ * @param int   $id   Source attachment id.
+ * @return string
+ */
+function diviops_li_attachment( array $plan, int $id ): string {
+	foreach ( diviops_li_remap( $plan )['attachments'] ?? array() as $row ) {
+		if ( (int) ( $row['id'] ?? 0 ) === $id ) {
+			return (string) ( $row['disposition'] ?? '<no disposition>' );
+		}
+	}
+	return '<id absent from plan>';
+}
+
+$GLOBALS['diviops_test_home_url'] = 'https://target.example.test';
+
+// --- with no remap requested, nothing is rewritten and nothing is claimed ----
+
+$diviops_li_noremap = diviops_li_import( array( 'artifact_json' => diviops_li_remap_json() ) );
+
+assert_same(
+	'<ok:no error>',
+	diviops_li_code( $diviops_li_noremap ),
+	'a payload carrying foreign references is not refused outright — the plan is how a caller learns about them'
+);
+assert_same(
+	'unresolved',
+	diviops_li_attachment( diviops_li_plan( $diviops_li_noremap ), 77 ),
+	'without a remap every declared attachment is unresolved, never assumed to exist here under the same id'
+);
+
+// --- host rewrite ------------------------------------------------------------
+
+$diviops_li_hosted = diviops_li_import( array(
+	'artifact_json' => diviops_li_remap_json(),
+	'remap'         => array( 'source_home_url' => DIVIOPS_LI_SRC_HOME ),
+	'dry_run'       => false,
+	'title'         => 'Remapped',
+) );
+$diviops_li_hosted_plan = diviops_li_plan( $diviops_li_hosted );
+
+assert_same(
+	'<ok:no error>',
+	diviops_li_code( $diviops_li_hosted ),
+	'a host rewrite applies'
+);
+
+$diviops_li_written = (string) get_post( (int) $diviops_li_hosted_plan['page_id'] )->post_content;
+
+assert_true(
+	false === strpos( $diviops_li_written, DIVIOPS_LI_SRC_HOME ),
+	'no reference to the source host survives in the written content'
+);
+assert_true(
+	false !== strpos( $diviops_li_written, 'https://target.example.test/wp-content/uploads/hero.png' ),
+	'the image src now points at this site, rewritten inside the attribute JSON rather than spliced as bytes'
+);
+assert_true(
+	false !== strpos( $diviops_li_written, 'https://target.example.test/about' ),
+	'and the internal link in the block body was rewritten too'
+);
+
+// A host rewrite is what resolves an attachment: its URL now resolves here. The
+// ID is NOT rewritten, and the plan has to say which of the two happened.
+assert_same(
+	'url_rewritten',
+	diviops_li_attachment( $diviops_li_hosted_plan, 77 ),
+	'an attachment whose URL was rewritten reports url_rewritten — not "resolved", which would imply the id was fixed too'
+);
+assert_same(
+	'unresolved',
+	diviops_li_attachment( $diviops_li_hosted_plan, 99 ),
+	'an attachment on a DIFFERENT host stays unresolved even though a host rewrite ran — the disposition is per-URL, not "a remap happened"'
+);
+
+// --- an unrelated host is never touched --------------------------------------
+
+$diviops_li_other = diviops_li_import( array(
+	'artifact_json' => diviops_li_json(
+		'<!-- wp:divi/text {"attrs":{}} --><p><a href="https://unrelated.example.org/x">x</a></p><!-- /wp:divi/text -->'
+	),
+	'remap'         => array( 'source_home_url' => DIVIOPS_LI_SRC_HOME ),
+	'dry_run'       => false,
+) );
+
+assert_true(
+	false !== strpos(
+		(string) get_post( (int) diviops_li_plan( $diviops_li_other )['page_id'] )->post_content,
+		'https://unrelated.example.org/x'
+	),
+	'a URL on a host that is not the source host is left exactly alone'
+);
+
+// --- explicit url_map, for an asset that moved path --------------------------
+
+$diviops_li_mapped = diviops_li_import( array(
+	'artifact_json' => diviops_li_remap_json(),
+	'remap'         => array(
+		'url_map' => array(
+			DIVIOPS_LI_SRC_HOME . '/wp-content/uploads/hero.png' => 'https://target.example.test/media/2026/hero.png',
+		),
+	),
+	'dry_run'       => false,
+) );
+$diviops_li_mapped_plan = diviops_li_plan( $diviops_li_mapped );
+
+assert_true(
+	false !== strpos(
+		(string) get_post( (int) $diviops_li_mapped_plan['page_id'] )->post_content,
+		'https://target.example.test/media/2026/hero.png'
+	),
+	'an explicit url_map entry rewrites that exact URL, which is how an asset that moved path is handled'
+);
+assert_same(
+	'unresolved',
+	diviops_li_attachment( $diviops_li_mapped_plan, 88 ),
+	'and the attachment nobody mapped stays unresolved rather than being swept along by the mapping of a different one'
+);
+assert_true(
+	( diviops_li_remap( $diviops_li_mapped_plan )['url_map'][0]['occurrences'] ?? 0 ) >= 1,
+	'and the url_map row reports how many occurrences it rewrote — a plan claiming 0 while the content changed is the report disagreeing with the write'
+);
+
+// --- the plan reports occurrence counts, so a caller can sanity-check scope --
+
+$diviops_li_dryremap = diviops_li_import( array(
+	'artifact_json' => diviops_li_remap_json(),
+	'remap'         => array( 'source_home_url' => DIVIOPS_LI_SRC_HOME ),
+) );
+$diviops_li_dry_plan = diviops_li_plan( $diviops_li_dryremap );
+
+assert_same(
+	true,
+	$diviops_li_dry_plan['dry_run'] ?? null,
+	'a remap still defaults to a dry run'
+);
+assert_true(
+	( diviops_li_remap( $diviops_li_dry_plan )['host_rewrite']['occurrences'] ?? 0 ) >= 2,
+	'the plan counts the occurrences it would rewrite (two here: the image src and the link), so a count of zero is visible as a no-op rather than read as success'
 );

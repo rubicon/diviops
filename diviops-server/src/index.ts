@@ -3009,10 +3009,23 @@ registerPluginTool(
         .boolean()
         .optional()
         .describe("Default false. True accepts THIS site's values for any colliding preset or colour instead of refusing. They remain reported as collisions."),
+      remap: z
+        .object({
+          source_home_url: z
+            .string()
+            .optional()
+            .describe("The home URL of the site the payload came from. Every occurrence of it is rewritten to THIS site's home URL, across both block bodies and attribute JSON. URLs on any other host are left alone."),
+          url_map: z
+            .record(z.string(), z.string())
+            .optional()
+            .describe("Explicit { \"<source URL>\": \"<target URL>\" } pairs, for an asset that moved path rather than just host. Applied BEFORE source_home_url, so a specific mapping wins over the blanket one."),
+        })
+        .optional()
+        .describe("Cross-site reference remapping (#96). REWRITING IS URL-LEVEL ONLY. Attachment IDs are reported, never rewritten: a full URL is unique, but a bare id is a few digits indistinguishable from a font size, and locating the real ones needs coverage only Divi's protected get_data_images() has. Each declared attachment comes back url_rewritten or unresolved in data.remap.attachments — url_rewritten means the image will render, NOT that its stored id was fixed. Internal links are covered by source_home_url; a post-id-based link with no URL form is reported, never guessed by slug or title, because two sites routinely have different pages at the same path."),
       dry_run: z
         .boolean()
         .optional()
-        .describe("Defaults to TRUE. The plan carries the full reference classification and writes nothing."),
+        .describe("Defaults to TRUE. The plan carries the full reference classification and the remap plan, and writes nothing."),
     },
     annotations: { destructiveHint: true },
     // A second identical apply is not a no-op: with no target it creates ANOTHER
@@ -3021,7 +3034,7 @@ registerPluginTool(
     // repeating. Neither is the "same result" a blind retry wants.
     _meta: { idempotent: "false" },
   },
-  async ({ artifact_json, artifact_ref_handle, expected_artifact_sha256, target, title, expected_checksum, allow_reference_collisions, dry_run }) => {
+  async ({ artifact_json, artifact_ref_handle, expected_artifact_sha256, target, title, expected_checksum, allow_reference_collisions, remap, dry_run }) => {
     // Exactly one source. Accepting both and preferring one would silently ignore
     // the other, which on a payload this large is the difference between importing
     // the page the caller meant and a different one entirely.
@@ -3090,6 +3103,7 @@ registerPluginTool(
         title,
         expected_checksum,
         allow_reference_collisions,
+        remap,
         dry_run,
       },
     });
