@@ -177,11 +177,13 @@ The parent's 33 leaves are almost entirely the three horizontal bands —
 `top_row_obj_settings.innerContent.desktop.value.trow_hide_on_sticky` and
 `show_mobile_slide_obj_settings.innerContent.desktop.value.show_mobile_slide`.
 
-### The `*_obj_settings` convention
+### The `*_obj_settings` convention — this module's, NOT the vendor's
 
-**19 of the child's 21 element names end in `_obj_settings`.** That is this vendor's
-pseudo-element naming, and it is a far stronger signal than the FAQ family's lone
-`faq_item_design_settings` suggested. The full set observed on the child:
+**19 of the child's 21 element names end in `_obj_settings`.** It is tempting to read that as a
+DiviFlash-wide naming convention. It is not: `difl/advanced-blurb` below uses **zero** of them
+across 28 element names, and `difl/faq` used one. Naming is per module, so read the registry for
+the names of the module in front of you rather than extrapolating from any one family. The full
+set observed on this child:
 
 `module`, `menu_item_obj_settings`, `mslide_button_obj_settings`, `content_obj_settings`,
 `submenu_container_obj_settings`, `mega_menu_obj_settings`, `icon_btn_obj_settings`,
@@ -209,7 +211,9 @@ Decoration groups actually observed, by element: `module` → `background`, `bor
    `module.decoration.sizing.desktop.value.size.0`/`.1`,
    `df_disabled_obj_settings.innerContent.desktop.value.df_disabled_on.0`, `modulePreset.0`.
 5. **`adminLabel` has ONE spelling here** — `module.meta.adminLabel.desktop.value` — where the FAQ
-   family had three. The three-spelling finding was FAQ-specific and must not be generalized.
+   family had three, and `difl/advanced-blurb` below has three again. **The count varies per
+   module in both directions**, so neither "always one" nor "always three" is safe: search the
+   instance for every spelling before writing one.
 
 ### Provenance
 
@@ -222,3 +226,51 @@ block instances, not posts.
 **Every path here is observed, NOT proven writable.** The round-trip edit #50's method calls for
 needs a scratch-page write on staging, which is still awaiting owner authorization. Nothing below
 has been written back and confirmed.
+
+---
+
+## `difl/advanced-blurb` (DiviFlash Advanced Blurb)
+
+The largest single third-party module on the reference site — **38 instances across 9 posts** — and
+the richest: **256 distinct leaf paths**, more than the whole advanced-menu family combined. It is
+standalone: no child block, and **all 38 instances are self-closing**, so every last thing about a
+blurb lives in its attributes.
+
+Its 28 element names are plain, with no suffix convention at all:
+
+`module`, `title`, `sub_title`, `content`, `image`, `icon_image`, `badge`, `button`,
+`button_icon_object`, `button_spacing`, `button_width_alignment`, `content_area_alignment`,
+`content_spacing`, `content_width`, `image_container_width`, `image_icon_alignment`,
+`image_icon_item_align`, `image_icon_wrapper_spacing`, `item_order`, `wrapper_spacing`,
+`badge_font_both`, `title_url`, `alt_text`, `locked`, `css`, `modulePreset`, `builderVersion`.
+
+### What this family adds to the grammar
+
+1. **Responsive breakpoints are really used here.** 198 leaves on `desktop`, **24 on `tablet` and
+   24 on `phone`**. The advanced-menu family was desktop-only, which could easily read as "vendor
+   modules do not do responsive". They do.
+2. **The same group can appear WITH and WITHOUT the breakpoint layer.** Both of these are live on
+   the same module:
+
+   ```
+   module.decoration.attributes.attributes.0.adminLabel
+   module.decoration.attributes.desktop.value.attributes.0.adminLabel
+   ```
+
+   The whole `module.decoration.attributes.*` group does this — `id`, `name`, `targetElement`,
+   `value` all appear in both shapes. So a writer cannot assume `<group>` is always followed by a
+   breakpoint; check the instance.
+3. **`hover` again** — 9 leaves, confirming it is not an advanced-menu peculiarity.
+4. **The doubled `font.font` segment, 34 times.** Fourth module, four confirmations. Treat it as
+   the rule.
+5. **`adminLabel` has three spellings here**, including the two dual-shape forms above plus
+   `module.meta.adminLabel.desktop.value`. See trap 5 in the advanced-menu section: the count is a
+   per-module fact.
+6. **30 array-valued leaves**, the most of any family measured — `attributes.N.*` and gradient
+   stops among them.
+
+### Provenance
+
+`staging.colleyvillelions.com`, 2026-09-27, Divi 5.13.1 + DiviFlash 5.5.0, via WordPress's own
+`parse_blocks()` under WP-CLI. Posts: `396`, `900015`, `900062`, `900073`, `900111`, `900112`,
+`900133`, `900271`, `900275`. **Observed, NOT proven writable** — same standing caveat.
