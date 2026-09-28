@@ -156,9 +156,19 @@ ssh -o BatchMode=yes -o RemoteCommand=none -o RequestTTY=no staging.colleyvillel
   'cd /home/rdeepmh/public_html/staging.colleyvillelions.com && wp <command>'
 ```
 
-Two WP-CLI gotchas on this host: handlers that check `current_user_can` return a `WP_Error`
+Three WP-CLI gotchas on this host: handlers that check `current_user_can` return a `WP_Error`
 unless you pass `--user=1`, and `wp eval-file /dev/stdin` does not work — `scp` the file
-first.
+first. And **WP-CLI here runs PHP 7.4.33** — `wp --info` reports
+`PHP binary: /opt/alt/php74/usr/bin/php`, and it re-execs under that whichever `php` invokes it, so
+neither `php $(command -v wp)` nor `WP_CLI_PHP=` changes it. Plain `php` inside the webroot is
+**8.3.22**, because the per-directory selector switches versions behind the same
+`/usr/local/bin/php` path. That matters because **DiviFlash 5.5.0 needs PHP 8.0+**:
+`Builder/Server/Utils/Props.php:13` declares `offsetExists(mixed $offset)`, and under 7.4 `mixed`
+resolves as a class name, so every `wp eval` that loads DiviFlash's server code dies with
+`Declaration of DIFL\Server\Utils\Props::offsetExists(...) must be compatible with
+ArrayAccess::offsetExists($offset)` while the identical operation on native `divi/*` content
+succeeds. Run those with an explicit interpreter:
+`/opt/alt/php83/usr/bin/php $(command -v wp) …`.
 
 Deploy this fork onto it with `scripts/deploy-local-site.sh`, which takes a
 timestamped backup on the host first. Confirm afterwards that Pro still attaches by
