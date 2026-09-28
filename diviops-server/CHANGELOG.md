@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.18.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.17.0...mcp-server-v1.18.0) (2026-09-28)
+
+
+### Features
+
+* **#504:** read-only bridge to two of Divi's own REST families ([#523](https://github.com/rubicon/diviops/issues/523)) ([288bb94](https://github.com/rubicon/diviops/commit/288bb94c68140507fe0c79a120ef84d8e5bafcb1))
+* **#516:** adopt upstream's bounded page reads, sized as a coupled pair ([#522](https://github.com/rubicon/diviops/issues/522)) ([6fa2da0](https://github.com/rubicon/diviops/commit/6fa2da093e440b497c03f94dc2458a417afd971c))
+
 ## [1.17.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.16.0...mcp-server-v1.17.0) (2026-09-27)
 
 
