@@ -10,6 +10,15 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.29.0](https://github.com/rubicon/diviops/compare/v1.28.0...v1.29.0) (2026-09-28)
+
+
+### Features
+
+* **#38:** surface bulk_find_replace, and gate capability keys with no tool ([#528](https://github.com/rubicon/diviops/issues/528)) ([71f4575](https://github.com/rubicon/diviops/commit/71f4575906369a01aa5e76577f4c452e2e80e83b)), closes [#38](https://github.com/rubicon/diviops/issues/38)
+* **#490:** import a Divi layout JSON onto a page, reaching no Divi seam ([#531](https://github.com/rubicon/diviops/issues/531)) ([1c5da71](https://github.com/rubicon/diviops/commit/1c5da7157b292e701baf5e7f2d972a418a33e645)), closes [#490](https://github.com/rubicon/diviops/issues/490)
+* **#96:** cross-site reference remapping, as a pass on the import route ([#532](https://github.com/rubicon/diviops/issues/532)) ([1d23fac](https://github.com/rubicon/diviops/commit/1d23face2d7dbeaa7435ee572107b1cfb432a5ca)), closes [#96](https://github.com/rubicon/diviops/issues/96)
+
 ## [1.28.0](https://github.com/rubicon/diviops/compare/v1.27.0...v1.28.0) (2026-09-28)
 
 
