@@ -26,9 +26,15 @@ This is the single most useful finding, and it generalizes past this one family:
 modules use exactly the same attribute grammar as native `divi/*` modules.**
 
 ```
-<element>.decoration.<group>.<breakpoint>.value.<leaf>
-<element>.innerContent.<breakpoint>.value[.<leaf>]
+<element>.decoration.<group>.<breakpoint>.<state>.<leaf>
+<element>.innerContent.<breakpoint>.<state>[.<leaf>]
 ```
+
+**`<state>` is a slot, not the literal `value`.** The FAQ family only ever showed `value`, which
+made `.value.` look like fixed punctuation; the advanced-menu family below carries `hover` in the
+same position — `menu_item_obj_settings.decoration.font.font.desktop.hover.color` alongside
+`…desktop.value.color`, 9 such leaves across the family. Writing a hover colour into
+`.desktop.value.` silently styles the resting state instead, which renders and is wrong.
 
 So everything the skill already teaches about breakpoints, `.value` nesting, `sync*` keys and the
 shared `module.decoration.*` vocabulary applies unchanged. Confirmed directly:
@@ -141,3 +147,271 @@ Page 900390 is read-only by standing instruction and was read, never modified.
 
 Issue: [#521](https://github.com/rubicon/diviops/issues/521), under epic
 [#50](https://github.com/rubicon/diviops/issues/50).
+
+---
+
+## `difl/advancedmenu` + `difl/advancedmenuitem` (DiviFlash Advanced Menu)
+
+The reference site's real navigation, and the largest uncovered family on it: **9 parents and 35
+children across 8 posts**. Chosen for that reason and because it does not overlap
+[mega-menu-pattern.md](mega-menu-pattern.md), which builds a mega menu from **native** `divi/*`
+modules (`divi/text`, `divi/link`, `divi/dropdown`) and names no `difl/*` module at all. The two
+are alternatives: that file is how to build one without DiviFlash, this is how to read one that
+already exists.
+
+### Family architecture — inverted from the FAQ family
+
+| | `difl/faq` family | `difl/advancedmenu` family |
+|---|---|---|
+| where the configuration lives | parent (42 leaves) vs child (13) | **child (162) vs parent (33)** |
+| child self-closing | yes | yes — **35 of 35** |
+
+So the rule "design on the parent, content on the child" learned from FAQ **does not generalize**.
+Here the parent is close to a shell: three row bands plus its own spacing. Check which half carries
+the leaves before assuming, per family.
+
+The parent's 33 leaves are almost entirely the three horizontal bands —
+`top_row_obj_settings`, `center_row_obj_settings`, `bottom_row_obj_settings` — plus
+`module.decoration.spacing` (margin and padding), `css.desktop.value.{freeForm,mainElement}`,
+`modulePreset.0`, and two content-ish switches:
+`top_row_obj_settings.innerContent.desktop.value.trow_hide_on_sticky` and
+`show_mobile_slide_obj_settings.innerContent.desktop.value.show_mobile_slide`.
+
+### The `*_obj_settings` convention — this module's, NOT the vendor's
+
+**19 of the child's 21 element names end in `_obj_settings`.** It is tempting to read that as a
+DiviFlash-wide naming convention. It is not: `difl/advanced-blurb` below uses **zero** of them
+across 28 element names, and `difl/faq` used one. Naming is per module, so read the registry for
+the names of the module in front of you rather than extrapolating from any one family. The full
+set observed on this child:
+
+`module`, `menu_item_obj_settings`, `mslide_button_obj_settings`, `content_obj_settings`,
+`submenu_container_obj_settings`, `mega_menu_obj_settings`, `icon_btn_obj_settings`,
+`search_obj_settings`, `menu_obj_settings`, `logo_obj_settings`, `icon_obj_settings`,
+`sticky_logo_obj_settings`, `button_obj_settings`, `top_level_menu_active_obj_settings`,
+`mm_obj_settings`, `line_obj_settings`, `df_disabled_obj_settings`, `anim_obj_settings`, plus
+`css`, `modulePreset` and `builderVersion`.
+
+Decoration groups actually observed, by element: `module` → `background`, `border`, `box`,
+`sizing`, `spacing`; `menu_item_obj_settings` → `font`, `spacing`; `mslide_button_obj_settings` →
+`background`, `border`, `font`, `spacing`; `submenu_container_obj_settings` → `border`, `box`;
+`mega_menu_obj_settings` → `box`, `spacing`; `content_obj_settings` → `body`.
+
+### Traps measured here
+
+1. **The doubled `font.font` segment recurs** — 13 leaves, e.g.
+   `menu_item_obj_settings.decoration.font.font.desktop.value.family`. Third confirmation of this
+   trap across three unrelated modules; treat it as the rule for any `font` group, not a quirk.
+2. **`hover` is a real state** beside `value`, as above. The FAQ family showed none.
+3. **Some `innerContent` values are objects, not scalars.**
+   `icon_btn_obj_settings.innerContent.desktop.value.icon_btn_font_icon` carries `.type`,
+   `.unicode` and `.weight`. Writing a string there replaces a structure.
+4. **Array-valued leaves are ordinary here**, not exceptional:
+   `module.decoration.background.desktop.value.gradient.stops.0.color` (and `.1`),
+   `module.decoration.sizing.desktop.value.size.0`/`.1`,
+   `df_disabled_obj_settings.innerContent.desktop.value.df_disabled_on.0`, `modulePreset.0`.
+5. **`adminLabel` has ONE spelling here** — `module.meta.adminLabel.desktop.value` — where the FAQ
+   family had three, and `difl/advanced-blurb` below has three again. **The count varies per
+   module in both directions**, so neither "always one" nor "always three" is safe: search the
+   instance for every spelling before writing one.
+
+### Provenance
+
+`staging.colleyvillelions.com`, 2026-09-27, Divi 5.13.1 + DiviFlash 5.5.0. Extracted with
+WordPress's own `parse_blocks()` under WP-CLI — not a hand-rolled scanner, because the
+authoritative parser is already loaded there and a second one would drift. Posts carrying the
+family: `396`, `462`, `282281`, `282290`, `333857`, `333861`, `333868`, `900335`. Counts are
+block instances, not posts.
+
+**Every path here is observed in live content, and the path SHAPES are storage-verified** by the
+write proof at the end of this file — one probe per shape survived a real `page_create` →
+`page_get` round trip. What that does NOT establish is visual effect: the proof's control, a
+deliberately wrong path, survived just as cleanly, because WordPress stores unknown block
+attributes verbatim. Read the proof's own caveat before treating any leaf as guaranteed to do
+something.
+
+---
+
+## `difl/advanced-blurb` (DiviFlash Advanced Blurb)
+
+The largest single third-party module on the reference site — **38 instances across 9 posts** — and
+the richest: **256 distinct leaf paths**, more than the whole advanced-menu family combined. It is
+standalone: no child block, and **all 38 instances are self-closing**, so every last thing about a
+blurb lives in its attributes.
+
+Its 28 element names are plain, with no suffix convention at all:
+
+`module`, `title`, `sub_title`, `content`, `image`, `icon_image`, `badge`, `button`,
+`button_icon_object`, `button_spacing`, `button_width_alignment`, `content_area_alignment`,
+`content_spacing`, `content_width`, `image_container_width`, `image_icon_alignment`,
+`image_icon_item_align`, `image_icon_wrapper_spacing`, `item_order`, `wrapper_spacing`,
+`badge_font_both`, `title_url`, `alt_text`, `locked`, `css`, `modulePreset`, `builderVersion`.
+
+### What this family adds to the grammar
+
+1. **Responsive breakpoints are really used here.** 198 leaves on `desktop`, **24 on `tablet` and
+   24 on `phone`**. The advanced-menu family was desktop-only, which could easily read as "vendor
+   modules do not do responsive". They do.
+2. **The same group can appear WITH and WITHOUT the breakpoint layer.** Both of these are live on
+   the same module:
+
+   ```
+   module.decoration.attributes.attributes.0.adminLabel
+   module.decoration.attributes.desktop.value.attributes.0.adminLabel
+   ```
+
+   The whole `module.decoration.attributes.*` group does this — `id`, `name`, `targetElement`,
+   `value` all appear in both shapes. So a writer cannot assume `<group>` is always followed by a
+   breakpoint; check the instance.
+3. **`hover` again** — 9 leaves, confirming it is not an advanced-menu peculiarity.
+4. **The doubled `font.font` segment, 34 times.** Fourth module, four confirmations. Treat it as
+   the rule.
+5. **`adminLabel` has three spellings here**, including the two dual-shape forms above plus
+   `module.meta.adminLabel.desktop.value`. See trap 5 in the advanced-menu section: the count is a
+   per-module fact.
+6. **30 array-valued leaves**, the most of any family measured — `attributes.N.*` and gradient
+   stops among them.
+
+### Provenance
+
+`staging.colleyvillelions.com`, 2026-09-27, Divi 5.13.1 + DiviFlash 5.5.0, via WordPress's own
+`parse_blocks()` under WP-CLI. Posts: `396`, `900015`, `900062`, `900073`, `900111`, `900112`,
+`900133`, `900271`, `900275`. **Observed, and storage-verified** — see the write proof at the end of this file, including what
+it does NOT establish.
+
+---
+
+## The rest of the site's vendor surface
+
+The five families above and below account for the reference site's entire `difl/*` usage. All of it
+was censused with WordPress's own `parse_blocks()` under WP-CLI on 2026-09-27
+(`staging.colleyvillelions.com`, Divi 5.13.1 + DiviFlash 5.5.0).
+
+| module | instances | self-closing | leaves | element names | `_obj_settings` | `font.font` | `adminLabel` spellings |
+|---|---|---|---|---|---|---|---|
+| `difl/advanced-blurb` | 38 | 38 | 256 | 28 | 0 | 34 | 3 |
+| `difl/advancedmenuitem` | 35 | 35 | 162 | 21 | **19** | 13 | 1 |
+| `difl/faqitem` | 38 | yes | 13 | — | 0 | — | 3 (family) |
+| `difl/iconlistitem` | 27 | 27 | 90 | 31 | 0 | 4 | 0 |
+| `difl/counter` | 17 | 17 | 20 | 10 | 0 | 4 | 2 |
+| `difl/imagehotspotitem` | 14 | 14 | 40 | 7 | 0 | 4 | 2 |
+| `difl/advancedmenu` | 9 | 0 | 33 | — | most | — | — |
+| `difl/faq` | 6 | 0 | 42 | — | 1 | yes | — |
+| `difl/iconlist` | 6 | 0 | 82 | 20 | 0 | 5 | 0 |
+| `difl/df-adh-heading` | 6 | 6 | 35 | 15 | 0 | 11 | 1 |
+| `difl/postitem` | 3 | 3 | 12 | 4 | **3** | 9 | 0 |
+| `difl/imagehotspot` | 2 | 0 | 36 | 7 | 0 | 0 | 1 |
+
+### What nine modules agree on, and what they do not
+
+**The doubled `font.font` segment is the one real constant** — present in every module that has a
+font group at all. The single zero, `difl/imagehotspot`, has no font group. Treat it as the rule.
+
+**`_obj_settings` is used by two modules out of nine** (`difl/advancedmenuitem` 19-of-21,
+`difl/postitem` 3-of-4) and by none of the other seven. Not a vendor convention.
+
+**`adminLabel` count ranges from 0 to 3** across modules — `difl/iconlist`, `difl/iconlistitem` and
+`difl/postitem` carry none at all. Never assume it is present, and never assume one spelling.
+
+**Responsive leaves are sporadic**: real `tablet`/`phone` entries in `difl/advanced-blurb` (24 each),
+`difl/iconlist` (15 each) and `difl/imagehotspotitem` (1 each); desktop-only everywhere else.
+Absence in one module says nothing about another.
+
+**`hover` appears in three families** — `difl/advancedmenuitem` (9), `difl/advanced-blurb` (9),
+`difl/iconlistitem` (1).
+
+### The strongest possible case that element names are not guessable
+
+`difl/imagehotspot` names its own elements **`hotsopt_image`** and **`hotsopt_image_alignment`** —
+the vendor typed "hotspot" wrong, and shipped it. An agent reasoning from the module's name writes
+`hotspot_image`, which is not an attribute, so the write silently does nothing.
+
+There is no convention to infer and no spelling to trust. Read the registry for names, and this
+file for leaves.
+
+### Element names, remaining families
+
+- **`difl/iconlist`** (parent): `child_content_text`, `child_title_text`, `child_wrapper_element`,
+  `layout_object`, `list_item_content`, `list_item_elements_align`, `list_item_equal_width`,
+  `list_item_gap`, `list_item_icon`, `list_item_icon_size`, `list_item_icon_text_gap`,
+  `list_item_icon_vertical_placement`, `list_item_image_height`, `list_item_image_width`,
+  `list_item_title`, `list_item_vertical_alignment`, `list_item_wrapper`, plus `locked`,
+  `modulePreset`, `builderVersion`.
+- **`difl/iconlistitem`** (child, self-closing): adds `list_item_icon_lottie_src_remote` /
+  `_upload`, `list_item_tooltip_content`, `tooltip_custom_maxwidth`, `tooltip_interactive_border`,
+  `tooltip_interactive_debounce`, `tooltip_offset_distance`, `tooltip_offset_skidding`,
+  `list_item_title_tag`, `list_item_title_url`, `list_item_wrapper_background`, `admin_label`,
+  `alt`, `content`, `module`.
+- **`difl/counter`**: `animation_settings`, `counter_settings`, `style_settings`, `number_font`,
+  `suffix_font`, `module`, `meta`, `css`, `modulePreset`, `builderVersion`.
+- **`difl/imagehotspot`** (parent): `hotsopt_image` *(sic)*, `hotsopt_image_alignment` *(sic)*,
+  `spot`, `tooltip`, `tooltip_settings`, `meta`, `builderVersion`.
+- **`difl/imagehotspotitem`** (child, self-closing): `spot_content`, `spot_design`,
+  `spot_settings`, `content`, `module`, `meta`, `builderVersion`.
+- **`difl/postitem`** (self-closing): `post_obj_settings`, `date_obj_settings`,
+  `settings_obj_settings`, `builderVersion`.
+- **`difl/df-adh-heading`** (self-closing): `title`, `title_prefix`, `title_infix`, `title_suffix`,
+  `custom_text_input`, `divider_style`, `divider_image`, `divider_image_alt_text`, `use_divider`,
+  `use_divider_icon`, `use_divider_image`, `module`, `css`, `modulePreset`, `builderVersion`.
+
+Posts: iconlist family `900121`, `900122`, `901066`; counter `900390`, `901066`, `901115`, `901559`;
+imagehotspot family `306`, `901184`; postitem `901066`; df-adh-heading `396`, `900390`, `901115`,
+`901184`. **Observed, and storage-verified by the write proof at the end of this file** — but not verified
+to have visual effect; see the control row there.
+
+---
+
+## The write proof — what a round trip does and does not establish
+
+Every path in this file was labelled *observed, not proven writable*. That caveat is now
+**partially discharged, and the remaining half is the interesting one.**
+
+Run on `staging.colleyvillelions.com`, 2026-09-27, Divi 5.13.1 + DiviFlash 5.5.0. One scratch
+DRAFT page (`901566`, titled so it is obviously disposable; page 900390 was never touched) was
+created through this plugin's own `page_create` route — so the write went through
+`parse_blocks_for_write()` and `update_post_content_with_integrity_guard()` like any other — then
+read back through `page_get`. Seven probe paths, each taken from the observed `difl/advanced-blurb`
+map rather than invented, one per path SHAPE this file documents:
+
+| shape | probe | result |
+|---|---|---|
+| doubled `font.font` | `badge_font_both.decoration.font.font.desktop.value.family` | survived |
+| the other doubled form | `content.decoration.bodyFont.body.font.tablet.value.size` | survived |
+| `hover` state + array leaf | `button.decoration.background.desktop.hover.gradient.stops.0.color` | survived |
+| responsive `tablet` | `button.decoration.font.font.tablet.value.size` | survived |
+| `innerContent` scalar | `alt_text.innerContent.desktop.value` | survived |
+| plain spacing | `content_spacing.decoration.spacing.tablet.value.margin.bottom` | survived |
+| **the trap form** (control) | `badge_font_both.decoration.font.desktop.value.family` | **survived too** |
+
+**7 of 7 — including the one that was supposed to fail.** That is the finding, not a
+disappointment. The single-`font` form is the shape this file warns no-ops, and it round-tripped
+perfectly, because **WordPress stores unknown block attributes verbatim.** A write/read round trip
+therefore proves *storage fidelity* and says nothing whatever about whether Divi reads the path.
+
+So the accurate status of every path here is now: **observed in live content, and verified to
+survive this plugin's write path unchanged — but not verified to have any visual effect.** Proving
+the latter needs a rendered-output comparison between a correct path and a deliberately wrong one,
+which is a separate exercise. Any file that claimed "proven writable" off a round trip alone would
+be overstating by exactly the width of that control row.
+
+### A host gotcha this surfaced
+
+The proof failed three times before it ran, and not because of anything in this repository.
+**DiviFlash 5.5.0's `Builder/Server/Utils/Props.php:13` declares `offsetExists(mixed $offset)`,
+and the `mixed` type needs PHP 8.0+.** Under PHP 7.4 it resolves as a class name in the current
+namespace, producing:
+
+```
+Declaration of DIFL\Server\Utils\Props::offsetExists(DIFL\Server\Utils\mixed $offset): bool
+must be compatible with ArrayAccess::offsetExists($offset)
+```
+
+And **WP-CLI on this host runs PHP 7.4.33** — `wp --info` reports
+`PHP binary: /opt/alt/php74/usr/bin/php`, and it re-execs under that regardless of which `php`
+invokes it, so neither `php $(command -v wp)` nor `WP_CLI_PHP=` changes it. Meanwhile plain `php`
+inside the webroot is **8.3.22**, because the per-directory selector switches versions for the same
+`/usr/local/bin/php` path.
+
+So any `wp eval` that loads DiviFlash's server code fatals, while the same operation on native
+`divi/*` content succeeds. The workaround is an explicit interpreter:
+`/opt/alt/php83/usr/bin/php $(command -v wp) …`, which is how the proof above was run.
