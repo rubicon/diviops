@@ -5986,6 +5986,78 @@ registerPluginTool(
 );
 
 registerPluginTool(
+  "diviops_bulk_find_replace",
+  {
+    description:
+      "LITERAL find/replace across an EXPLICIT list of post ids. Read this whole description before using it. " +
+      "LITERAL ONLY, PERMANENTLY — there is no regex mode and there will not be one. A caller-supplied pattern over serialized block markup is an arbitrary-corruption primitive: it can rewrite block-comment delimiters, span block boundaries and mangle attribute JSON, and no after-the-fact validation constrains what it already destroyed. To work from a pattern, run diviops_content_search, read the matches, and pass literal replacements — which is also the only form a plan can show you honestly. " +
+      "TWO-STEP, ALWAYS. Call it once with dry_run (the default) to get a plan plus a plan_token, read every match in the plan, then call again with dry_run:false AND that token. dry_run:false without a token is refused. " +
+      "THE TOKEN BINDS THE TARGETS and expires after 15 minutes; anything that drifted between plan and apply refuses the whole run with bulk.plan_stale naming what moved. " +
+      "IDS ONLY, NEVER A QUERY, at most 25 per run — over that is bulk.too_many_targets, a refusal, never a silent truncation. " +
+      "OMITTING replace DELETES the matched text (it defaults to an empty string). A replace equal to search is refused rather than writing every target for no change. " +
+      "ALL-OR-NOTHING GATE: if any target fails preflight the entire run is refused with bulk.preflight_refused before anything is written. Mid-run failures follow on_error, default continue. " +
+      "REFUSALS THAT PROTECT THE MARKUP, all per target: bulk.match_spans_block_boundary (the match crosses a block edge), bulk.replacement_contains_block_delimiter (the replacement would inject a block comment), bulk.marker_census_changed (the splice changed the opener/closer/self-closer census, which is how a chewed delimiter is caught), bulk.not_canonical, bulk.module_locked / bulk.target_locked, and the bulk.attrs_* family for attribute JSON that would not survive a re-encode. " +
+      "Invalid UTF-8 in search or replace is refused UP FRONT, before any target is read, because core's serialize_block_attributes() feeds wp_json_encode()'s false straight into strtr() and raises mid-run — after earlier targets in the same run were already written. " +
+      "RECOVERY ACTUALLY WORKS HERE, unlike diviops_bulk_status_change: this tool modifies post_content, and each target's content is captured into a rollback snapshot BEFORE its write, so restoring the snapshot undoes the change. A target whose capture fails is refused rather than written. The run manifest is readable with diviops_bulk_run_get. " +
+      "A bulk apply consumes one write-rate-limit slot PER TARGET, not per request. " +
+      "Returns the standardized envelope { ok, data?, error: { code, message, hint? } }; ok is FALSE if any target failed, with the full run record in error.data.",
+    inputSchema: {
+      targets: z
+        .array(z.number().int().positive())
+        .min(1)
+        .max(25)
+        .describe("Explicit post ids, at most 25. Never a query: a query re-evaluated at apply time is not the set you reviewed."),
+      search: z
+        .string()
+        .min(1)
+        .describe("Non-empty LITERAL string to find. Not a pattern. Find candidates with diviops_content_search first."),
+      replace: z
+        .string()
+        .optional()
+        .describe("Literal replacement. OMIT IT TO DELETE the matched text — it defaults to an empty string. Must differ from search."),
+      scope: z
+        .enum(["both", "body", "attrs"])
+        .optional()
+        .describe("Default both. body is block inner content; attrs is block attribute JSON. Narrow it when a string occurs in both and you mean only one."),
+      include_locked: z
+        .boolean()
+        .optional()
+        .describe("Default false, so a locked module refuses the target rather than being edited through its lock. Set true only deliberately."),
+      dry_run: z
+        .boolean()
+        .optional()
+        .describe("Defaults to TRUE, inverting this plugin's usual convention. A single-page handler that writes when you forget a flag costs one page; this one costs many."),
+      plan_token: z
+        .string()
+        .optional()
+        .describe("The token from this tool's own dry-run plan. Required to apply, and valid for 15 minutes against the exact state it was minted for."),
+      on_error: z
+        .enum(["continue", "stop"])
+        .optional()
+        .describe("Default continue. Every refusal this tool produces is page-specific, so stopping turns '9 applied, 2 refused with reasons' into '4 applied, 7 unattempted'."),
+    },
+    annotations: { destructiveHint: true },
+    // Not idempotent in either direction, and the asymmetry matters. Re-running a
+    // replace finds nothing the second time and writes nothing, so it LOOKS
+    // idempotent -- but if `replace` itself contains `search` the second run
+    // matches its own output and compounds. The plan is the thing to read, not the
+    // retry semantics.
+    _meta: { idempotent: "false" },
+  },
+  async ({ targets, search, replace, scope, include_locked, dry_run, plan_token, on_error }) => {
+    const result = await wp.requestEnveloped("/bulk/find-replace", {
+      method: "POST",
+      body: { targets, search, replace, scope, include_locked, dry_run, plan_token, on_error },
+    });
+    return {
+      content: [
+        { type: "text" as const, text: serializeEnvelope(result, "diviops_bulk_find_replace") },
+      ],
+    };
+  },
+);
+
+registerPluginTool(
   "diviops_bulk_run_get",
   {
     description:
