@@ -133,7 +133,8 @@ use DiviOps_Agent_Canvas;
 		'module_clone', 'module_get', 'module_lock', 'module_move', 'module_unlock', 'module_update',
 		'module_clone_backup', 'module_lock_backup', 'module_move_backup', 'module_unlock_backup', 'module_update_backup',
 		// page
-		'page_block_insert', 'page_create', 'page_duplicate', 'page_get', 'page_get_layout', 'page_list',
+		'page_block_insert', 'page_create', 'page_duplicate', 'page_get',
+		'page_get_bounded_utf8_v1', 'page_get_layout', 'page_list',
 		'page_trash', 'page_update_content', 'page_update_content_backup', 'page_update_content_expected_checksum', 'page_update_meta', 'page_update_status',
 		// portability (#382) — raw Divi export payload + manifest for one page
 		'page_export',
@@ -989,6 +990,24 @@ use DiviOps_Agent_Canvas;
 					'validate_callback' => function ( $param ) {
 						return is_numeric( $param );
 					},
+				],
+				// Bounded reads (#516). Declared so WordPress does not drop them
+				// before the handler runs; the handler still validates every one,
+				// because a missing arg declaration and a wrong value are
+				// different failures and only the handler can tell them apart.
+				'bounded'           => [
+					'required' => false,
+					'type'     => 'boolean',
+				],
+				'offset'            => [
+					'required' => false,
+					'type'     => 'integer',
+					'minimum'  => 0,
+				],
+				'expected_checksum' => [
+					'required' => false,
+					'type'     => 'string',
+					'pattern'  => '^sha256:[a-f0-9]{64}$',
 				],
 			],
 		] );
