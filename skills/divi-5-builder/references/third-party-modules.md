@@ -223,9 +223,12 @@ authoritative parser is already loaded there and a second one would drift. Posts
 family: `396`, `462`, `282281`, `282290`, `333857`, `333861`, `333868`, `900335`. Counts are
 block instances, not posts.
 
-**Every path here is observed, NOT proven writable.** The round-trip edit #50's method calls for
-needs a scratch-page write on staging, which is still awaiting owner authorization. Nothing below
-has been written back and confirmed.
+**Every path here is observed in live content, and the path SHAPES are storage-verified** by the
+write proof at the end of this file — one probe per shape survived a real `page_create` →
+`page_get` round trip. What that does NOT establish is visual effect: the proof's control, a
+deliberately wrong path, survived just as cleanly, because WordPress stores unknown block
+attributes verbatim. Read the proof's own caveat before treating any leaf as guaranteed to do
+something.
 
 ---
 
@@ -273,7 +276,8 @@ Its 28 element names are plain, with no suffix convention at all:
 
 `staging.colleyvillelions.com`, 2026-09-27, Divi 5.13.1 + DiviFlash 5.5.0, via WordPress's own
 `parse_blocks()` under WP-CLI. Posts: `396`, `900015`, `900062`, `900073`, `900111`, `900112`,
-`900133`, `900271`, `900275`. **Observed, NOT proven writable** — same standing caveat.
+`900133`, `900271`, `900275`. **Observed, and storage-verified** — see the write proof at the end of this file, including what
+it does NOT establish.
 
 ---
 
@@ -352,4 +356,62 @@ file for leaves.
 
 Posts: iconlist family `900121`, `900122`, `901066`; counter `900390`, `901066`, `901115`, `901559`;
 imagehotspot family `306`, `901184`; postitem `901066`; df-adh-heading `396`, `900390`, `901115`,
-`901184`. **Observed, NOT proven writable** — the standing caveat applies to every path here.
+`901184`. **Observed, and storage-verified by the write proof at the end of this file** — but not verified
+to have visual effect; see the control row there.
+
+---
+
+## The write proof — what a round trip does and does not establish
+
+Every path in this file was labelled *observed, not proven writable*. That caveat is now
+**partially discharged, and the remaining half is the interesting one.**
+
+Run on `staging.colleyvillelions.com`, 2026-09-27, Divi 5.13.1 + DiviFlash 5.5.0. One scratch
+DRAFT page (`901566`, titled so it is obviously disposable; page 900390 was never touched) was
+created through this plugin's own `page_create` route — so the write went through
+`parse_blocks_for_write()` and `update_post_content_with_integrity_guard()` like any other — then
+read back through `page_get`. Seven probe paths, each taken from the observed `difl/advanced-blurb`
+map rather than invented, one per path SHAPE this file documents:
+
+| shape | probe | result |
+|---|---|---|
+| doubled `font.font` | `badge_font_both.decoration.font.font.desktop.value.family` | survived |
+| the other doubled form | `content.decoration.bodyFont.body.font.tablet.value.size` | survived |
+| `hover` state + array leaf | `button.decoration.background.desktop.hover.gradient.stops.0.color` | survived |
+| responsive `tablet` | `button.decoration.font.font.tablet.value.size` | survived |
+| `innerContent` scalar | `alt_text.innerContent.desktop.value` | survived |
+| plain spacing | `content_spacing.decoration.spacing.tablet.value.margin.bottom` | survived |
+| **the trap form** (control) | `badge_font_both.decoration.font.desktop.value.family` | **survived too** |
+
+**7 of 7 — including the one that was supposed to fail.** That is the finding, not a
+disappointment. The single-`font` form is the shape this file warns no-ops, and it round-tripped
+perfectly, because **WordPress stores unknown block attributes verbatim.** A write/read round trip
+therefore proves *storage fidelity* and says nothing whatever about whether Divi reads the path.
+
+So the accurate status of every path here is now: **observed in live content, and verified to
+survive this plugin's write path unchanged — but not verified to have any visual effect.** Proving
+the latter needs a rendered-output comparison between a correct path and a deliberately wrong one,
+which is a separate exercise. Any file that claimed "proven writable" off a round trip alone would
+be overstating by exactly the width of that control row.
+
+### A host gotcha this surfaced
+
+The proof failed three times before it ran, and not because of anything in this repository.
+**DiviFlash 5.5.0's `Builder/Server/Utils/Props.php:13` declares `offsetExists(mixed $offset)`,
+and the `mixed` type needs PHP 8.0+.** Under PHP 7.4 it resolves as a class name in the current
+namespace, producing:
+
+```
+Declaration of DIFL\Server\Utils\Props::offsetExists(DIFL\Server\Utils\mixed $offset): bool
+must be compatible with ArrayAccess::offsetExists($offset)
+```
+
+And **WP-CLI on this host runs PHP 7.4.33** — `wp --info` reports
+`PHP binary: /opt/alt/php74/usr/bin/php`, and it re-execs under that regardless of which `php`
+invokes it, so neither `php $(command -v wp)` nor `WP_CLI_PHP=` changes it. Meanwhile plain `php`
+inside the webroot is **8.3.22**, because the per-directory selector switches versions for the same
+`/usr/local/bin/php` path.
+
+So any `wp eval` that loads DiviFlash's server code fatals, while the same operation on native
+`divi/*` content succeeds. The workaround is an explicit interpreter:
+`/opt/alt/php83/usr/bin/php $(command -v wp) …`, which is how the proof above was run.
