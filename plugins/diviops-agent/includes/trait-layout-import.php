@@ -210,6 +210,21 @@ trait DiviOps_Agent_Layout_Import {
 			);
 		}
 
+		// Remap BEFORE canonicalising and before the plan measures anything, so
+		// content_bytes is the length of what will actually be stored and the
+		// canonical pass runs over the rewritten markup rather than the incoming one.
+		$remapped = self::layout_import_remap( $extracted['content'], $artifact, $request->get_param( 'remap' ) );
+		if ( isset( $remapped['error'] ) ) {
+			return self::envelope_error(
+				DiviOps_Layout_Import::NS . '.remap_failed',
+				sprintf( 'The reference remap could not be applied: %s.', (string) $remapped['error'] ),
+				'The payload\'s attribute JSON could not be decoded and re-encoded safely, so nothing was rewritten. Re-export the source page.',
+				422,
+				[ 'cause' => (string) $remapped['error'] ]
+			);
+		}
+		$extracted['content'] = (string) $remapped['content'];
+
 		// CANONICALISE BEFORE ANYTHING MEASURES OR WRITES THE CONTENT.
 		//
 		// This is not cosmetic and it is not optional. WordPress re-serialises on
@@ -260,6 +275,7 @@ trait DiviOps_Agent_Layout_Import {
 		}
 
 		$plan = [
+			'remap'             => $remapped['plan'],
 			'source_id'         => $extracted['source_id'],
 			'content_bytes'     => strlen( $extracted['content'] ),
 			'artifact_sha256'   => 'sha256:' . hash( 'sha256', $raw ),
@@ -596,6 +612,137 @@ trait DiviOps_Agent_Layout_Import {
 		}
 
 		return $out;
+	}
+
+	/**
+	 * Rewrite cross-site references in the layout, and report every one (#96).
+	 *
+	 * URL-LEVEL REWRITING, ID-LEVEL REPORTING, and the split is the design rather
+	 * than a shortcut. A full URL is a long unique string, so replacing it cannot
+	 * collide with anything. A bare attachment id is a few digits that could equally
+	 * be a font size or a z-index, and finding the ones that really are attachment
+	 * references needs the coverage of Divi's PROTECTED `get_data_images()` — six
+	 * attribute basenames across three responsive suffixes plus gallery ids — which
+	 * `portability_referenced_image_count()` reaches by reflection precisely because a
+	 * second copy of that list would drift from it. Rewriting ids by guessing where
+	 * they live is how an import silently breaks images, so ids are reported with a
+	 * disposition and left alone.
+	 *
+	 * The rewriting itself delegates to `bulk_replace_in_content()`, which decodes one
+	 * opener's attribute JSON, replaces on the decoded tree and re-encodes. A raw byte
+	 * splice over serialized markup is what empties a module when a replacement
+	 * carries `"` or `\`.
+	 *
+	 * `url_map` is applied BEFORE the host rewrite, so an asset the caller mapped
+	 * explicitly wins over the blanket host substitution that would otherwise catch
+	 * its prefix first.
+	 *
+	 * @param string $content  Layout content.
+	 * @param array  $artifact Decoded artifact, for its declared `images`.
+	 * @param mixed  $remap    The caller's `remap` object, or null.
+	 * @return array{content:string,plan:array,error?:string}
+	 */
+	private static function layout_import_remap( string $content, array $artifact, $remap ): array {
+		$remap   = is_array( $remap ) ? $remap : [];
+		$url_map = isset( $remap['url_map'] ) && is_array( $remap['url_map'] ) ? $remap['url_map'] : [];
+		$source  = isset( $remap['source_home_url'] ) && is_string( $remap['source_home_url'] )
+			? rtrim( trim( $remap['source_home_url'] ), '/' )
+			: '';
+
+		$plan = [ 'url_map' => [], 'attachments' => [] ];
+
+		// Explicit per-URL mappings first.
+		foreach ( $url_map as $from => $to ) {
+			if ( ! is_string( $from ) || ! is_string( $to ) || '' === $from || $from === $to ) {
+				continue;
+			}
+			$applied = self::layout_import_rewrite( $content, $from, $to );
+			if ( isset( $applied['error'] ) ) {
+				return [ 'content' => $content, 'plan' => $plan, 'error' => (string) $applied['error'] ];
+			}
+			$content          = $applied['content'];
+			$plan['url_map'][] = [ 'from' => $from, 'to' => $to, 'occurrences' => (int) $applied['occurrences'] ];
+		}
+
+		// Then the blanket host rewrite.
+		if ( '' !== $source ) {
+			$target  = rtrim( (string) home_url(), '/' );
+			$applied = $target === $source
+				? [ 'content' => $content, 'occurrences' => 0 ]
+				: self::layout_import_rewrite( $content, $source, $target );
+			if ( isset( $applied['error'] ) ) {
+				return [ 'content' => $content, 'plan' => $plan, 'error' => (string) $applied['error'] ];
+			}
+			$content               = $applied['content'];
+			$plan['host_rewrite'] = [
+				'from'        => $source,
+				'to'          => $target,
+				'occurrences' => (int) $applied['occurrences'],
+			];
+		}
+
+		$plan['attachments'] = self::layout_import_attachment_dispositions( $artifact, $source, $url_map );
+
+		return [ 'content' => $content, 'plan' => $plan ];
+	}
+
+	/**
+	 * One literal rewrite across body and attribute JSON, with an occurrence count.
+	 *
+	 * @param string $content Content to rewrite.
+	 * @param string $from    Literal to find.
+	 * @param string $to      Replacement.
+	 * @return array{content:string,occurrences:int,error?:string}
+	 */
+	private static function layout_import_rewrite( string $content, string $from, string $to ): array {
+		$result = self::bulk_replace_in_content( $content, $from, $to, 'both' );
+		if ( ! empty( $result['error'] ) ) {
+			return [ 'content' => $content, 'occurrences' => 0, 'error' => (string) $result['error'] ];
+		}
+
+		return [
+			'content'     => (string) $result['content'],
+			'occurrences' => (int) ( $result['body'] ?? 0 ) + (int) ( $result['attrs'] ?? 0 ),
+		];
+	}
+
+	/**
+	 * A disposition per attachment the payload declares.
+	 *
+	 * `url_rewritten` rather than `resolved`, deliberately. The URL now resolves on
+	 * this site, which is what makes the image render; the stored attachment ID is
+	 * still the source site's and was NOT rewritten. Calling that "resolved" would
+	 * imply both halves were fixed, and a caller relying on the id — for a featured
+	 * image, or anything reading it back out of the attrs — would be misled.
+	 *
+	 * @param array  $artifact Decoded artifact.
+	 * @param string $source   Source home URL, or '' when no host rewrite ran.
+	 * @param array  $url_map  The caller's explicit URL mappings.
+	 * @return array<int,array>
+	 */
+	private static function layout_import_attachment_dispositions( array $artifact, string $source, array $url_map ): array {
+		$images = isset( $artifact['images'] ) && is_array( $artifact['images'] ) ? $artifact['images'] : [];
+		$rows   = [];
+
+		foreach ( $images as $entry ) {
+			$entry = self::normalize_storage_array( $entry );
+			if ( null === $entry ) {
+				continue;
+			}
+			$url = isset( $entry['url'] ) && is_string( $entry['url'] ) ? $entry['url'] : '';
+			$id  = isset( $entry['id'] ) ? (int) $entry['id'] : 0;
+
+			$rewritten = isset( $url_map[ $url ] )
+				|| ( '' !== $source && '' !== $url && 0 === strpos( $url, $source ) );
+
+			$rows[] = [
+				'id'          => $id,
+				'url'         => $url,
+				'disposition' => $rewritten ? 'url_rewritten' : 'unresolved',
+			];
+		}
+
+		return $rows;
 	}
 
 	/**

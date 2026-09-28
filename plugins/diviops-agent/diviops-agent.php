@@ -1099,6 +1099,7 @@ use DiviOps_Agent_Canvas;
 				'title'                    => [ 'required' => false, 'type' => 'string' ],
 				'expected_checksum'        => [ 'required' => false, 'type' => 'string' ],
 				'allow_reference_collisions' => [ 'required' => false, 'type' => 'boolean' ],
+				'remap'                    => [ 'required' => false, 'type' => 'object' ],
 				'dry_run'                  => [ 'required' => false, 'type' => 'boolean' ],
 			],
 		] );
