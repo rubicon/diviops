@@ -274,3 +274,82 @@ Its 28 element names are plain, with no suffix convention at all:
 `staging.colleyvillelions.com`, 2026-09-27, Divi 5.13.1 + DiviFlash 5.5.0, via WordPress's own
 `parse_blocks()` under WP-CLI. Posts: `396`, `900015`, `900062`, `900073`, `900111`, `900112`,
 `900133`, `900271`, `900275`. **Observed, NOT proven writable** — same standing caveat.
+
+---
+
+## The rest of the site's vendor surface
+
+The five families above and below account for the reference site's entire `difl/*` usage. All of it
+was censused with WordPress's own `parse_blocks()` under WP-CLI on 2026-09-27
+(`staging.colleyvillelions.com`, Divi 5.13.1 + DiviFlash 5.5.0).
+
+| module | instances | self-closing | leaves | element names | `_obj_settings` | `font.font` | `adminLabel` spellings |
+|---|---|---|---|---|---|---|---|
+| `difl/advanced-blurb` | 38 | 38 | 256 | 28 | 0 | 34 | 3 |
+| `difl/advancedmenuitem` | 35 | 35 | 162 | 21 | **19** | 13 | 1 |
+| `difl/faqitem` | 38 | yes | 13 | — | 0 | — | 3 (family) |
+| `difl/iconlistitem` | 27 | 27 | 90 | 31 | 0 | 4 | 0 |
+| `difl/counter` | 17 | 17 | 20 | 10 | 0 | 4 | 2 |
+| `difl/imagehotspotitem` | 14 | 14 | 40 | 7 | 0 | 4 | 2 |
+| `difl/advancedmenu` | 9 | 0 | 33 | — | most | — | — |
+| `difl/faq` | 6 | 0 | 42 | — | 1 | yes | — |
+| `difl/iconlist` | 6 | 0 | 82 | 20 | 0 | 5 | 0 |
+| `difl/df-adh-heading` | 6 | 6 | 35 | 15 | 0 | 11 | 1 |
+| `difl/postitem` | 3 | 3 | 12 | 4 | **3** | 9 | 0 |
+| `difl/imagehotspot` | 2 | 0 | 36 | 7 | 0 | 0 | 1 |
+
+### What nine modules agree on, and what they do not
+
+**The doubled `font.font` segment is the one real constant** — present in every module that has a
+font group at all. The single zero, `difl/imagehotspot`, has no font group. Treat it as the rule.
+
+**`_obj_settings` is used by two modules out of nine** (`difl/advancedmenuitem` 19-of-21,
+`difl/postitem` 3-of-4) and by none of the other seven. Not a vendor convention.
+
+**`adminLabel` count ranges from 0 to 3** across modules — `difl/iconlist`, `difl/iconlistitem` and
+`difl/postitem` carry none at all. Never assume it is present, and never assume one spelling.
+
+**Responsive leaves are sporadic**: real `tablet`/`phone` entries in `difl/advanced-blurb` (24 each),
+`difl/iconlist` (15 each) and `difl/imagehotspotitem` (1 each); desktop-only everywhere else.
+Absence in one module says nothing about another.
+
+**`hover` appears in three families** — `difl/advancedmenuitem` (9), `difl/advanced-blurb` (9),
+`difl/iconlistitem` (1).
+
+### The strongest possible case that element names are not guessable
+
+`difl/imagehotspot` names its own elements **`hotsopt_image`** and **`hotsopt_image_alignment`** —
+the vendor typed "hotspot" wrong, and shipped it. An agent reasoning from the module's name writes
+`hotspot_image`, which is not an attribute, so the write silently does nothing.
+
+There is no convention to infer and no spelling to trust. Read the registry for names, and this
+file for leaves.
+
+### Element names, remaining families
+
+- **`difl/iconlist`** (parent): `child_content_text`, `child_title_text`, `child_wrapper_element`,
+  `layout_object`, `list_item_content`, `list_item_elements_align`, `list_item_equal_width`,
+  `list_item_gap`, `list_item_icon`, `list_item_icon_size`, `list_item_icon_text_gap`,
+  `list_item_icon_vertical_placement`, `list_item_image_height`, `list_item_image_width`,
+  `list_item_title`, `list_item_vertical_alignment`, `list_item_wrapper`, plus `locked`,
+  `modulePreset`, `builderVersion`.
+- **`difl/iconlistitem`** (child, self-closing): adds `list_item_icon_lottie_src_remote` /
+  `_upload`, `list_item_tooltip_content`, `tooltip_custom_maxwidth`, `tooltip_interactive_border`,
+  `tooltip_interactive_debounce`, `tooltip_offset_distance`, `tooltip_offset_skidding`,
+  `list_item_title_tag`, `list_item_title_url`, `list_item_wrapper_background`, `admin_label`,
+  `alt`, `content`, `module`.
+- **`difl/counter`**: `animation_settings`, `counter_settings`, `style_settings`, `number_font`,
+  `suffix_font`, `module`, `meta`, `css`, `modulePreset`, `builderVersion`.
+- **`difl/imagehotspot`** (parent): `hotsopt_image` *(sic)*, `hotsopt_image_alignment` *(sic)*,
+  `spot`, `tooltip`, `tooltip_settings`, `meta`, `builderVersion`.
+- **`difl/imagehotspotitem`** (child, self-closing): `spot_content`, `spot_design`,
+  `spot_settings`, `content`, `module`, `meta`, `builderVersion`.
+- **`difl/postitem`** (self-closing): `post_obj_settings`, `date_obj_settings`,
+  `settings_obj_settings`, `builderVersion`.
+- **`difl/df-adh-heading`** (self-closing): `title`, `title_prefix`, `title_infix`, `title_suffix`,
+  `custom_text_input`, `divider_style`, `divider_image`, `divider_image_alt_text`, `use_divider`,
+  `use_divider_icon`, `use_divider_image`, `module`, `css`, `modulePreset`, `builderVersion`.
+
+Posts: iconlist family `900121`, `900122`, `901066`; counter `900390`, `901066`, `901115`, `901559`;
+imagehotspot family `306`, `901184`; postitem `901066`; df-adh-heading `396`, `900390`, `901115`,
+`901184`. **Observed, NOT proven writable** — the standing caveat applies to every path here.
