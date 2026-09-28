@@ -26,6 +26,7 @@ Read the right file for the task at hand — don't load everything.
 | Creating/editing pages | [design-guide.md](references/design-guide.md) → [module-formats.md](references/module-formats.md) |
 | Copy-paste minimum-valid block snippets | [minimal-snippets.md](references/minimal-snippets.md) (Heading, Text, Button, Blurb, Icon, Image) |
 | Module attribute paths | [module-formats.md](references/module-formats.md) (Tier 1 free; Tier 3 per-module element maps free for all 111 modules `@divi/types` declares — Tier 2 patterns are Pro) |
+| Third-party module attribute paths (`difl/*`, `decm/*`, `d5bgo/*`) | [third-party-modules.md](references/third-party-modules.md) — `module-formats.md` is generated from a Divi-core-only source and covers no vendor modules |
 | Advanced decoration attributes (shadows, filters, transform, sticky, transition, scroll, animation) | [advanced-attributes.md](references/advanced-attributes.md) |
 | `$variable()$` bindings — token grammar, the five namespaces sharing it (dynamic content, global colors, design tokens, gradients, images/shortcodes), and **loop-scoped `loop_*` bindings** | [variable-bindings.md](references/variable-bindings.md) |
 | Adding CSS classes to modules | [design-effects.md](references/design-effects.md) — uses `module.decoration.attributes`, NOT `className` |
