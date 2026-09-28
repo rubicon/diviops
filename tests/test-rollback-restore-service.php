@@ -846,3 +846,74 @@ assert_true(
 	( $frame2_ev['after_checksum'] ?? '' ) !== ( $frame2_ev['after_checksum_canonical'] ?? '' ),
 	'#512: while the raw after_checksum still describes the bytes actually on the page, which is what every other after-checksum in the file means'
 );
+
+/*
+ * ---------------------------------------------------------------------------
+ * 15. A PROTECTED dry run validates, and may refuse (#514).
+ * ---------------------------------------------------------------------------
+ *
+ * Owner ruling 2026-09-27: keep the write-safety preflight where it is, ahead of
+ * the `$dry_run` return, and write the contract down rather than leaving it to be
+ * inferred. So `protect_current = true` makes `dry_run` mean "would this succeed?"
+ * instead of "show me the plan", and that is a deliberate contract, not a leak.
+ *
+ * The reasoning, recorded because the alternative was defensible: a dry run that
+ * hands back a plan the real restore will refuse is the "reports success, then
+ * fails" shape this suite exists to prevent. Returning the refusal early is the
+ * more useful answer even though it is the less uniform one.
+ *
+ * The preflight checks BOTH directions — `$restore_content` and `$current_content`
+ * — because a recovery point that could not itself be restored reads as protection
+ * that is not there. This fixture makes the CONTENT BEING OVERWRITTEN unsafe and
+ * leaves the restore value balanced. That targeting matters: an earlier attempt
+ * made the RESTORE value unsafe, which the downstream write guard refuses
+ * identically, so the assertion passed while proving nothing about `protect_current`.
+ *
+ * The unprotected call is the control, and it is the whole point of the pair. It
+ * drives the SAME unsafe page through the SAME dry run with `protect_current`
+ * false and gets a plan. Without it, a mutation that made every dry run refuse
+ * would pass this section.
+ *
+ * `$mismatched_markup` below is the marker sequence pinned by
+ * `tests/test-core-characterization.php` as `mismatched_closer` — a closer for a
+ * block that was never opened. Its counts balance, so only the sequence check can
+ * refuse it, which is why it is the right instrument here.
+ */
+
+$pdr_unsafe   = '<!-- wp:divi/section --><!-- /wp:divi/text -->';
+$pdr_balanced = '<!-- wp:divi/section --><!-- wp:divi/text /--><!-- /wp:divi/section -->';
+$pdr_seed     = rollback_rs_seed( 81020, $pdr_balanced, $pdr_unsafe );
+
+assert_same(
+	$pdr_unsafe,
+	(string) get_post( 81020 )->post_content,
+	'#514: the fixture really does leave unsafe markup on the page, so the preflight has something to refuse'
+);
+
+$pdr_protected = rollback_rs_service( $pdr_seed['snapshot_id'], true, true );
+assert_true(
+	false === ( $pdr_protected['ok'] ?? null ),
+	'#514: a protected dry run refuses rather than returning a plan when the content it would overwrite is unsafe'
+);
+assert_same(
+	'invalid_input',
+	$pdr_protected['error']['code'] ?? null,
+	'#514: and it refuses with the write-safety code, not a rollback-specific one, because the preflight is what rejected it'
+);
+
+$pdr_plain = rollback_rs_service( $pdr_seed['snapshot_id'], true, false );
+assert_true(
+	true === ( $pdr_plain['ok'] ?? null ),
+	'#514: the SAME unsafe page dry-runs successfully when protect_current is false, so the refusal belongs to protection and not to dry_run'
+);
+assert_same(
+	true,
+	$pdr_plain['data']['dry_run'] ?? null,
+	'#514: and that unprotected answer is a real plan, which is what the prior contract promised every dry run'
+);
+
+assert_same(
+	$pdr_unsafe,
+	(string) get_post( 81020 )->post_content,
+	'#514: neither dry run wrote anything, protected or not'
+);

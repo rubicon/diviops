@@ -233,7 +233,7 @@ When the gates are not satisfied, the tools simply don't appear on the MCP surfa
 | `diviops_page_create` | plugin | `title`, `content?`, `status?`, `post_type?`, `dry_run?` | false | Create a new WordPress page — or, via post_type, a post or custom post type — optionally with Divi block content. … |
 | `diviops_page_duplicate` | plugin | `page_id`, `title?`, `status?`, `post_type?`, `dry_run?` | false | Duplicate a page/post on the SAME site — a first-class operation instead of hand-rolling diviops_page_get_layout + diviops_page_create. … |
 | `diviops_page_export` | plugin | `page_id`, `return_payload?` | true | Export a page as Divi's own portability artifact — the same schema the Visual Builder's Export button produces, so a VB Import on another site consumes it verbatim. … |
-| `diviops_page_get` | plugin | `page_id` | true | Get detailed info about a specific page including its raw Divi block content and a content_checksum (`sha256:` over the exact post_content bytes) to pass back to diviops_page_update_content as a stale-write guard. … |
+| `diviops_page_get` | plugin | `page_id`, `bounded?`, `offset?`, `expected_checksum?` | true | Get detailed info about a specific page including its raw Divi block content and a content_checksum (`sha256:` over the exact post_content bytes) to pass back to diviops_page_update_content as a stale-write guard. … |
 | `diviops_page_get_layout` | plugin | `page_id`, `full?` | true | Get the parsed block tree for a page. … |
 | `diviops_page_list` | plugin | `post_type?`, `per_page?`, `page?` | true | List pages/posts in the WordPress site. … |
 | `diviops_page_trash` | plugin | `post_id`, `force?`, `dry_run?` | true | Trash or permanently delete a page/post. … |
