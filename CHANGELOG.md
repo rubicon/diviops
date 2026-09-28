@@ -10,6 +10,14 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.28.0](https://github.com/rubicon/diviops/compare/v1.27.0...v1.28.0) (2026-09-28)
+
+
+### Features
+
+* **#504:** read-only bridge to two of Divi's own REST families ([#523](https://github.com/rubicon/diviops/issues/523)) ([288bb94](https://github.com/rubicon/diviops/commit/288bb94c68140507fe0c79a120ef84d8e5bafcb1))
+* **#516:** adopt upstream's bounded page reads, sized as a coupled pair ([#522](https://github.com/rubicon/diviops/issues/522)) ([6fa2da0](https://github.com/rubicon/diviops/commit/6fa2da093e440b497c03f94dc2458a417afd971c))
+
 ## [1.27.0](https://github.com/rubicon/diviops/compare/v1.26.0...v1.27.0) (2026-09-27)
 
 
