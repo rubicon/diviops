@@ -26,9 +26,15 @@ This is the single most useful finding, and it generalizes past this one family:
 modules use exactly the same attribute grammar as native `divi/*` modules.**
 
 ```
-<element>.decoration.<group>.<breakpoint>.value.<leaf>
-<element>.innerContent.<breakpoint>.value[.<leaf>]
+<element>.decoration.<group>.<breakpoint>.<state>.<leaf>
+<element>.innerContent.<breakpoint>.<state>[.<leaf>]
 ```
+
+**`<state>` is a slot, not the literal `value`.** The FAQ family only ever showed `value`, which
+made `.value.` look like fixed punctuation; the advanced-menu family below carries `hover` in the
+same position — `menu_item_obj_settings.decoration.font.font.desktop.hover.color` alongside
+`…desktop.value.color`, 9 such leaves across the family. Writing a hover colour into
+`.desktop.value.` silently styles the resting state instead, which renders and is wrong.
 
 So everything the skill already teaches about breakpoints, `.value` nesting, `sync*` keys and the
 shared `module.decoration.*` vocabulary applies unchanged. Confirmed directly:
@@ -141,3 +147,78 @@ Page 900390 is read-only by standing instruction and was read, never modified.
 
 Issue: [#521](https://github.com/rubicon/diviops/issues/521), under epic
 [#50](https://github.com/rubicon/diviops/issues/50).
+
+---
+
+## `difl/advancedmenu` + `difl/advancedmenuitem` (DiviFlash Advanced Menu)
+
+The reference site's real navigation, and the largest uncovered family on it: **9 parents and 35
+children across 8 posts**. Chosen for that reason and because it does not overlap
+[mega-menu-pattern.md](mega-menu-pattern.md), which builds a mega menu from **native** `divi/*`
+modules (`divi/text`, `divi/link`, `divi/dropdown`) and names no `difl/*` module at all. The two
+are alternatives: that file is how to build one without DiviFlash, this is how to read one that
+already exists.
+
+### Family architecture — inverted from the FAQ family
+
+| | `difl/faq` family | `difl/advancedmenu` family |
+|---|---|---|
+| where the configuration lives | parent (42 leaves) vs child (13) | **child (162) vs parent (33)** |
+| child self-closing | yes | yes — **35 of 35** |
+
+So the rule "design on the parent, content on the child" learned from FAQ **does not generalize**.
+Here the parent is close to a shell: three row bands plus its own spacing. Check which half carries
+the leaves before assuming, per family.
+
+The parent's 33 leaves are almost entirely the three horizontal bands —
+`top_row_obj_settings`, `center_row_obj_settings`, `bottom_row_obj_settings` — plus
+`module.decoration.spacing` (margin and padding), `css.desktop.value.{freeForm,mainElement}`,
+`modulePreset.0`, and two content-ish switches:
+`top_row_obj_settings.innerContent.desktop.value.trow_hide_on_sticky` and
+`show_mobile_slide_obj_settings.innerContent.desktop.value.show_mobile_slide`.
+
+### The `*_obj_settings` convention
+
+**19 of the child's 21 element names end in `_obj_settings`.** That is this vendor's
+pseudo-element naming, and it is a far stronger signal than the FAQ family's lone
+`faq_item_design_settings` suggested. The full set observed on the child:
+
+`module`, `menu_item_obj_settings`, `mslide_button_obj_settings`, `content_obj_settings`,
+`submenu_container_obj_settings`, `mega_menu_obj_settings`, `icon_btn_obj_settings`,
+`search_obj_settings`, `menu_obj_settings`, `logo_obj_settings`, `icon_obj_settings`,
+`sticky_logo_obj_settings`, `button_obj_settings`, `top_level_menu_active_obj_settings`,
+`mm_obj_settings`, `line_obj_settings`, `df_disabled_obj_settings`, `anim_obj_settings`, plus
+`css`, `modulePreset` and `builderVersion`.
+
+Decoration groups actually observed, by element: `module` → `background`, `border`, `box`,
+`sizing`, `spacing`; `menu_item_obj_settings` → `font`, `spacing`; `mslide_button_obj_settings` →
+`background`, `border`, `font`, `spacing`; `submenu_container_obj_settings` → `border`, `box`;
+`mega_menu_obj_settings` → `box`, `spacing`; `content_obj_settings` → `body`.
+
+### Traps measured here
+
+1. **The doubled `font.font` segment recurs** — 13 leaves, e.g.
+   `menu_item_obj_settings.decoration.font.font.desktop.value.family`. Third confirmation of this
+   trap across three unrelated modules; treat it as the rule for any `font` group, not a quirk.
+2. **`hover` is a real state** beside `value`, as above. The FAQ family showed none.
+3. **Some `innerContent` values are objects, not scalars.**
+   `icon_btn_obj_settings.innerContent.desktop.value.icon_btn_font_icon` carries `.type`,
+   `.unicode` and `.weight`. Writing a string there replaces a structure.
+4. **Array-valued leaves are ordinary here**, not exceptional:
+   `module.decoration.background.desktop.value.gradient.stops.0.color` (and `.1`),
+   `module.decoration.sizing.desktop.value.size.0`/`.1`,
+   `df_disabled_obj_settings.innerContent.desktop.value.df_disabled_on.0`, `modulePreset.0`.
+5. **`adminLabel` has ONE spelling here** — `module.meta.adminLabel.desktop.value` — where the FAQ
+   family had three. The three-spelling finding was FAQ-specific and must not be generalized.
+
+### Provenance
+
+`staging.colleyvillelions.com`, 2026-09-27, Divi 5.13.1 + DiviFlash 5.5.0. Extracted with
+WordPress's own `parse_blocks()` under WP-CLI — not a hand-rolled scanner, because the
+authoritative parser is already loaded there and a second one would drift. Posts carrying the
+family: `396`, `462`, `282281`, `282290`, `333857`, `333861`, `333868`, `900335`. Counts are
+block instances, not posts.
+
+**Every path here is observed, NOT proven writable.** The round-trip edit #50's method calls for
+needs a scratch-page write on staging, which is still awaiting owner authorization. Nothing below
+has been written back and confirmed.
