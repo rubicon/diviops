@@ -14,18 +14,47 @@
  * of #490's stated non-negotiables at once. So this handler parses the payload
  * itself, and consequently this suite needs no Divi stub.
  *
- * THIS FILE COVERS SLICE 1: everything decidable from the payload alone, before any
- * block parsing or any write. Those are the refusals, and they are the half that
- * runs first on every call, so they are the half a malformed payload meets.
+ * THIS FILE COVERS FOUR SLICES, each marked with its own banner comment below and
+ * counted in the summary line this suite prints:
  *
- * WHAT IS NOT COVERED HERE, AND WHY. Reference classification and the write path
- * need `parse_blocks_for_write()`, which falls through to core's `parse_blocks()`
- * on a site without Divi's `BlockParserUtils`. `parse_blocks()` is deliberately
- * absent from `tests/wp-shim.php` and is stubbed per-suite by the three files that
- * need it, so those slices carry their own stub rather than widening the shared
- * shim (CONTRIBUTING.md's shim contract). They are separate assertions, not absent
- * ones — a slice landing without its tests is the thing this repository has no
- * safety net for.
+ *   1. payload refusals          — everything decidable from the payload alone,
+ *                                  before any block parsing or any write
+ *   2. reference classification  — resolved / collision / missing per preset and
+ *                                  global colour (#490)
+ *   3. the write                 — dry-run default, apply onto a new page, and
+ *                                  checksum-guarded overwrite (#490)
+ *   4. cross-site remapping      — url_map, host rewrite, and a disposition per
+ *                                  declared attachment (#96)
+ *
+ * The header originally said this file covered slice 1 only, and named reference
+ * classification and the write path as out of scope on the grounds that they need
+ * `parse_blocks_for_write()` and therefore a per-suite `parse_blocks()` stub. That
+ * reasoning did not survive the implementation and the file never matched it: the
+ * commit that introduced this suite already carried slices 1 through 3.
+ *
+ * WHY NO `parse_blocks` STUB IS NEEDED, which is the part worth getting right. The
+ * original header said `parse_blocks()` is "stubbed per-suite by the three files that
+ * need it". No suite stubs it. `parse_blocks()` is unshimmed across the whole harness
+ * and stays that way: several suites use the fatal "Call to undefined function
+ * parse_blocks()" as a POSITIVE probe signal that execution reached the parsing path,
+ * so defining it anywhere would silently disarm them (see the header of
+ * `tests/test-authoring-shape-budget.php`). Leaving a primitive undefined behind a
+ * `function_exists()` branch is a legitimate runtime shape under CONTRIBUTING.md's
+ * shim contract, not a gap to paper over.
+ *
+ * This suite never reaches it, for three separate reasons, each of which holds on its
+ * own:
+ *
+ *   - The import route does not parse. `trait-layout-import.php` contains no
+ *     `parse_blocks` reference at all; it writes through
+ *     `normalize_divi_full_content_for_write()` and
+ *     `update_post_content_with_integrity_guard()`, and neither of those is among
+ *     `parse_blocks_for_write()`'s callers.
+ *   - Reference classification compares the artifact's own declarations against the
+ *     live site rather than re-reading the content, as the slice 2 banner says.
+ *   - `authoring_shape_preflight()` skips its tree walk outright when the parser is
+ *     missing (`trait-authoring-shape.php:107`), by design, so even a payload that
+ *     reaches the preflight does not reach a parse here.
  *
  * @package DiviOps
  */

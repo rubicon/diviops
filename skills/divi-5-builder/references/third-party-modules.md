@@ -14,9 +14,14 @@ but every one as `{"type": "object"}`, with no leaf structure. So the registry s
 vocabulary and nothing else. Leaf paths here were derived by reading real saved instances out of
 `post_content` and flattening their attrs. That has a consequence worth stating plainly:
 
-> A path in this file is **observed on a real, working, VB-saved module**. It is not proven
-> writable until a round-trip edit confirms it. Where a round-trip has been run, the section says
-> so. Where it has not, the section says that too. Do not silently upgrade one to the other.
+> A path in this file is **observed on a real, working, VB-saved module**, and its path SHAPE is
+> **storage-verified** — the write proof at the end of this file round-tripped one probe per shape
+> through `page_create` → `page_get` and every one came back unchanged. That is storage fidelity
+> and nothing more. The proof's control, a deliberately wrong path, survived just as cleanly,
+> because WordPress stores unknown block attributes verbatim. So **no path here is verified to
+> have any visual effect**, and a round trip is not the evidence that would establish one. Read
+> the write proof's own caveat before treating any leaf as guaranteed to do something, and do not
+> silently upgrade storage fidelity to proven writability.
 
 ---
 
@@ -141,7 +146,7 @@ read the saved attrs back — that is the same method that produced this table.
 | Leaves | 42 distinct on the parent, 13 on the child, 54 union |
 | Controls | walker instance count equals a naive opener count for both slugs; an absent slug returns 0 |
 | Registry | `diviops_schema_get_module({ module_name: "difl/faq" })`, `source: "block_registry"`, 51 top-level names, every one `{"type":"object"}` |
-| Round-trip | **not yet run** — a write to the site, pending owner authorization on a scratch page. Until then every path here is observed, not proven writable |
+| Round-trip | **run 2026-09-27** on scratch DRAFT page `901566` — see the write proof at the end of this file. It storage-verifies every path SHAPE documented here and establishes nothing about visual effect: the proof's deliberately wrong control survived too |
 
 Page 900390 is read-only by standing instruction and was read, never modified.
 
@@ -368,10 +373,9 @@ Every path in this file was labelled *observed, not proven writable*. That cavea
 
 Run on `staging.colleyvillelions.com`, 2026-09-27, Divi 5.13.1 + DiviFlash 5.5.0. One scratch
 DRAFT page (`901566`, titled so it is obviously disposable; page 900390 was never touched) was
-created through this plugin's own `page_create` route — so the write went through
-`parse_blocks_for_write()` and `update_post_content_with_integrity_guard()` like any other — then
-read back through `page_get`. Seven probe paths, each taken from the observed `difl/advanced-blurb`
-map rather than invented, one per path SHAPE this file documents:
+created through this plugin's own `page_create` route, then read back through `page_get`. Seven
+probe paths, each taken from the observed `difl/advanced-blurb` map rather than invented, one per
+path SHAPE this file documents:
 
 | shape | probe | result |
 |---|---|---|
@@ -388,11 +392,21 @@ disappointment. The single-`font` form is the shape this file warns no-ops, and 
 perfectly, because **WordPress stores unknown block attributes verbatim.** A write/read round trip
 therefore proves *storage fidelity* and says nothing whatever about whether Divi reads the path.
 
+**And `page_create` is not the guarded write path, which narrows the proof a second time.**
+`page_create()` (`plugins/diviops-agent/includes/trait-page.php:886`) validates the payload with
+`authoring_shape_preflight()`, uses that result only to refuse an oversized or malformed one,
+discards the parsed tree, and stores `wp_slash( $content )` through a single `wp_insert_post()`.
+It never calls `parse_blocks_for_write()` or `update_post_content_with_integrity_guard()` — the
+canonicalise-then-guard pairing the module-editing and import routes use. So the probes above
+were stored verbatim by WordPress on a creation, and were never put through the pass that could
+have rewritten them.
+
 So the accurate status of every path here is now: **observed in live content, and verified to
-survive this plugin's write path unchanged — but not verified to have any visual effect.** Proving
-the latter needs a rendered-output comparison between a correct path and a deliberately wrong one,
-which is a separate exercise. Any file that claimed "proven writable" off a round trip alone would
-be overstating by exactly the width of that control row.
+survive creation through `page_create` unchanged — but not verified to survive the guarded write
+path, and not verified to have any visual effect.** Proving visual effect needs a rendered-output
+comparison between a correct path and a deliberately wrong one, which is a separate exercise. Any
+file that claimed "proven writable" off a round trip alone would be overstating by exactly the
+width of that control row.
 
 ### A host gotcha this surfaced
 
