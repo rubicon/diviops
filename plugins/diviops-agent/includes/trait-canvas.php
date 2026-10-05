@@ -50,10 +50,27 @@ trait DiviOps_Agent_Canvas {
 		$append_to_main = sanitize_key( (string) ( $request->get_param( 'append_to_main' ) ?? '' ) );
 		$z_index        = $request->get_param( 'z_index' );
 
+		// The type guard runs before the budget, not after it (#540). Canvas is the
+		// one domain where content is optional, which is why this call used to cast
+		// instead: (string) on an array raised "Array to string conversion" and then
+		// measured the literal five-byte string "Array" rather than refusing. This
+		// guard makes $content provably string|null, which is what lets the preflight
+		// take it uncast like the other five call sites. Same shape and same position
+		// relative to the budget as trait-page.php:452.
+		if ( null !== $content && ! is_string( $content ) ) {
+			return self::envelope_error(
+				'invalid_input',
+				'content must be a string of Divi block markup.',
+				'Pass content as a string. See diviops_canvas_get for the expected shape.',
+				400,
+				[ 'field' => 'content', 'received_type' => gettype( $content ) ]
+			);
+		}
+
 		// #474: budget before plan. Refusing an oversized payload here costs one
 		// walk; discovering it inside parse_blocks() during the write costs the
 		// process and leaves a half-written page.
-		$shape = self::authoring_shape_preflight( [ (string) $content ] );
+		$shape = self::authoring_shape_preflight( [ $content ?? '' ] );
 		if ( is_wp_error( $shape ) ) {
 			return self::envelope_error( 'invalid_input', $shape->get_error_message(), null, 400 );
 		}
@@ -85,14 +102,6 @@ trait DiviOps_Agent_Canvas {
 		}
 		if ( ! current_user_can( 'edit_post', $parent_page_id ) ) {
 			return new WP_Error( 'forbidden', 'Cannot edit this parent page', [ 'status' => 403 ] );
-		}
-		if ( null !== $content && ! is_string( $content ) ) {
-			return self::envelope_error(
-				'invalid_input',
-				'content must be a string of Divi block markup.',
-				null,
-				400
-			);
 		}
 
 		// Validate append_to_main value.
@@ -1125,11 +1134,24 @@ trait DiviOps_Agent_Canvas {
 		$append_to_main = $request->get_param( 'append_to_main' );
 		$z_index        = $request->get_param( 'z_index' );
 
+		// The type guard runs before the budget, not after it (#540). Same reason as
+		// canvas_create: the cast this replaces warned on an array and measured
+		// "Array" instead of refusing. Mirrors trait-page.php:452.
+		if ( null !== $content && ! is_string( $content ) ) {
+			return self::envelope_error(
+				'invalid_input',
+				'content must be a string of Divi block markup.',
+				'Pass content as a string. See diviops_canvas_get for the expected shape.',
+				400,
+				[ 'field' => 'content', 'received_type' => gettype( $content ) ]
+			);
+		}
+
 		// #474: budget before plan. Refusing an oversized payload here costs one
 		// walk; discovering it inside parse_blocks() during the write costs the
 		// process and leaves a half-written page.
 		if ( null !== $content ) {
-			$shape = self::authoring_shape_preflight( [ (string) $content ] );
+			$shape = self::authoring_shape_preflight( [ $content ] );
 			if ( is_wp_error( $shape ) ) {
 				return self::envelope_error( 'invalid_input', $shape->get_error_message(), null, 400 );
 			}
@@ -1148,14 +1170,6 @@ trait DiviOps_Agent_Canvas {
 			);
 		}
 
-		if ( null !== $content && ! is_string( $content ) ) {
-			return self::envelope_error(
-				'invalid_input',
-				'content must be a string of Divi block markup.',
-				null,
-				400
-			);
-		}
 		if ( null !== $title && ! is_scalar( $title ) ) {
 			return self::envelope_error(
 				'invalid_input',
