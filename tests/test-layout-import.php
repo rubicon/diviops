@@ -820,3 +820,265 @@ assert_true(
 	( diviops_li_remap( $diviops_li_dry_plan )['host_rewrite']['occurrences'] ?? 0 ) >= 2,
 	'the plan counts the occurrences it would rewrite (two here: the image src and the link), so a count of zero is visible as a no-op rather than read as success'
 );
+
+// --- an internal link stored only as a post id is reported (#538) ----------
+
+/**
+ * A payload carrying both id-only reference shapes, plus the two look-alikes
+ * that must NOT be reported.
+ *
+ * @return string
+ */
+function diviops_li_link_json(): string {
+	// A dynamic-content link token carrying an explicit post id. The option name
+	// is recorded as live-observed on this site in
+	// skills/divi-5-builder/references/variable-bindings.md:248, and the wrapper
+	// encoding is the one dynamic_content_format_token() produces
+	// (plugins/diviops-agent/includes/trait-dynamic-content.php:150).
+	$with_id = '$variable(' . json_encode( array(
+		'type'  => 'content',
+		'value' => array(
+			'name'     => 'post_link_url_page',
+			'settings' => array( 'post_id' => '306' ),
+		),
+	) ) . ')$';
+
+	// The SAME option family with no post id at all. This is the shape actually
+	// present in the live export of page 900390 ("name":"post_link_url",
+	// "settings":{}), read 2026-10-05 against Divi 5.14.0 on staging. It resolves
+	// against whichever post is being rendered, so it is not a cross-site
+	// reference and reporting it would be a false positive on real content.
+	$no_id = '$variable(' . json_encode( array(
+		'type'  => 'content',
+		'value' => array(
+			'name'     => 'post_link_url',
+			'settings' => array(),
+		),
+	) ) . ')$';
+
+	$linked = static function ( string $block, string $url ): string {
+		return '<!-- wp:' . $block . ' ' . json_encode( array(
+			'attrs' => array(
+				'module' => array(
+					'advanced' => array(
+						'link' => array( 'desktop' => array( 'value' => array( 'url' => $url ) ) ),
+					),
+				),
+			),
+		) ) . ' --><!-- /wp:' . $block . ' -->';
+	};
+
+	// A global-layout wrapper naming a library layout by bare post id. The value
+	// shape is taken from that same live export, which carries
+	// {"globalModule":"900296","blockName":"divi/section"} — a numeric string, with
+	// no URL form anywhere, so no host rewrite can ever reach it. 4242 is used here
+	// because the shim's post store has no such post.
+	$content = '<!-- wp:divi/global-layout {"globalModule":"4242","blockName":"divi/section"} -->'
+		. '<!-- /wp:divi/global-layout -->'
+		. $linked( 'divi/button', $with_id )
+		// A URL-form link on the source host: already covered by the host rewrite,
+		// and load-bearing as a negative. Without it, a detector that swept every
+		// link would be indistinguishable from one that reports only id-only ones.
+		. '<!-- wp:divi/text {"attrs":{}} --><p><a href="' . DIVIOPS_LI_SRC_HOME . '/about">about</a></p>'
+		. '<!-- /wp:divi/text -->'
+		. $linked( 'divi/heading', $no_id );
+
+	return diviops_li_json( $content );
+}
+
+/**
+ * The links group of a remap plan.
+ *
+ * `?? array()` is deliberate rather than defensive: before the group exists,
+ * count() on null is a TypeError under PHP 8, which the runner reports as a fatal
+ * (exit 255) instead of a failing assertion. A red has to be an assertion failure.
+ *
+ * @param array $plan Plan payload.
+ * @return array
+ */
+function diviops_li_links( array $plan ): array {
+	$links = diviops_li_remap( $plan )['links'] ?? array();
+	return is_array( $links ) ? $links : array();
+}
+
+$diviops_li_link_plan = diviops_li_plan( diviops_li_import( array(
+	'artifact_json' => diviops_li_link_json(),
+	'remap'         => array( 'source_home_url' => DIVIOPS_LI_SRC_HOME ),
+) ) );
+
+assert_same(
+	2,
+	count( diviops_li_links( $diviops_li_link_plan ) ),
+	'the links group carries one row per id-only reference and nothing for a link that already has a URL'
+);
+
+/**
+ * One link row's disposition, by the id it reports.
+ *
+ * @param array $plan Plan payload.
+ * @param int   $id   Referenced post id.
+ * @return string
+ */
+function diviops_li_link( array $plan, int $id ): string {
+	foreach ( diviops_li_links( $plan ) as $row ) {
+		if ( (int) ( $row['id'] ?? 0 ) === $id ) {
+			return (string) ( $row['disposition'] ?? '<no disposition>' );
+		}
+	}
+	return '<id absent from plan>';
+}
+
+assert_same(
+	'id_absent',
+	diviops_li_link( $diviops_li_link_plan, 4242 ),
+	'a global-layout wrapper naming a library layout that does not exist on this site reports id_absent'
+);
+
+// 306 is the post id the live token carries; registering it here is what makes the
+// present/absent distinction a real branch rather than one constant answer.
+diviops_test_register_post( 306, 'target page content', 'page', 'Contact' );
+
+$diviops_li_resolved_plan = diviops_li_plan( diviops_li_import( array(
+	'artifact_json' => diviops_li_link_json(),
+	'remap'         => array( 'source_home_url' => DIVIOPS_LI_SRC_HOME ),
+) ) );
+
+assert_same(
+	'id_present',
+	diviops_li_link( $diviops_li_resolved_plan, 306 ),
+	'and a post-id-only link whose id does resolve here reports id_present'
+);
+
+// --- the look-alikes that must stay out of the group ----------------------
+
+/**
+ * A payload whose only id-bearing-looking values are things that are not
+ * cross-site post references.
+ *
+ * @return string
+ */
+function diviops_li_lookalike_json(): string {
+	$token = static function ( string $name, array $settings ): string {
+		return '$variable(' . json_encode( array(
+			'type'  => 'content',
+			'value' => array( 'name' => $name, 'settings' => $settings ),
+		) ) . ')$';
+	};
+
+	$block = static function ( string $name, string $url ): string {
+		return '<!-- wp:' . $name . ' ' . json_encode( array(
+			'attrs' => array(
+				'module' => array(
+					'advanced' => array(
+						'link' => array( 'desktop' => array( 'value' => array( 'url' => $url ) ) ),
+					),
+				),
+			),
+		) ) . ' --><!-- /wp:' . $name . ' -->';
+	};
+
+	return diviops_li_json(
+		// A design token. It uses the IDENTICAL $variable() wrapper and the
+		// identical "type":"content" as a real dynamic-content binding, so a
+		// detector trusting the wrapper or the type rather than the option name
+		// would sweep it in. gvid- tokens are never registered as dynamic content.
+		$block( 'divi/text', $token( 'gvid-aaaaaaaa', array() ) )
+		// The post-link family carrying a slug instead of an id. Nothing numeric to
+		// report, and guessing the id from the slug is exactly what #96 refused.
+		. $block( 'divi/button', $token( 'post_link_url_page', array( 'post_slug' => 'contact' ) ) )
+		// A global-layout wrapper with no globalModule at all.
+		. '<!-- wp:divi/global-layout {"blockName":"divi/section"} --><!-- /wp:divi/global-layout -->'
+		// An option that is NOT a link but DOES carry a post id. Divi's dynamic
+		// content takes a post_id for plenty of non-link options, so this is the
+		// fixture that makes the option-name check load-bearing: without it this
+		// row would be reported as a link. A mutant that dropped the name check
+		// survived until this existed, because every other token here has no
+		// post_id and so was excluded by the id check instead.
+		. $block( 'divi/text', $token( 'post_excerpt', array( 'post_id' => '306' ) ) )
+		// A post-link option whose id is malformed. (int) '12abc' is 12, so without
+		// the is_numeric() guard this fabricates a row for post 12 — a reference the
+		// payload never made. A mutant that dropped that guard survived until this
+		// existed, because '12abc' is the only value where the guard and the
+		// positive-integer check disagree.
+		. $block( 'divi/button', $token( 'post_link_url_page', array( 'post_id' => '12abc' ) ) )
+	);
+}
+
+$diviops_li_lookalike_plan = diviops_li_plan( diviops_li_import( array(
+	'artifact_json' => diviops_li_lookalike_json(),
+) ) );
+
+assert_same(
+	array(),
+	diviops_li_links( $diviops_li_lookalike_plan ),
+	'a design token, a slug-valued link, a wrapper with no id, a non-link option carrying a post id and a malformed id all stay out of the links group'
+);
+
+assert_true(
+	array_key_exists( 'links', diviops_li_remap( $diviops_li_lookalike_plan ) ),
+	'and the group is present even when it is empty, so a caller never has to tell an empty report from a missing one'
+);
+
+// --- a block whose attributes cannot be decoded ---------------------------
+
+// The route REFUSES such a payload rather than importing it with an incomplete
+// report. That matters for what this scanner has to promise: the remap pass runs
+// before normalize_divi_full_content_for_write() (the comment at
+// trait-layout-import.php:214 says so deliberately, so content_bytes measures what
+// is actually stored), so the scanner really does meet undecodable attribute JSON --
+// but normalize then rejects the whole payload, and the plan it would have reported
+// is discarded with it. So an under-counted links group is never something a caller
+// can observe: they get a 422 instead.
+assert_same(
+	'layout_import.unsafe_attribute_json',
+	diviops_li_code( diviops_li_import( array(
+		// Trailing comma: the JSON span is locatable, so extract_attrs_from_block_markup()
+		// gets as far as json_decode() and returns WP_Error.
+		'artifact_json' => diviops_li_json(
+			'<!-- wp:divi/global-layout {"globalModule":"4243",} --><!-- /wp:divi/global-layout -->'
+		),
+	) ) ),
+	'a payload carrying attribute JSON that cannot be decoded is refused outright, so no import reports a links group it could not finish building'
+);
+
+// And the scanner's own answer for that block, reached directly because the route
+// above can never return it. A scanner cannot refuse -- refusing is the caller's job
+// one layer up -- so its honest answer is a row saying which block it could not read,
+// rather than silently omitting it and letting the group read as complete.
+assert_same(
+	array(
+		array(
+			'kind'        => 'block_attrs',
+			'id'          => 0,
+			'block'       => 'divi/global-layout',
+			'disposition' => 'attrs_unreadable',
+		),
+	),
+	diviops_call( 'layout_import_link_dispositions', array(
+		'<!-- wp:divi/global-layout {"globalModule":"4243",} --><!-- /wp:divi/global-layout -->',
+	) ),
+	'the scanner reports a block whose attributes do not decode rather than omitting it'
+);
+
+assert_same(
+	'divi/button',
+	(string) ( diviops_li_links( $diviops_li_resolved_plan )[1]['block'] ?? '<no block>' ),
+	'every link row names its block, so acting on the report does not mean searching the whole layout'
+);
+
+// A numeric-looking id that is not an integer. is_numeric() accepts both of these
+// and the cast then names a post the payload never referenced: (int) '12.9' is 12
+// and (int) '1e3' is 1000. Fabricating a row for a real-looking id is worse than
+// omitting a malformed one, because the caller cannot tell the two apart.
+assert_same(
+	array(),
+	diviops_call( 'layout_import_link_dispositions', array(
+		'<!-- wp:divi/global-layout {"globalModule":"12.9"} --><!-- /wp:divi/global-layout -->'
+		. '<!-- wp:divi/global-layout {"globalModule":"1e3"} --><!-- /wp:divi/global-layout -->'
+		// All digits, and still not a post. Zero is what an unset globalModule
+		// serializes to, and no WordPress post has that id, so a row for it would
+		// be a reference the payload does not contain.
+		. '<!-- wp:divi/global-layout {"globalModule":"0"} --><!-- /wp:divi/global-layout -->'
+	) ),
+	'an id that is numeric but not a positive integer is omitted rather than cast into a row naming a different post'
+);
