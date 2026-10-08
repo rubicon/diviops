@@ -10,6 +10,13 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.29.1](https://github.com/rubicon/diviops/compare/v1.29.0...v1.29.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* **#540:** guard canvas content type before the authoring-shape budget ([08aed85](https://github.com/rubicon/diviops/commit/08aed8514cb362acf84979597289aa6157136124)), closes [#540](https://github.com/rubicon/diviops/issues/540)
+
 ## [1.29.0](https://github.com/rubicon/diviops/compare/v1.28.0...v1.29.0) (2026-09-28)
 
 
