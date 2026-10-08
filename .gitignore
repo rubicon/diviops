@@ -30,6 +30,26 @@ vendor/
 # committing it would churn reviewed diffs for no benefit a local reindex lacks.
 .codebase-memory/
 
+# Server-local MCP artifact stores (#544). Two stores resolve their root against
+# process.cwd(), which is this repository whenever the server is launched from a
+# checkout: diviops-server/src/page-export-ref.ts writes .diviops-tmp/page-exports/
+# and diviops-server/src/cross-env-preflight/source-payload-ref.ts writes
+# .diviops-tmp/cross-env-source-payloads/. Both defaults are deliberate -- the
+# handle + checksum + TTL design refuses a caller-supplied destination -- so the
+# containment belongs here rather than in the stores.
+#
+# A page export is Divi's portability schema with every image on the page inlined
+# as base64: a verbatim copy of a real page from a development site. This
+# repository is PUBLIC, so one reaching a commit publishes a client's page content
+# under our name. Found untracked AND unignored on main, one `git add -A` away.
+#
+# Unanchored on purpose -- the server may be launched from the repository root or
+# from diviops-server/, and an anchored rule would cover the first and silently
+# miss the second. tests/test-scratch-artifacts-untracked.php fails the suite if
+# the rule stops matching, if it moves to a machine-local exclude file, or if an
+# artifact is ever force-added.
+.diviops-tmp/
+
 # Built by scripts/build-plugin-zip.php and attached to releases (#238).
 # Not tracked: a committed binary cannot stay in sync with a version release-please bumps.
 /diviops-agent.zip
