@@ -649,7 +649,7 @@ trait DiviOps_Agent_Layout_Import {
 			? rtrim( trim( $remap['source_home_url'] ), '/' )
 			: '';
 
-		$plan = [ 'url_map' => [], 'attachments' => [] ];
+		$plan = [ 'url_map' => [], 'attachments' => [], 'links' => [] ];
 
 		// Explicit per-URL mappings first.
 		foreach ( $url_map as $from => $to ) {
@@ -682,6 +682,11 @@ trait DiviOps_Agent_Layout_Import {
 		}
 
 		$plan['attachments'] = self::layout_import_attachment_dispositions( $artifact, $source, $url_map );
+
+		// After the rewriting above, deliberately: an id-only reference is by
+		// construction untouched by a URL rewrite, so reporting it afterwards
+		// describes the content the caller will actually get.
+		$plan['links'] = self::layout_import_link_dispositions( $content );
 
 		return [ 'content' => $content, 'plan' => $plan ];
 	}
@@ -743,6 +748,154 @@ trait DiviOps_Agent_Layout_Import {
 		}
 
 		return $rows;
+	}
+
+	/**
+	 * One row per internal reference stored only as a post id (#538).
+	 *
+	 * These are the references a URL-level remap can never reach, because there is
+	 * no URL in the content to rewrite: the id IS the whole reference. They cross to
+	 * the target unchanged, where the same number is a different page or no page at
+	 * all, and the visible symptom is a visitor landing somewhere unintended.
+	 *
+	 * REPORTED, NEVER REWRITTEN, and that split is #96's and not reopened here.
+	 * Guessing a target id from a slug is how an import silently repoints a link, so
+	 * this says which ids crossed and whether each resolves here, and leaves acting
+	 * on them to the caller. The dispositions are deliberately `id_present` and
+	 * `id_absent` — each states only whether a post with that id exists on this site,
+	 * which is the single thing actually checked. A name like `id_unresolved` would
+	 * imply the reference had been compared against its source meaning, which it has
+	 * not; #537 was filed for exactly that class of overstatement.
+	 *
+	 * Scanned from the content rather than from an artifact collection, because Divi's
+	 * `serialize_layout()` emits no links collection and adding one would be a second
+	 * scanner free to drift from this one. The walk composes the same three primitives
+	 * `portability_scan_markup()` composes and reaches no block parser, which
+	 * `tests/test-layout-import.php`'s header depends on.
+	 *
+	 * @param string $content Layout markup, after any URL rewriting.
+	 * @return array<int,array{kind:string,id:int,disposition:string}>
+	 */
+	private static function layout_import_link_dispositions( string $content ): array {
+		$rows   = [];
+		$offset = 0;
+
+		while ( null !== ( $opener = self::next_block_opener( $content, $offset ) ) ) {
+			$bounds = self::block_opening_comment_end( $content, $opener['pos'] );
+			if ( null === $bounds ) {
+				break;
+			}
+
+			$attrs = self::extract_attrs_from_block_markup(
+				substr( $content, $opener['pos'], $bounds['comment_end'] - $opener['pos'] )
+			);
+
+			$block = (string) $opener['name'];
+
+			if ( is_array( $attrs ) ) {
+				if ( self::GLOBAL_LAYOUT_BLOCK_NAME === $block ) {
+					$row = self::layout_import_link_row( 'global_layout', $block, $attrs['globalModule'] ?? null );
+					if ( null !== $row ) {
+						$rows[] = $row;
+					}
+				}
+
+				$hits = [];
+				self::dynamic_content_scan_attrs( $attrs, '', $hits );
+				foreach ( $hits as $candidate ) {
+					$row = self::layout_import_link_token_row( $block, (string) $candidate );
+					if ( null !== $row ) {
+						$rows[] = $row;
+					}
+				}
+			} else {
+				// Reported rather than skipped, which is the whole point. This scanner
+				// runs before normalize_divi_full_content_for_write(), so undecodable
+				// attribute JSON is a real shape here; dropping the block would make the
+				// report claim there are no id-only references in content it never read.
+				$rows[] = [
+					'kind'        => 'block_attrs',
+					'id'          => 0,
+					'block'       => $block,
+					'disposition' => 'attrs_unreadable',
+				];
+			}
+
+			$offset = $bounds['comment_end'];
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * One link row from a dynamic-content token, or null when the token is not an
+	 * id-only link.
+	 *
+	 * The option name alone is not enough and neither is `type`. `$variable(...)$` is
+	 * Divi's SHARED wrapper: global colours (`gcid-`), variables (`gvid-`) and fonts
+	 * (`gfid-`) use the identical syntax and the identical `"type":"content"`, as
+	 * `dynamic_content_write_path_rejection()`'s docblock records. And the same
+	 * post-link option family appears with no id at all — the live export of page
+	 * 900390 carries `"name":"post_link_url","settings":{}`, which resolves against
+	 * whichever post is being rendered and is therefore not a cross-site reference.
+	 * So the discriminator is the option naming a post link AND carrying a numeric
+	 * `post_id` in its settings.
+	 *
+	 * @param string $block     Block the token was found in.
+	 * @param string $candidate Raw attribute value already matched as a token.
+	 * @return array{kind:string,id:int,block:string,disposition:string}|null
+	 */
+	private static function layout_import_link_token_row( string $block, string $candidate ) {
+		if ( 0 !== strpos( $candidate, '$variable(' ) ) {
+			return null;
+		}
+
+		$parsed = self::dynamic_content_parse_modern( $candidate, 0, 'display' );
+		$name   = isset( $parsed['name'] ) ? (string) $parsed['name'] : '';
+		if ( '' === $name ) {
+			return null;
+		}
+
+		$is_post_link = 0 === strpos( $name, 'post_link_url' ) || 'any_post_link_url' === $name;
+		if ( ! $is_post_link ) {
+			return null;
+		}
+
+		$settings = isset( $parsed['settings'] ) && is_array( $parsed['settings'] ) ? $parsed['settings'] : [];
+
+		return self::layout_import_link_row( 'dynamic_link', $block, $settings['post_id'] ?? null );
+	}
+
+	/**
+	 * One link row for a bare post id, or null when the value is not one.
+	 *
+	 * @param string $kind  Reference shape that carried the id.
+	 * @param string $block Block the reference was found in.
+	 * @param mixed  $id    Candidate id, as stored.
+	 * @return array{kind:string,id:int,block:string,disposition:string}|null
+	 */
+	private static function layout_import_link_row( string $kind, string $block, $id ) {
+		// ctype_digit rather than is_numeric, because is_numeric accepts forms that
+		// the cast then turns into a DIFFERENT number: (int) '12.9' is 12 and
+		// (int) '1e3' is 1000, so a malformed value would be reported as a confident
+		// reference to a post the payload never named. Omitting a malformed id is
+		// recoverable; inventing a plausible one is not, because the caller cannot
+		// tell it from a real row. Divi stores these as bare digit strings.
+		if ( ! is_scalar( $id ) || ! ctype_digit( (string) $id ) ) {
+			return null;
+		}
+
+		$post_id = (int) $id;
+		if ( $post_id <= 0 ) {
+			return null;
+		}
+
+		return [
+			'kind'        => $kind,
+			'id'          => $post_id,
+			'block'       => $block,
+			'disposition' => null === get_post( $post_id ) ? 'id_absent' : 'id_present',
+		];
 	}
 
 	/**
