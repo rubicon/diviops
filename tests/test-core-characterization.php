@@ -575,15 +575,13 @@ diviops_core_char_section( 'find_malformed_block_attr_escape' );
 $balanced_markup = '<!-- wp:divi/section --><!-- wp:divi/text /--><!-- /wp:divi/section -->';
 
 /*
- * Hand-walked over the three patterns in divi_content_marker_counts():
- *   openers      `<!--\s+wp:NAME`          matches the section and the text
- *                                          openers; the closer reads `<!-- /wp:`
- *                                          so its `/` blocks the match. => 2
- *   self_closers `...(?:(?!-->).)*?/-->`   matches only the void text block; the
- *                                          section opener's own ` -->` stops the
- *                                          scan before it can reach a later
- *                                          `/-->`. => 1
- *   closers      `<!--\s+/wp:NAME`         => 1
+ * Hand-walked over divi_content_marker_counts(), which counts the marker starts
+ * divi_block_comment_starts() matches with `<!--\s+(/)?wp:NAME`:
+ *   openers      starts with no `/`: the section and the text openers. => 2
+ *   self_closers openers whose first `-->` after the name follows a `/`: only
+ *                the void text block; the section opener's first `-->` is its
+ *                own ` -->`, so a later `/-->` is never reached from it. => 1
+ *   closers      starts with a `/`. => 1
  *   container_openers = max(0, 2 - 1) = 1, which equals closers, so balanced.
  */
 assert_same(
