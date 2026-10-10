@@ -565,6 +565,160 @@ assert_true( ! empty( $body['ok'] ), 'a repeat trash still succeeds' );
 assert_same( true, $body['data']['already_trashed'] ?? null, 'and reports the no-op rather than re-running the cleanup' );
 assert_same( 0, $body['data']['master_meta_refs_removed'] ?? null, 'with nothing left to scrub' );
 
+// ── tb_template_trash: a layout another template still references (#554) ──
+//
+// Divi reuses one layout post id across templates when a slot is global, so a
+// layout is a reference, not something the trashed template owns. Fixture: two
+// published templates under master 5410 whose `_et_footer_layout_id` names the
+// same footer 5425, plus header 5426 named by Template A only. Every expected
+// value below is read off this fixture: 5425 has referrers {5421, 5422}, 5426
+// has {5421}.
+
+/**
+ * Register a published Theme Builder template under master 5410 with the given
+ * slot links, the way tb_template_create() writes them.
+ *
+ * @param int                $id    Template post id.
+ * @param string             $title post_title.
+ * @param array<string, int> $slots slot => layout id.
+ * @param string             $status post_status.
+ */
+function diviops_tbc_template( int $id, string $title, array $slots, string $status = 'publish' ): void {
+	diviops_tbc_post( $id, '', 'et_template', $title, $status );
+	foreach ( array( 'header', 'body', 'footer' ) as $slot ) {
+		update_post_meta( $id, "_et_{$slot}_layout_id", (string) ( $slots[ $slot ] ?? 0 ) );
+	}
+	add_post_meta( 5410, '_et_template', $id );
+}
+
+/**
+ * The plan row targeting a given `type#id`, or null.
+ *
+ * @param array  $plan   dry-run plan.
+ * @param string $target change target.
+ * @return array|null
+ */
+function diviops_tbc_plan_row( array $plan, string $target ) {
+	foreach ( $plan['changes'] ?? array() as $change ) {
+		if ( $target === ( $change['target'] ?? null ) ) {
+			return $change;
+		}
+	}
+	return null;
+}
+
+/**
+ * The reported linked-layout row for a layout id, or null.
+ *
+ * @param array $data response data.
+ * @param int   $id   layout id.
+ * @return array|null
+ */
+function diviops_tbc_layout_row( array $data, int $id ) {
+	foreach ( $data['linked_layouts'] ?? array() as $row ) {
+		if ( $id === ( $row['id'] ?? null ) ) {
+			return $row;
+		}
+	}
+	return null;
+}
+
+diviops_tbc_post( 5425, '', 'et_footer_layout', 'Shared footer' );
+diviops_tbc_post( 5426, '', 'et_header_layout', 'A-only header' );
+diviops_tbc_template( 5421, 'Template A', array( 'header' => 5426, 'footer' => 5425 ) );
+diviops_tbc_template( 5422, 'Template B', array( 'footer' => 5425 ) );
+
+// The answer to "who else uses this layout" already exists; the trash path is
+// what never asked it.
+assert_same(
+	array( 5421 => 'footer', 5422 => 'footer' ),
+	diviops_call( 'find_templates_referencing_layout', array( 5425 ) ),
+	'the shared footer has both templates as referrers'
+);
+assert_same(
+	array( 5421 => 'header' ),
+	diviops_call( 'find_templates_referencing_layout', array( 5426 ) ),
+	'the A-only header has Template A as its sole referrer'
+);
+
+$body = diviops_tbc_call( 'tb_template_trash', array( 'id' => 5421, 'dry_run' => true ) )->get_data();
+$data = $body['data'] ?? array();
+$plan = $data['plan'] ?? array();
+
+$warnings = $plan['warnings'] ?? array();
+$warning  = implode( "\n", array_map( 'strval', $warnings ) );
+assert_same( 1, count( $warnings ), 'the dry run warns once, for the one shared layout' );
+assert_true(
+	false !== strpos( $warning, '#5425' ) && false !== strpos( $warning, '5422' ),
+	'the warning names the shared layout and the template still using it'
+);
+
+$row = diviops_tbc_plan_row( $plan, 'et_footer_layout#5425' );
+assert_same( 'skip', $row['kind'] ?? null, 'the plan row for the shared footer is a skip' );
+assert_same( $row['before'] ?? 'missing-before', $row['after'] ?? 'missing-after', 'and promises no change to it' );
+
+// Control: the sole-referenced header is still planned for destruction.
+$row = diviops_tbc_plan_row( $plan, 'et_header_layout#5426' );
+assert_same( 'trash', $row['kind'] ?? null, 'the plan still trashes the sole-referenced header' );
+assert_same( array( 'status' => 'trash' ), $row['after'] ?? null, 'and says it ends in trash' );
+
+assert_same(
+	array( 5422 ),
+	diviops_tbc_layout_row( $data, 5425 )['shared_with'] ?? null,
+	'the dry run reports which other template shares the footer'
+);
+assert_true(
+	false !== strpos( (string) ( $plan['summary'] ?? '' ), 'Template A' )
+		&& false === strpos( (string) ( $plan['summary'] ?? '' ), '2 linked layout(s)' ),
+	'the summary no longer counts the shared layout among those it destroys'
+);
+
+$body = diviops_tbc_call( 'tb_template_trash', array( 'id' => 5421 ) )->get_data();
+assert_true( ! empty( $body['ok'] ), 'trashing a template with a shared layout still succeeds' );
+assert_same( 'trash', $GLOBALS['diviops_test_posts'][5421]->post_status, 'Template A is trashed' );
+assert_same( 'trash', $GLOBALS['diviops_test_posts'][5426]->post_status, 'its sole-referenced header is trashed with it' );
+assert_same( 'publish', $GLOBALS['diviops_test_posts'][5425]->post_status, 'the footer Template B still uses is left published' );
+$row = diviops_tbc_layout_row( $body['data'] ?? array(), 5425 );
+assert_same( 'shared_with_templates', $row['skipped'] ?? null, 'the result reports the footer as skipped because it is shared' );
+assert_same( array( 5422 ), $row['shared_with'] ?? null, 'and names the template still using it' );
+assert_same( 'publish', $row['status'] ?? null, 'and reports the status it was left in' );
+
+// A trashed referrer does not protect a layout. Template A is now in trash but
+// still names 5425, so without this rule trashing Template B would skip the
+// footer forever and the pair could never be fully cleaned up through this
+// route. With A trashed, B is 5425's only live referrer.
+$body = diviops_tbc_call( 'tb_template_trash', array( 'id' => 5422 ) )->get_data();
+assert_true( ! empty( $body['ok'] ), 'trashing the last live referrer succeeds' );
+assert_same( 'trash', $GLOBALS['diviops_test_posts'][5425]->post_status, 'the footer is trashed once only a trashed template still names it' );
+assert_same( null, diviops_tbc_layout_row( $body['data'] ?? array(), 5425 )['skipped'] ?? null, 'and is not reported as skipped' );
+
+// force=true on a rebuilt fixture: the same shape, plus body 5437 shared with a
+// DRAFT template. Only `trash` stops a referrer counting; a draft template is
+// still a live configuration whose link must not be left dangling.
+diviops_tbc_post( 5435, '', 'et_footer_layout', 'Shared footer' );
+diviops_tbc_post( 5436, '', 'et_header_layout', 'A-only header' );
+diviops_tbc_post( 5437, '', 'et_body_layout', 'Body shared with a draft' );
+diviops_tbc_template( 5431, 'Template A', array( 'header' => 5436, 'body' => 5437, 'footer' => 5435 ) );
+diviops_tbc_template( 5432, 'Template B', array( 'footer' => 5435 ) );
+diviops_tbc_template( 5433, 'Draft template', array( 'body' => 5437 ), 'draft' );
+
+$body = diviops_tbc_call( 'tb_template_trash', array( 'id' => 5431, 'force' => true ) )->get_data();
+assert_true( ! empty( $body['ok'] ), 'force-deleting a template with shared layouts succeeds' );
+assert_same( null, $GLOBALS['diviops_test_posts'][5431] ?? null, 'the template itself is permanently deleted' );
+assert_same( null, $GLOBALS['diviops_test_posts'][5436] ?? null, 'its sole-referenced header is permanently deleted' );
+assert_true( null !== get_post( 5435 ), 'the footer a published template still uses survives a force delete' );
+assert_true( null !== get_post( 5437 ), 'the body a draft template still uses survives a force delete' );
+assert_same(
+	array( 5432 ),
+	diviops_tbc_layout_row( $body['data'] ?? array(), 5435 )['shared_with'] ?? null,
+	'the force result names the template still using the footer'
+);
+assert_same(
+	array( 5433 ),
+	diviops_tbc_layout_row( $body['data'] ?? array(), 5437 )['shared_with'] ?? null,
+	'and the draft template still using the body'
+);
+
 // ── Teardown ──────────────────────────────────────────────────────────────
 
 foreach ( $GLOBALS['diviops_tbc_fixture_ids'] as $diviops_tbc_id ) {
