@@ -271,19 +271,30 @@ trait DiviOps_Agent_Page {
 	 * request has committed an edit, so the mutation-boundary check has to go
 	 * back to the row rather than trust the object the handler loaded.
 	 *
+	 * `get_var()` is the wrong read here. WordPress ends it with
+	 * `'' !== $values[$x] ? $values[$x] : null`, so a row whose post_content is
+	 * the empty string comes back as null, the same as no row at all, and an
+	 * empty page that nobody touched was refused as `page.content_drift`.
+	 * `get_row()` returns the row object either way, so absence stays distinct.
+	 *
+	 * Public because DiviOps Agent Pro calls it from outside this class, and a
+	 * private static there is a fatal error rather than a warning. Upstream
+	 * declares it public for the same reason.
+	 *
 	 * @param int $post_id Post id.
-	 * @return string|null post_content, or null when the row or the primitive
-	 *                     is unavailable.
+	 * @return string|null post_content (the empty string for an empty page), or
+	 *                     null when the row or the primitive is unavailable.
 	 */
-	private static function page_content_read_uncached( int $post_id ): ?string {
+	public static function page_content_read_uncached( int $post_id ): ?string {
 		global $wpdb;
 
-		if ( ! is_object( $wpdb ?? null ) || empty( $wpdb->posts ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+		if ( ! is_object( $wpdb ?? null ) || empty( $wpdb->posts ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_row' ) ) {
 			return null;
 		}
-		$content = $wpdb->get_var(
+		$row     = $wpdb->get_row(
 			$wpdb->prepare( "SELECT post_content FROM {$wpdb->posts} WHERE ID = %d LIMIT 1", $post_id )
 		);
+		$content = $row->post_content ?? null;
 		return is_string( $content ) ? $content : null;
 	}
 
