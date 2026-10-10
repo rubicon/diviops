@@ -2328,6 +2328,14 @@ trait DiviOps_Agent_ThemeBuilder {
 	 * post. UI deletion via the Divi Theme Builder cleans them; this typed
 	 * wrapper brings the programmatic path to parity.
 	 *
+	 * Shared layouts (#554): a linked layout that another template not itself
+	 * in trash still names is skipped, never trashed or deleted, in both
+	 * modes. Divi reuses one layout id across templates for a global slot, and
+	 * its own cleanup only removes layouts no template uses. The dry-run plan
+	 * row for such a layout is `kind: skip`, `plan.warnings` names it and the
+	 * templates still using it, and the apply result reports it with
+	 * `skipped: shared_with_templates` and `shared_with: [template ids]`.
+	 *
 	 * Idempotency:
 	 *   - Default trash mode: a repeat call after a successful cleanup returns
 	 *     { ok: true, data: { ..., already_trashed: true } } — repeat-safe
@@ -2384,12 +2392,28 @@ trait DiviOps_Agent_ThemeBuilder {
 			if ( ! $layout_post ) {
 				continue;
 			}
+			// A layout link is a reference, not ownership (#554): Divi reuses one
+			// layout id across templates when a slot is global, so another
+			// template may still render this layout. A referrer that is itself in
+			// trash does not count — otherwise trashing the last live template of
+			// a pair would skip the layout forever.
+			$shared_with = [];
+			foreach ( array_keys( self::find_templates_referencing_layout( $layout['id'] ) ) as $referrer_id ) {
+				if ( $referrer_id === $template_id ) {
+					continue;
+				}
+				$referrer = get_post( $referrer_id );
+				if ( $referrer && 'trash' !== $referrer->post_status ) {
+					$shared_with[] = $referrer_id;
+				}
+			}
 			$linked_layouts[] = [
-				'role'   => $layout['role'],
-				'id'     => $layout['id'],
-				'type'   => $layout_post->post_type,
-				'title'  => (string) $layout_post->post_title,
-				'status' => (string) $layout_post->post_status,
+				'role'        => $layout['role'],
+				'id'          => $layout['id'],
+				'type'        => $layout_post->post_type,
+				'title'       => (string) $layout_post->post_title,
+				'status'      => (string) $layout_post->post_status,
+				'shared_with' => $shared_with,
 			];
 		}
 
@@ -2445,13 +2469,24 @@ trait DiviOps_Agent_ThemeBuilder {
 			$action    = 'trash';
 		}
 
-		$changes = [];
+		$shared_count = count(
+			array_filter(
+				$linked_layouts,
+				static function ( $l ) {
+					return ! empty( $l['shared_with'] );
+				}
+			)
+		);
+
+		$changes  = [];
+		$warnings = [];
 		if ( 'noop' === $action ) {
 			$summary = "Theme Builder template #{$template_id} (title: '{$post->post_title}') is already trashed and master meta is clean — no-op.";
 		} else {
 			$verb     = $force ? 'permanently delete' : 'move to trash';
 			$summary  = "Would {$verb} Theme Builder template #{$template_id} (title: '{$post->post_title}'), "
-				. count( $linked_layouts ) . ' linked layout(s)'
+				. ( count( $linked_layouts ) - $shared_count ) . ' linked layout(s)'
+				. ( $shared_count > 0 ? " (keeping {$shared_count} still used by another template)" : '' )
 				. ( $master_id > 0
 					? ", and scrub {$master_meta_refs} _et_template meta ref(s) on master post #{$master_id}."
 					: ' (no Theme Builder master post found — meta scrub skipped).' );
@@ -2463,6 +2498,17 @@ trait DiviOps_Agent_ThemeBuilder {
 				'after'  => [ 'status' => $end_state ],
 			];
 			foreach ( $linked_layouts as $layout ) {
+				if ( ! empty( $layout['shared_with'] ) ) {
+					$changes[]  = [
+						'kind'   => 'skip',
+						'target' => "{$layout['type']}#{$layout['id']}",
+						'before' => [ 'status' => $layout['status'] ],
+						'after'  => [ 'status' => $layout['status'] ],
+					];
+					$warnings[] = "Linked {$layout['role']} layout #{$layout['id']} ({$layout['type']}) is kept, not destroyed: "
+						. 'Theme Builder template(s) #' . implode( ', #', $layout['shared_with'] ) . ' still use it.';
+					continue;
+				}
 				$changes[] = [
 					'kind'   => $action,
 					'target' => "{$layout['type']}#{$layout['id']}",
@@ -2484,14 +2530,14 @@ trait DiviOps_Agent_ThemeBuilder {
 			return self::dry_run_response(
 				$summary,
 				$changes,
-				[],
+				$warnings,
 				[
 					'template_id'      => $template_id,
 					'title'            => (string) $post->post_title,
 					'force'            => $force,
 					'linked_layouts'   => array_map(
 						static function ( $l ) {
-							return [ 'role' => $l['role'], 'id' => $l['id'], 'type' => $l['type'], 'title' => $l['title'] ];
+							return [ 'role' => $l['role'], 'id' => $l['id'], 'type' => $l['type'], 'title' => $l['title'], 'shared_with' => $l['shared_with'] ];
 						},
 						$linked_layouts
 					),
@@ -2528,6 +2574,20 @@ trait DiviOps_Agent_ThemeBuilder {
 		foreach ( $linked_layouts as $layout ) {
 			$lid           = $layout['id'];
 			$layout_status = $layout['status'];
+
+			// Checked before the already-trashed skip so `force=true` never
+			// promotes a shared layout from trash to a permanent delete.
+			if ( ! empty( $layout['shared_with'] ) ) {
+				$layout_results[] = [
+					'role'        => $layout['role'],
+					'id'          => $lid,
+					'type'        => $layout['type'],
+					'status'      => $layout_status,
+					'skipped'     => 'shared_with_templates',
+					'shared_with' => $layout['shared_with'],
+				];
+				continue;
+			}
 
 			if ( ! $force && 'trash' === $layout_status ) {
 				$layout_results[] = [

@@ -257,6 +257,75 @@ assert_true(
 	'control: the re-read really issued a query, so the assertions above are not passing on a skipped branch'
 );
 
+// ══ The re-read tells an empty page from a missing one (#547) ═════════════
+//
+// `wpdb::get_var()` ends with `isset( $values[$x] ) && '' !== $values[$x] ?
+// $values[$x] : null` (wp-includes/class-wpdb.php, WP 7.1.3), so a row whose
+// post_content is the empty string reads back as null, the same as no row.
+// The pre-write check treats null as "the row is gone" and refuses, which is a
+// false `page.content_drift` for a page that is empty and unchanged. The stub's
+// get_var() models that line, so these assertions fail under a get_var() read.
+
+diviops_pec_post( 7807, '' );
+assert_same(
+	'',
+	diviops_call( 'page_content_read_uncached', array( 7807 ) ),
+	'a registered page whose post_content is the empty string reads back as the empty string'
+);
+assert_same(
+	null,
+	diviops_call( 'page_content_read_uncached', array( 7899 ) ),
+	'an id with no row reads back as null'
+);
+diviops_pec_post( 7808, $diviops_pec_divi );
+assert_same(
+	$diviops_pec_divi,
+	diviops_call( 'page_content_read_uncached', array( 7808 ) ),
+	'control: a page with content still reads back as that content'
+);
+
+$diviops_pec_body = diviops_pec_call(
+	'page_update_content',
+	array(
+		'id'                => 7807,
+		'content'           => $diviops_pec_next,
+		'expected_checksum' => diviops_pec_checksum( '' ),
+	)
+)->get_data();
+assert_true(
+	'page.content_drift' !== ( $diviops_pec_body['error']['code'] ?? null ),
+	'an empty page whose checksum matches is not refused as content drift'
+);
+assert_same( true, $diviops_pec_body['ok'] ?? null, 'and the write goes through'  );
+assert_same( $diviops_pec_next, diviops_pec_stored( 7807 ), 'and the new content is stored' );
+
+// The stale case must survive the fix: an empty page is still guarded when the
+// caller reviewed something else.
+diviops_pec_post( 7809, '' );
+$diviops_pec_resp = diviops_pec_call(
+	'page_update_content',
+	array( 'id' => 7809, 'content' => $diviops_pec_next, 'expected_checksum' => $diviops_pec_stale )
+);
+assert_same( 409, $diviops_pec_resp->get_status(), 'control: a stale checksum against an empty page still refuses at 409' );
+assert_same( '', diviops_pec_stored( 7809 ), 'and the empty page is untouched' );
+
+// ══ The helper is reachable from outside the class (#547) ═════════════════
+//
+// DiviOps Agent Pro calls this method from its own classes. A private static
+// there is a fatal error, not a warning, and the free plugin's handshake still
+// passes, so nothing else would catch a regression. Asserted through
+// reflection and is_callable() from global scope so the test checks the
+// language's view of the declaration, not the source text. Upstream declares
+// it public (plugins/diviops-agent/includes/trait-page.php on upstream/main).
+
+$diviops_pec_ref = new ReflectionMethod( 'DiviOps_Agent', 'page_content_read_uncached' );
+assert_true( $diviops_pec_ref->isPublic(), 'page_content_read_uncached is public' );
+assert_true( $diviops_pec_ref->isStatic(), 'and static, the shape callers use' );
+assert_true(
+	is_callable( array( 'DiviOps_Agent', 'page_content_read_uncached' ) ),
+	'and callable from outside the class, which is what an external caller sees'
+);
+
 // ══ The advertised contract ═══════════════════════════════════════════════
 //
 // A capability key that advertises a behaviour the code does not perform is

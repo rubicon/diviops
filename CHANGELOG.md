@@ -10,6 +10,15 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.30.1](https://github.com/rubicon/diviops/compare/v1.30.0...v1.30.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* **#547:** make page_content_read_uncached public and read with get_row ([#561](https://github.com/rubicon/diviops/issues/561)) ([6b95f6a](https://github.com/rubicon/diviops/commit/6b95f6ab00909c1a0113d424df9238a614dd271e)), closes [#547](https://github.com/rubicon/diviops/issues/547)
+* **#548:** find block comment ends with strpos instead of backtracking ([#562](https://github.com/rubicon/diviops/issues/562)) ([2184e75](https://github.com/rubicon/diviops/commit/2184e753080cb483c4896dec9c06f38bbf82e8b1)), closes [#548](https://github.com/rubicon/diviops/issues/548)
+* **#554:** keep a Theme Builder layout another template still uses ([#560](https://github.com/rubicon/diviops/issues/560)) ([cfbc365](https://github.com/rubicon/diviops/commit/cfbc3653fded370a7874e4e08c2ad298dfe4f28b))
+
 ## [1.30.0](https://github.com/rubicon/diviops/compare/v1.29.1...v1.30.0) (2026-10-08)
 
 
