@@ -585,12 +585,19 @@ trait DiviOps_Agent_Core {
 		$counts     = self::divi_content_marker_counts( $content );
 		$validation = self::validate_divi_marker_sequence( $content );
 		if ( $counts['container_openers'] !== $counts['closers'] || empty( $validation['ok'] ) ) {
+			// A scan that failed has said nothing about the markers, so it must
+			// not be reported as markers that do not balance.
+			$scan_failed = 'scan_failed' === ( $validation['reason'] ?? '' );
 			return new WP_Error(
 				'invalid_input',
-				'Divi block markup has unbalanced or mis-nested opener/closer markers.',
+				$scan_failed
+					? 'Divi block markup could not be scanned for opener/closer markers.'
+					: 'Divi block markup has unbalanced or mis-nested opener/closer markers.',
 				[
 					'status' => 400,
-					'hint'   => 'Check for stripped self-closing markers or missing closing block comments before writing full post_content.',
+					'hint'   => $scan_failed
+						? 'The marker scan stopped on a PCRE error (marker.pcre_error) before it could check the markup. This is not evidence that the markers are unbalanced.'
+						: 'Check for stripped self-closing markers or missing closing block comments before writing full post_content.',
 					'field'  => $field,
 					'counts' => $counts,
 					'marker' => $validation,
@@ -739,17 +746,88 @@ trait DiviOps_Agent_Core {
 	 * @return array{openers:int,self_closers:int,container_openers:int,closers:int}
 	 */
 	private static function divi_content_marker_counts( string $content ): array {
-		$name         = self::BLOCK_NAME_PATTERN;
-		$openers      = preg_match_all( '/<!--\s+wp:' . $name . '/', $content );
-		$self_closers = preg_match_all( '/<!--\s+wp:' . $name . '(?:(?!-->).)*?\/-->/s', $content );
-		$closers      = preg_match_all( '/<!--\s+\/wp:' . $name . '/', $content );
+		$openers      = 0;
+		$self_closers = 0;
+		$closers      = 0;
+
+		// Every marker start counts, terminated or not, so the census stays an
+		// independent check on the sequence scan below. A failed scan counts
+		// nothing, which the census alone cannot tell from markup with no
+		// markers; inside the write guard, validate_divi_marker_sequence()
+		// reports the failure.
+		$last       = strrpos( $content, '-->' );
+		$resume     = 0;
+		$terminator = -1;
+		foreach ( self::divi_block_comment_starts( $content ) ?? [] as $start ) {
+			if ( $start['is_closer'] ) {
+				$closers++;
+				continue;
+			}
+			$openers++;
+
+			// A self-closer is an opener whose first `-->` after its whole name
+			// follows a `/`. As in preg_match_all(), an opener inside a matched
+			// self-closer is not tried. The last `-->` found is reused while it
+			// still lies past this opener's name, which keeps a run of openers
+			// sharing one `-->` linear; closers take no part.
+			$name_end = $start['name_offset'] + strlen( $start['name'] );
+			if ( false === $last || $name_end > $last || $start['offset'] < $resume ) {
+				continue;
+			}
+			if ( $terminator < $name_end ) {
+				$terminator = (int) strpos( $content, '-->', $name_end );
+			}
+			if ( '/' === $content[ $terminator - 1 ] ) {
+				$self_closers++;
+				$resume = $terminator + 3;
+			}
+		}
 
 		return [
-			'openers'           => (int) $openers,
-			'self_closers'      => (int) $self_closers,
-			'container_openers' => max( 0, (int) $openers - (int) $self_closers ),
-			'closers'           => (int) $closers,
+			'openers'           => $openers,
+			'self_closers'      => $self_closers,
+			'container_openers' => max( 0, $openers - $self_closers ),
+			'closers'           => $closers,
 		];
+	}
+
+	/**
+	 * The start of every block comment marker, in document order.
+	 *
+	 * Matches only `<!--`, a whitespace run, an optional `/`, `wp:` and the
+	 * block name. Where each comment ends is found by the callers with
+	 * strpos(): a pattern that tests every byte of a comment for `-->` costs
+	 * PCRE a backtracking frame per byte of attribute JSON and gives up on a
+	 * comment carrying a few tens of KB under JIT (#548). This pattern's only
+	 * repeats are single-character classes, which do not backtrack per byte;
+	 * it returned without error on 8 MB inputs under both JIT settings.
+	 *
+	 * @param string $content Full block markup.
+	 * @return array<int,array{offset:int,name:string,name_offset:int,is_closer:bool}>|null
+	 *         Null when the pattern fails.
+	 */
+	private static function divi_block_comment_starts( string $content ): ?array {
+		$matched = preg_match_all(
+			'/<!--\s+(\/)?wp:(' . self::BLOCK_NAME_PATTERN . ')/',
+			$content,
+			$matches,
+			PREG_SET_ORDER | PREG_OFFSET_CAPTURE
+		);
+		if ( false === $matched ) {
+			return null;
+		}
+
+		$starts = [];
+		foreach ( $matches as $match ) {
+			$starts[] = [
+				'offset'      => $match[0][1],
+				'name'        => $match[2][0],
+				'name_offset' => $match[2][1],
+				'is_closer'   => '' !== $match[1][0],
+			];
+		}
+
+		return $starts;
 	}
 
 	/**
@@ -759,23 +837,37 @@ trait DiviOps_Agent_Core {
 	 * @return array<string,mixed>
 	 */
 	private static function validate_divi_marker_sequence( string $content ): array {
-		$matched = preg_match_all(
-			'/<!--\s+(\/)?wp:(' . self::BLOCK_NAME_PATTERN . ')(?:(?!-->).)*?(\/)?-->/s',
-			$content,
-			$matches,
-			PREG_SET_ORDER | PREG_OFFSET_CAPTURE
-		);
-		if ( false === $matched ) {
-			return [ 'ok' => false, 'reason' => 'scan_failed' ];
+		$starts = self::divi_block_comment_starts( $content );
+		if ( null === $starts ) {
+			return [ 'ok' => false, 'reason' => 'scan_failed', 'pcre_error' => preg_last_error() ];
 		}
 
-		$stack = [];
-		foreach ( $matches as $match ) {
-			$token      = $match[0][0];
-			$offset     = $match[0][1];
-			$is_closer  = ! empty( $match[1][0] );
-			$type       = (string) $match[2][0];
-			$self_close = ! $is_closer && ! empty( $match[3][0] );
+		$stack  = [];
+		$last   = strrpos( $content, '-->' );
+		$resume = 0;
+		foreach ( $starts as $start ) {
+			// A comment runs from its start to the first `-->` after its name,
+			// and a start inside an earlier comment is part of that comment.
+			if ( $start['offset'] < $resume ) {
+				continue;
+			}
+			if ( false === $last || $start['name_offset'] > $last ) {
+				// Nothing terminates this start or any later one.
+				break;
+			}
+			// A name may end in `-`, so a `-->` can start inside it. The comment
+			// ends at the first `-->` after the whole name. Only when there is
+			// none does it end at a `-->` starting inside the name's trailing
+			// dashes, and the type is then the name before that `-->`.
+			$name_end   = $start['name_offset'] + strlen( $start['name'] );
+			$terminator = (int) strpos( $content, '-->', $name_end <= $last ? $name_end : $start['name_offset'] );
+			$resume     = $terminator + 3;
+
+			$offset     = $start['offset'];
+			$token      = substr( $content, $offset, $resume - $offset );
+			$is_closer  = $start['is_closer'];
+			$self_close = ! $is_closer && '/' === $content[ $terminator - 1 ];
+			$type       = substr( $start['name'], 0, min( strlen( $start['name'] ), $terminator - $start['name_offset'] ) );
 
 			if ( $self_close ) {
 				continue;
