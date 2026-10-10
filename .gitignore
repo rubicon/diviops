@@ -46,8 +46,15 @@ vendor/
 # Unanchored on purpose -- the server may be launched from the repository root or
 # from diviops-server/, and an anchored rule would cover the first and silently
 # miss the second. tests/test-scratch-artifacts-untracked.php fails the suite if
-# the rule stops matching, if it moves to a machine-local exclude file, or if an
-# artifact is ever force-added.
+# the rule stops matching, if it moves to a machine-local exclude file, if either
+# store changes the root it writes without this rule following, or if a tracked
+# path sits under a scratch-store directory or carries a page-export handle name.
+#
+# Two holes it does NOT close, both named in that file's docblock: a cross-env
+# payload force-added OUTSIDE this directory, whose handle pattern has no prefix
+# and so is indistinguishable by name from any other JSON here; and a root
+# pointed elsewhere by DIVIOPS_PAGE_EXPORT_REF_DIR or
+# DIVIOPS_CROSS_ENV_PAYLOAD_REF_DIR, which no rule here can see.
 .diviops-tmp/
 
 # Built by scripts/build-plugin-zip.php and attached to releases (#238).
