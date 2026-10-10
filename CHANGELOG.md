@@ -10,6 +10,13 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.30.0](https://github.com/rubicon/diviops/compare/v1.29.1...v1.30.0) (2026-10-08)
+
+
+### Features
+
+* **#538:** report an internal link stored only as a post id ([#543](https://github.com/rubicon/diviops/issues/543)) ([f8bd701](https://github.com/rubicon/diviops/commit/f8bd7013df9ab6475b5e17ab004403bf448c1801))
+
 ## [1.29.1](https://github.com/rubicon/diviops/compare/v1.29.0...v1.29.1) (2026-10-08)
 
 
