@@ -100,13 +100,13 @@ if ( ! class_exists( 'DiviOps_PageChecksum_Wpdb' ) ) {
 		}
 
 		/**
-		 * Model the one SELECT `page_content_read_uncached()` issues.
+		 * Resolve the one SELECT shape this decorator models.
 		 *
 		 * @param string $query Prepared SQL.
-		 * @return string|null post_content, or null when no row matches.
+		 * @return string|null Stored post_content, or null when no row matches.
 		 * @throws RuntimeException On any other query shape.
 		 */
-		public function get_var( $query ) {
+		private function stored_content( $query ) {
 			$this->queries[] = (string) $query;
 
 			$pattern = '/^\s*SELECT\s+post_content\s+FROM\s+wp_posts\s+WHERE\s+ID\s*=\s*(?P<id>\d+)\s+LIMIT\s+1\s*$/is';
@@ -120,6 +120,36 @@ if ( ! class_exists( 'DiviOps_PageChecksum_Wpdb' ) ) {
 			}
 			$post = $GLOBALS['diviops_test_posts'][ $post_id ] ?? null;
 			return null === $post ? null : (string) $post->post_content;
+		}
+
+		/**
+		 * Behave like `wpdb::get_var()`, including the part that matters here.
+		 *
+		 * WordPress ends `get_var()` with `isset( $values[$x] ) && '' !== $values[$x]
+		 * ? $values[$x] : null`, so a row whose column holds the empty string comes
+		 * back as null, indistinguishable from no row at all. An earlier version of
+		 * this method returned the empty string, which is a kinder answer than the
+		 * real one and is why no test noticed `page_content_read_uncached()` could
+		 * not tell an empty page from a missing one (#547).
+		 *
+		 * @param string $query Prepared SQL.
+		 * @return string|null
+		 */
+		public function get_var( $query ) {
+			$content = $this->stored_content( $query );
+			return ( null !== $content && '' !== $content ) ? $content : null;
+		}
+
+		/**
+		 * Behave like `wpdb::get_row()` with the default OBJECT output.
+		 *
+		 * @param string $query Prepared SQL.
+		 * @return object|null A row object, or null when no row matches. An empty
+		 *                     column still yields a row.
+		 */
+		public function get_row( $query ) {
+			$content = $this->stored_content( $query );
+			return null === $content ? null : (object) array( 'post_content' => $content );
 		}
 	}
 }
