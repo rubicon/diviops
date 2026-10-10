@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.19.0...mcp-server-v1.20.0) (2026-10-10)
+
+
+### Features
+
+* **#538:** report an internal link stored only as a post id ([#543](https://github.com/rubicon/diviops/issues/543)) ([f8bd701](https://github.com/rubicon/diviops/commit/f8bd7013df9ab6475b5e17ab004403bf448c1801))
+
 ## [1.19.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.18.0...mcp-server-v1.19.0) (2026-09-28)
 
 
