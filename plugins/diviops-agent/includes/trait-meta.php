@@ -93,29 +93,53 @@ trait DiviOps_Agent_Meta {
 		if ( ! is_array( $options ) ) {
 			return new WP_Error( 'invalid_options', 'options must be an object or associative array.', [ 'status' => 400 ] );
 		}
+		// #576: `body_header_size` is writable, which makes this list identical to
+		// filter_public_theme_options()'s read allowlist. That REVERSES the #29 decision
+		// for this one key — see FORK.md. The asymmetry let a caller read a value it
+		// could never set, and diviops-server/src/index.ts carries the matching change so
+		// the client-side dry_run list cannot drift from the route.
 		$allowed  = [
 			'heading_font', 'body_font', 'accent_color', 'secondary_accent_color',
-			'font_color', 'header_color', 'link_color',
+			'font_color', 'header_color', 'link_color', 'body_header_size',
 			'heading_font_size', 'body_font_size',
 		];
-		$updated  = [];
+		$updated   = [];
+		$rejected  = [];
+		$sanitized = [];
 
 		foreach ( $options as $key => $value ) {
-			if ( ! in_array( $key, $allowed, true ) ) {
+			if ( ! in_array( $key, $allowed, true ) || ! is_scalar( $value ) ) {
+				// #576: a dropped key is REPORTED, not discarded. Without this a caller
+				// cannot tell "wrote nothing because you asked for nothing" from "wrote
+				// nothing because I rejected everything you sent".
+				$rejected[] = (string) $key;
 				continue;
 			}
-			if ( ! is_scalar( $value ) ) {
-				continue;
+			$sanitized[ $key ] = sanitize_text_field( (string) $value );
+			et_update_option( $key, $sanitized[ $key ] );
+		}
+
+		/*
+		 * #576: report the DATABASE, not the request. `et_update_option()`'s return value
+		 * is discarded deliberately — its contract is not established — so the readback
+		 * goes through `get_option( 'et_divi' )`, the same surface the read path at the
+		 * top of this trait uses. Comparing against the value we sent, rather than merely
+		 * checking the key is present, is what stops a stale pre-existing value from
+		 * reading as a write that landed.
+		 */
+		$stored = get_option( 'et_divi', [] );
+		$stored = is_array( $stored ) ? $stored : [];
+		foreach ( $sanitized as $key => $want ) {
+			if ( array_key_exists( $key, $stored ) && $stored[ $key ] === $want ) {
+				$updated[ $key ] = $stored[ $key ];
 			}
-			$sanitized_value = sanitize_text_field( (string) $value );
-			et_update_option( $key, $sanitized_value );
-			$updated[ $key ] = $sanitized_value;
 		}
 
 		return rest_ensure_response( [
-			'success' => true,
-			'updated' => $updated,
-			'message' => count( $updated ) . ' option(s) updated.',
+			'success'  => [] === $rejected && count( $updated ) === count( $sanitized ),
+			'updated'  => $updated,
+			'rejected' => $rejected,
+			'message'  => count( $updated ) . ' option(s) updated.',
 		] );
 	}
 
