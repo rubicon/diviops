@@ -786,6 +786,7 @@ trait DiviOps_Agent_Core {
 		$last       = strrpos( $content, '-->' );
 		$resume     = 0;
 		$terminator = -1;
+		$literal    = -1;
 		foreach ( self::divi_block_comment_starts( $content ) ?? [] as $start ) {
 			if ( $start['is_closer'] ) {
 				$closers++;
@@ -802,9 +803,21 @@ trait DiviOps_Agent_Core {
 			if ( false === $last || $name_end > $last || $start['offset'] < $resume ) {
 				continue;
 			}
-			if ( $terminator < $name_end ) {
-				$terminator = (int) strpos( $content, '-->', $name_end );
+			// #578: an opener WITH attributes gets its own end from WordPress's
+			// grammar, which may lie past a `-->` inside an attribute string. One
+			// WITHOUT attributes keeps the cached first-literal-`-->` path, where
+			// the two rules agree — and that cache is what keeps a run of openers
+			// sharing one `-->` linear (#548). Reusing a cached terminator for an
+			// opener with attributes would be unsound, because the grammar can
+			// legitimately pick a LATER arrow than the first.
+			// The cached first literal `-->` at or after this name. Reusing it is
+			// what keeps a run of openers sharing one `-->` linear (#548).
+			if ( $literal < $name_end ) {
+				$literal = strpos( $content, '-->', $name_end );
 			}
+			// #578: WordPress's end if the grammar applies, else that literal one.
+			$grammar_end = self::divi_block_comment_end( $content, $name_end, $literal );
+			$terminator  = (int) ( false !== $grammar_end ? $grammar_end : $literal );
 			if ( '/' === $content[ $terminator - 1 ] ) {
 				$self_closers++;
 				$resume = $terminator + 3;
@@ -817,6 +830,83 @@ trait DiviOps_Agent_Core {
 			'container_openers' => max( 0, $openers - $self_closers ),
 			'closers'           => $closers,
 		];
+	}
+
+	/**
+	 * Does an attribute object follow this block name? (#578)
+	 *
+	 * Walks only the whitespace run after the name, so it is bounded by that run
+	 * rather than by the document. This exists to keep #548's linearity: a run of
+	 * openers sharing ONE far-off `-->` has no attributes, and for those the first
+	 * literal `-->` IS the terminator under WordPress's grammar too, so they keep
+	 * the cached `strpos()` path instead of paying an anchored match each.
+	 *
+	 * @param string $content Full block markup.
+	 * @param int    $from    Offset just past the block name.
+	 * @return bool
+	 */
+	private static function divi_block_comment_has_attrs( string $content, int $from ): bool {
+		$length = strlen( $content );
+		for ( $i = $from; $i < $length; $i++ ) {
+			if ( ' ' !== $content[ $i ] && "\t" !== $content[ $i ] && "\n" !== $content[ $i ] && "\r" !== $content[ $i ] ) {
+				return '{' === $content[ $i ];
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Where a block comment ends, by WordPress's own grammar (#578).
+	 *
+	 * `WP_Block_Parser::next_token()` ends a block comment at the first `}` that is
+	 * followed by whitespace, an optional `/`, and `-->` — its attrs repeat carries
+	 * the lookahead `(?!}\s+/?-->)` precisely to refuse such a `}`. So a `-->`
+	 * inside an attribute string is not a terminator. Both census walks took the
+	 * first literal `-->` after the name, which split such a comment mid-JSON and
+	 * made the write guard refuse valid markup as unbalanced.
+	 *
+	 * Stated as a LOOKBACK over candidate arrows rather than as a regex that walks
+	 * forward. A walking tempered-dot group is what the first attempt used, and it
+	 * is quadratic here: with no valid terminator its possessive repeat scans to EOF
+	 * for every opener, measured at 3,272 ms against ~10 ms on the 24,000-shared
+	 * fixture — the exact #548 cliff this must not reintroduce. Checking each
+	 * candidate's preceding bytes is constant per candidate, and the caller supplies
+	 * the first candidate from the literal `-->` position it already caches, so no
+	 * scan is repeated.
+	 *
+	 * Equivalent to WordPress, not merely similar: ending at the first `}` before a
+	 * terminator is what WP's lookahead encodes. It is deliberately NOT string-aware
+	 * — `FORK.md`'s #548 row rejects that, because WordPress does not track JSON
+	 * strings and a guard that does accepts markup WordPress splits differently.
+	 *
+	 * Space between `/` and `-->` is not admitted, unlike the normalize scanner,
+	 * because callers read self-closing from the byte before the terminator.
+	 *
+	 * @param string   $content   Full block markup.
+	 * @param int      $from      Offset just past the block name.
+	 * @param int|false $candidate First literal `-->` at or after $from, or false if none.
+	 * @return int|false Offset of the terminating `-->`, or false when the grammar does not apply.
+	 */
+	private static function divi_block_comment_end( string $content, int $from, $candidate ) {
+		if ( false === $candidate || ! self::divi_block_comment_has_attrs( $content, $from ) ) {
+			return false;
+		}
+
+		for ( $at = $candidate; false !== $at; $at = strpos( $content, '-->', $at + 3 ) ) {
+			$i = $at - 1;
+			if ( $i >= $from && '/' === $content[ $i ] ) {
+				$i--;
+			}
+			while ( $i >= $from && ( ' ' === $content[ $i ] || "\t" === $content[ $i ] || "\n" === $content[ $i ] || "\r" === $content[ $i ] ) ) {
+				$i--;
+			}
+			if ( $i >= $from && '}' === $content[ $i ] ) {
+				return $at;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -888,7 +978,14 @@ trait DiviOps_Agent_Core {
 			// none does it end at a `-->` starting inside the name's trailing
 			// dashes, and the type is then the name before that `-->`.
 			$name_end   = $start['name_offset'] + strlen( $start['name'] );
-			$terminator = (int) strpos( $content, '-->', $name_end <= $last ? $name_end : $start['name_offset'] );
+			// #578: by WordPress's grammar, but only where attributes follow —
+			// elsewhere the two rules agree and this keeps its prior cost. The
+			// trailing-dash branch anchors inside the name, which the grammar
+			// cannot match, so it resolves through the literal fallback as before.
+			$from        = $name_end <= $last ? $name_end : $start['name_offset'];
+			$literal     = strpos( $content, '-->', $from );
+			$grammar_end = self::divi_block_comment_end( $content, $from, $literal );
+			$terminator  = (int) ( false !== $grammar_end ? $grammar_end : $literal );
 			$resume     = $terminator + 3;
 
 			$offset     = $start['offset'];
