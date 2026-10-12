@@ -1916,14 +1916,15 @@ registerPluginTool(
 
 // ── Write Tools ──────────────────────────────────────────────────────
 
-// Keys `update_theme_options` actually applies (trait-meta.php:89-93). This
-// list is intentionally NOT the same as the 10-key read allowlist
-// `filter_public_theme_options()` exposes via diviops_schema_get_settings
-// (trait-meta.php:53-64) — the read side additionally includes
-// `body_header_size`, which the write route silently ignores. Reproduced
-// here (rather than reused from the read side) because the two allowlists
-// diverge and dry_run must mirror the write route's silent-drop behavior,
-// not the read route's.
+// Keys `update_theme_options` actually applies. #576 added `body_header_size`,
+// so this list is now IDENTICAL to the read allowlist
+// `filter_public_theme_options()` exposes via diviops_schema_get_settings. The
+// read side used to carry that one extra key, which the write route silently
+// ignored — a value a caller could read but never set. Still reproduced here
+// rather than reused from the read side, because dry_run is computed
+// client-side and has to mirror THIS route's allowlist: if the two ever
+// diverge again, the preview and the write must disagree loudly rather than
+// silently sharing a list that only one of them owns.
 const THEME_OPTIONS_WRITE_ALLOWLIST = [
   "heading_font",
   "body_font",
@@ -1932,6 +1933,7 @@ const THEME_OPTIONS_WRITE_ALLOWLIST = [
   "font_color",
   "header_color",
   "link_color",
+  "body_header_size",
   "heading_font_size",
   "body_font_size",
 ] as const;
@@ -1943,13 +1945,13 @@ registerPluginTool(
   "diviops_theme_options_update",
   {
     description:
-      "Update Divi theme options (fonts, colors, sizes) — the WP customizer-backed `et_divi` values Divi's own Theme Options panel edits, written via `et_update_option`. Requires manage_options. Writes only these 9 allowlisted keys: heading_font, body_font, accent_color, secondary_accent_color, font_color, header_color, link_color, heading_font_size, body_font_size — any other key present in `options` is silently dropped server-side (matches the plugin route's own allowlist; this write allowlist is NOT identical to diviops_schema_get_settings's 10-key read allowlist, which also includes body_header_size). Values are sanitized with sanitize_text_field and stored as strings. dry_run is computed entirely client-side by this tool: it calls diviops_schema_get_settings's underlying route to read current values and diffs them against the requested options restricted to the 9-key write allowlist — it NEVER calls the write route when dry_run is true, so the preview cannot mutate state but also cannot reflect any server-side sanitization beyond a plain string comparison. Unrecognized keys in `options` are reported as a dry_run warning instead of a change. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }." +
+      "Update Divi theme options (fonts, colors, sizes) — the WP customizer-backed `et_divi` values Divi's own Theme Options panel edits, written via `et_update_option`. Requires manage_options. Writes only these 10 allowlisted keys: heading_font, body_font, accent_color, secondary_accent_color, font_color, header_color, link_color, body_header_size, heading_font_size, body_font_size — identical to diviops_schema_get_settings's read allowlist since #576. Any other key present in `options`, and any non-scalar value, is reported back in `rejected` rather than dropped in silence, and makes `success` false; `success` is true only when every key you sent is now the stored value, read back from `et_divi` rather than echoed from the request. Values are sanitized with sanitize_text_field and stored as strings. dry_run is computed entirely client-side by this tool: it calls diviops_schema_get_settings's underlying route to read current values and diffs them against the requested options restricted to the 9-key write allowlist — it NEVER calls the write route when dry_run is true, so the preview cannot mutate state but also cannot reflect any server-side sanitization beyond a plain string comparison. Unrecognized keys in `options` are reported as a dry_run warning instead of a change. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }." +
       DRY_RUN_DESC_SUFFIX,
     inputSchema: {
       options: z
         .record(z.string(), z.string())
         .describe(
-          "Key-value map of theme options to update. Only these 9 keys are applied: heading_font, body_font, accent_color, secondary_accent_color, font_color, header_color, link_color, heading_font_size, body_font_size. Any other key is silently dropped.",
+          "Key-value map of theme options to update. Only these 10 keys are applied: heading_font, body_font, accent_color, secondary_accent_color, font_color, header_color, link_color, body_header_size, heading_font_size, body_font_size. Any other key is reported in `rejected`.",
         ),
       dry_run: DRY_RUN_FIELD,
     },
