@@ -91,6 +91,17 @@ function diviops_far_check_row( string $row, array $bases, callable $reader ): a
 	$current    = null;
 	$saw_extern = false;
 
+	// An `upstream-releases/` citation is third-party code this repository only
+	// archives, so every anchor in the row describes that artifact rather than
+	// our tree. Neither the tokenizer nor the basename map can see that on its
+	// own: the archive is gitignored, a `.zip` matches no known extension, and
+	// an internal `includes/trait-core.php` collides with ours by basename. Left
+	// unhandled, upstream's own line numbers resolve against this tree and the
+	// row passes on a coincidence (#586).
+	if ( false !== strpos( $row, 'upstream-releases/' ) ) {
+		$saw_extern = true;
+	}
+
 	$file_re  = '[A-Za-z0-9_./-]+\.(?:php|ts|md|json|sh|js|txt)';
 	$token_re = '#`(' . $file_re . ')`|(' . $file_re . '):(\d{2,5})|`:(\d{2,5})`#';
 
@@ -119,7 +130,9 @@ function diviops_far_check_row( string $row, array $bases, callable $reader ): a
 			continue;
 		}
 
-		$candidates = $bases[ basename( $current ) ] ?? array();
+		$candidates = false !== strpos( (string) $current, 'upstream-releases/' )
+			? array()
+			: ( $bases[ basename( $current ) ] ?? array() );
 		if ( ! $candidates ) {
 			$skipped++;
 			continue;
@@ -194,6 +207,25 @@ assert_same( array(), $far['bad'], 'so an ambiguous bare anchor never raises a f
 $far = diviops_far_check_row( '| `plugins/thing.php` | GlobalData.php:1281 then thing.php:99 | #1 |', $far_fake_bases, $far_reader );
 assert_same( 1, $far['checked'], 'but an EXPLICIT citation of a tracked file is always checked, even after an untracked one' );
 assert_same( array( 'thing.php:99' ), $far['bad'], 'and is reported when it does not resolve' );
+
+/*
+ * An upstream artifact under `upstream-releases/` is extern, both when its
+ * extension is not one the tokenizer knows and when its basename collides with a
+ * tracked file. Both forms bit #586. The archive is gitignored third-party code,
+ * so `upstream-releases/suite/diviops-1.5.85.zip` never tokenizes at all, and an
+ * internal `.../includes/trait-core.php` maps by basename straight onto OUR copy.
+ * Writing upstream's own line numbers in a row therefore resolved them against
+ * this tree: 13 anchors became 15 and the row PASSED on a coincidence, which is
+ * the one outcome this gate exists to prevent.
+ */
+$far = diviops_far_check_row( '| `plugins/thing.php` | read from `upstream-releases/suite/diviops-1.5.85.zip`, names `:12` | #1 |', $far_fake_bases, $far_reader );
+assert_same( 0, $far['checked'], 'a bare anchor after an upstream-releases/ citation is not checked, even though the .zip never tokenizes' );
+assert_same( 1, $far['skipped'], 'and it is counted as out of scope rather than silently dropped' );
+
+$far = diviops_far_check_row( '| `plugins/thing.php` | upstream-releases/suite/x/plugins/thing.php:12 | #1 |', $far_fake_bases, $far_reader );
+assert_same( 0, $far['checked'], 'an explicit upstream-releases/ path is extern too, despite its basename matching a tracked file' );
+assert_same( 1, $far['skipped'], 'it is counted as out of scope' );
+assert_same( array(), $far['bad'], 'so an upstream line number can never be reported against our tree' );
 
 $far = diviops_far_check_row( '| `plugins/thing.php` | prose with no anchors | #1 |', $far_fake_bases, $far_reader );
 assert_same( 0, $far['checked'], 'a row citing no anchors inspects nothing, which is not a failure' );
