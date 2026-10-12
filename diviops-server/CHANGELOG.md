@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.1](https://github.com/rubicon/diviops/compare/mcp-server-v1.20.0...mcp-server-v1.20.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **#576:** report theme-options writes from the database, not the request ([#579](https://github.com/rubicon/diviops/issues/579)) ([b2efb54](https://github.com/rubicon/diviops/commit/b2efb5447d50cb22ef42093559052ca11b9843a6))
+
 ## [1.20.0](https://github.com/rubicon/diviops/compare/mcp-server-v1.19.0...mcp-server-v1.20.0) (2026-10-10)
 
 
