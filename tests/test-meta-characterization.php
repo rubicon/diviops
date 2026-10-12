@@ -592,11 +592,22 @@ assert_same( true, $data['builder']['is_divi5'], 'SUSPECTED DEFECT: builder.is_d
 
 // ── B2. Read allowlist vs write allowlist ────────────────────────────────
 //
-// Not a defect: `diviops_theme_options_update`'s own tool description
-// (diviops-server/src/index.ts:1764) states the write allowlist is 9 keys and
-// "is NOT identical to diviops_schema_get_settings's 10-key read allowlist,
-// which also includes body_header_size". Pinned because it is a documented
-// asymmetry an upstream adoption could quietly erase in either direction.
+// #576 CLOSED THIS ASYMMETRY DELIBERATELY. The write allowlist was 9 keys and the
+// read allowlist 10, the odd one out being `body_header_size` — so a caller could
+// read a value it could never set. That was a documented #29 decision, pinned here
+// as "not a defect"; the owner reversed it for this one key on 2026-10-12, and
+// FORK.md carries the row. `diviops-server/src/index.ts` changed in the same commit
+// so the client-side `dry_run` list cannot drift from the route.
+//
+// `updated` is now derived by reading `et_divi` back, NOT from the request. This
+// file cannot measure that: its `et_update_option()` deliberately RECORDS rather
+// than persists (see its docblock above), so a readback here sees only the seed this
+// section's sibling installed at :489, never this handler's own writes. Measuring
+// `updated` here once produced a pass by coincidence — the seeded `body_header_size`
+// is '30' and so is the value sent below. The assertions therefore moved to what
+// this file legitimately owns, which is WHAT reaches Divi, plus the new `rejected`
+// report. Readback and count coverage lives in `tests/test-theme-options-readback.php`,
+// which models the persisting storage path.
 
 $GLOBALS['diviops_test_et_option_writes'] = array();
 $body = diviops_metac_body(
@@ -614,19 +625,24 @@ $body = diviops_metac_body(
 );
 
 assert_same(
-	array( 'heading_font' ),
-	array_keys( $body['updated'] ),
-	'the write allowlist accepts heading_font, drops body_header_size (readable but not writable), drops the unlisted divi_custom_css, and drops the non-scalar link_color'
+	array( array( 'heading_font', 'Open Sans' ), array( 'body_header_size', '30' ) ),
+	$GLOBALS['diviops_test_et_option_writes'],
+	'the write allowlist now reaches Divi with BOTH heading_font and body_header_size, and with nothing else — a dropped key must not reach Divi at all'
 );
 assert_same(
 	'Open Sans',
-	$body['updated']['heading_font'],
+	$GLOBALS['diviops_test_et_option_writes'][0][1] ?? null,
 	'the value is sanitize_text_field()-ed: runs of [\r\n\t ] collapse to one space and the result is trimmed (wp-includes/formatting.php:5730-5732)'
 );
 assert_same(
-	array( array( 'heading_font', 'Open Sans' ) ),
-	$GLOBALS['diviops_test_et_option_writes'],
-	'exactly one et_update_option() call is made, carrying the sanitized value — a dropped key must not reach Divi at all'
+	array( 'divi_custom_css', 'link_color' ),
+	$body['rejected'],
+	'#576: the unlisted divi_custom_css and the non-scalar link_color are REPORTED as rejected rather than dropped in silence'
+);
+assert_same(
+	false,
+	$body['success'],
+	'#576: and a request that was only partly applied does not report success'
 );
 
 /*
@@ -636,17 +652,20 @@ assert_same(
  * Pinned as an inconsistency, not corrected.
  */
 assert_same(
-	array( 'success', 'updated', 'message' ),
+	array( 'success', 'updated', 'rejected', 'message' ),
 	array_keys( $body ),
-	'update_theme_options returns a bare { success, updated, message } body, not the { ok, data } envelope the rest of the trait uses'
+	'update_theme_options returns a bare { success, updated, rejected, message } body, not the { ok, data } envelope the rest of the trait uses'
 );
-assert_same( '1 option(s) updated.', $body['message'], 'the message counts the options actually written, not the options submitted' );
 
-// Nothing allowlisted: a 0-count success rather than a refusal.
+// Nothing allowlisted. #576 changed what this answers: the count is still zero, but
+// `success` is now false and the refused key is named, because a caller could not
+// otherwise tell this from a request that asked for nothing.
 $GLOBALS['diviops_test_et_option_writes'] = array();
 $body = diviops_metac_body( diviops_metac_call( 'update_theme_options', array( 'options' => array( 'divi_custom_css' => 'body{}' ) ) ) );
 assert_same( array(), $body['updated'], 'a request of entirely unlisted keys updates nothing' );
-assert_same( '0 option(s) updated.', $body['message'], 'and reports success with a zero count rather than refusing' );
+assert_same( false, $body['success'], '#576: and reports success false rather than a zero-count success' );
+assert_same( array( 'divi_custom_css' ), $body['rejected'], '#576: and names the key it refused' );
+assert_same( '0 option(s) updated.', $body['message'], 'while the message still counts what was written, which is none of it' );
 assert_same( array(), $GLOBALS['diviops_test_et_option_writes'], 'and makes no et_update_option() call at all' );
 
 // `options` must be an array. `null` (the param omitted) lands here too.
