@@ -466,7 +466,35 @@ trait DiviOps_Agent_Core {
 	 * @return array{ok:bool,content?:string,changed?:int,error?:array}
 	 */
 	private static function normalize_divi_full_content_for_write( string $content ): array {
-		$pattern = '/<!--\s+(\/)?wp:([A-Za-z0-9_-]+\/[A-Za-z0-9_-]+)(.*?)(\/)?-->/s';
+		// The attrs span ends where WordPress says it ends, not at the first
+		// literal `-->`. A lazy tail cut the match inside any attribute string
+		// containing `-->` and then reported the truncated fragment as "not a
+		// JSON object", refusing a valid write and blocking a rollback restore
+		// of self-closing content (#555).
+		//
+		// Branch one is the tempered-dot grammar from WP_Block_Parser::next_token()
+		// (wp-includes/class-wp-block-parser.php), already copied verbatim in
+		// scan_block_opener_attrs(): it terminates only at `}` + whitespace +
+		// optional `/` + `-->`, so an arrow inside a string is ordinary text, and
+		// `}}}` runs before the real terminator are walked rather than stopped in.
+		// The loop is possessive, so an opener with no closing brace fails this
+		// branch outright instead of backtracking per byte.
+		//
+		// Branch two keeps the original lazy tail for anything that is not
+		// object-shaped. WordPress would not treat `<!-- wp:divi/text notjson -->`
+		// as a block opener at all, so matching it here is what preserves the
+		// loud "must be a JSON object" refusal instead of silently storing markup
+		// WordPress reads as freeform content.
+		//
+		// Whitespace is laxer here than in WordPress' own grammar, deliberately:
+		// `\s*` where WP writes `\s+`, and `\s*` between the self-close slash and
+		// `-->`. That keeps two forms this already accepted working — the
+		// brace-hugging `{"a":1}-->`, and the spaced `} / -->` that lines 488-498
+		// below exist to repair. WordPress tokenizes neither, so a strict copy of
+		// its grammar would have silently stopped refusing the first and stopped
+		// repairing the second. Widening the `[A-Za-z0-9_-]` name class to WP's
+		// lowercase-only one is a separate decision and is not taken here.
+		$pattern = '/<!--\s+(\/)?wp:([A-Za-z0-9_-]+\/[A-Za-z0-9_-]+)((?:\s*\{(?:(?:[^}]+|\}+(?=\})|(?!\}\s*\/?\s*-->).)*+)?\}\s*)|.*?)(\/)?\s*-->/s';
 		$changed = 0;
 		$error   = null;
 

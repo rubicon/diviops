@@ -751,42 +751,153 @@ assert_same(
 );
 
 /*
- * QUIRK — a literal `-->` inside an attribute string is reported as "not a JSON
- * object", not as the terminator collision it actually is.
+ * A literal `-->` inside an attribute string is normalized, not refused (#555).
  *
- * The scanner here is a regex whose tail is lazy to the FIRST `-->`, so the
- * match ends inside the JSON string and the captured tail is the truncated
- * `{"a":"x`. That fails the "starts with { and ends with }" shape check, and
- * the caller is told their attributes are not a JSON object — which is false;
- * they are, and the scanner cut them in half.
+ * The attribute span is terminated by WordPress' own grammar — a closing `}`
+ * followed by whitespace, an optional self-close `/`, then `-->` — so a `-->`
+ * sitting inside a JSON string is passed over rather than mistaken for the end
+ * of the block comment. The previous scan was lazy to the FIRST `-->`, which
+ * cut the match mid-string and reported the truncated `{"a":"x` as "not a JSON
+ * object". That was false: the attributes were a valid object and the scanner
+ * had halved them.
  *
- * Pinned as-is because it fails CLOSED (the write is refused, not silently
- * truncated) and because canonical serialization can never produce this input:
- * core's serialize_block_attributes() rewrites every `--` to `--`
- * (wp-includes/blocks.php:1712), so only hand-authored raw content reaches it.
- * The message is still wrong, and a fix that reports the real cause will fail
- * this assertion. That failure is the intended signal, not a regression.
+ * The arrow does not survive verbatim, and that is correct rather than a second
+ * defect: canonical serialization escapes it. Core's
+ * serialize_block_attributes() maps the two-character `--` to the escape
+ * pair u002d u002d, and `>` to u003e, each carrying a leading backslash
+ * (wp-includes/blocks.php:1708-1718, WP 7.1.3). So `x-->y` stores with those
+ * three escapes standing in for the arrow. The expected strings below are
+ * built from $bs (chr 92, line 245) and derived from core's substitution
+ * table and its strtr ordering, not read back from this plugin's own output.
  */
 $terminator_in_attrs = '<!-- wp:divi/text {"a":"x-->y"} --><!-- /wp:divi/text -->';
 $terminator_result   = diviops_call( 'normalize_divi_full_content_for_write', array( $terminator_in_attrs ) );
 assert_same(
 	array(
-		'ok'    => false,
-		'error' => array(
-			'message' => 'Divi block attributes must be a JSON object.',
-			'block'   => 'divi/text',
-			'preview' => '{"a":"x',
-		),
+		'ok'      => true,
+		'content' => '<!-- wp:divi/text {"a":"x' . $bs . 'u002d' . $bs . 'u002d' . $bs . 'u003ey"} --><!-- /wp:divi/text -->',
+		'changed' => 1,
 	),
 	$terminator_result,
-	'QUIRK normalize_divi_full_content_for_write(): a --> inside an attribute string truncates the scan mid-JSON and is misreported as "not a JSON object" — refused, but for the wrong stated reason'
+	'normalize_divi_full_content_for_write(): a --> inside an attribute string is carried through the scan and escaped canonically, not mistaken for the comment terminator'
 );
 
-// A genuine non-object tail, for contrast: the same message, but here it is true.
+/*
+ * The shape Divi actually serializes a leaf module as. A self-closing opener
+ * carrying the arrow is the case that refused a rollback RESTORE, not merely a
+ * write, so the ` /-->` self-close has to survive the rewrite: if it is lost,
+ * every self-closing block re-serializes as an opener and the tree scrambles.
+ */
+assert_same(
+	array(
+		'ok'      => true,
+		'content' => '<!-- wp:divi/text {"builderVersion":"5.0.0","v":"Step 1 ' . $bs . 'u002d' . $bs . 'u002d' . $bs . 'u003e Step 2"} /-->',
+		'changed' => 1,
+	),
+	diviops_call( 'normalize_divi_full_content_for_write', array( '<!-- wp:divi/text {"builderVersion":"5.0.0","v":"Step 1 --> Step 2"} /-->' ) ),
+	'normalize_divi_full_content_for_write(): a self-closing opener whose attrs carry a --> is normalized and keeps its /--> self-close'
+);
+
+/*
+ * A different truncation point, and a `}}}` run immediately before the real
+ * terminator — the grammar has to walk past the inner braces rather than end
+ * the span at the first one it sees.
+ */
+assert_same(
+	array(
+		'ok'      => true,
+		'content' => '<!-- wp:divi/text {"module":{"meta":{"adminLabel":"Hero ' . $bs . 'u002d' . $bs . 'u002d' . $bs . 'u003e CTA"}}} -->',
+		'changed' => 1,
+	),
+	diviops_call( 'normalize_divi_full_content_for_write', array( '<!-- wp:divi/text {"module":{"meta":{"adminLabel":"Hero --> CTA"}}} -->' ) ),
+	'normalize_divi_full_content_for_write(): a --> nested in module.meta.adminLabel normalizes, and a }}} run before the terminator does not end the span early'
+);
+
+/*
+ * The self-close slash may be separated from `-->` by whitespace, and
+ * trait-core.php:488-498 exists to honour that variant. Combined with an
+ * embedded arrow it was refused even after the terminator moved to WordPress'
+ * grammar, because that grammar admits no space between `/` and `-->`: the
+ * attrs branch declined the opener and the lazy fallback then truncated it at
+ * the arrow, exactly as before. Covered because it is the same #555 class, and
+ * because the repaired output proves the variant still canonicalises to `/-->`.
+ */
+assert_same(
+	array(
+		'ok'      => true,
+		'content' => '<!-- wp:divi/text {"a":"x' . $bs . 'u002d' . $bs . 'u002d' . $bs . 'u003ey"} /-->',
+		'changed' => 1,
+	),
+	diviops_call( 'normalize_divi_full_content_for_write', array( '<!-- wp:divi/text {"a":"x-->y"} / -->' ) ),
+	'normalize_divi_full_content_for_write(): a whitespace-separated self-close carrying a --> normalizes and canonicalises to /-->'
+);
+
+/*
+ * Regression controls for the refusal, beyond the bare-token case below. A
+ * number, a JSON array and a bare string are all valid JSON but none is an
+ * object, and WordPress' attrs grammar does not tokenise any of them, so a
+ * later "simplify this to the WP pattern alone" refactor would stop matching
+ * them, raise no error, and pass the content through to storage. These three
+ * are what would catch that.
+ */
+foreach ( array( '42', '["a",1]', '"x"' ) as $diviops_core_char_nonobject ) {
+	assert_same(
+		'Divi block attributes must be a JSON object.',
+		diviops_call( 'normalize_divi_full_content_for_write', array( '<!-- wp:divi/text ' . $diviops_core_char_nonobject . ' -->' ) )['error']['message'],
+		'normalize_divi_full_content_for_write(): valid JSON that is not an object (' . $diviops_core_char_nonobject . ') is refused'
+	);
+}
+
+/*
+ * The WP attrs branch walks PAST a terminator it does not recognise, so on
+ * `{"a":1} x -->` it swallows the rest of the document looking for a real one.
+ * That is contained rather than dangerous: the swallowed span is not valid JSON,
+ * so the write is still refused and no opener is lost. What changed with #555 is
+ * only which refusal fires — "not valid JSON" where it used to be "must be a
+ * JSON object" — recorded here so the change is deliberate rather than noticed
+ * later by a caller matching on the message.
+ */
+$diviops_core_char_runon = diviops_call(
+	'normalize_divi_full_content_for_write',
+	array( '<!-- wp:divi/text {"a":1} x --><!-- wp:divi/other {"b":2} -->' )
+);
+assert_same(
+	array( false, 'Divi block attributes are not valid JSON.' ),
+	array( $diviops_core_char_runon['ok'], $diviops_core_char_runon['error']['message'] ),
+	'normalize_divi_full_content_for_write(): an unrecognised terminator makes the attrs branch run on, and the swallowed span is refused as invalid JSON rather than merged into one block'
+);
+
+/*
+ * FINDING — the #555 fix reaches `divi/*` only, and that is the boundary of this
+ * function rather than a gap in the fix. normalize rewrites only blocks
+ * is_divi_module_block_name() accepts, so a third-party opener keeps its literal
+ * `-->`, byte-identical and uncounted.
+ *
+ * The consequence lives downstream and is NOT fixed by #555: the marker census
+ * counts every namespaced block comment, so the surviving arrow still makes
+ * assert_divi_full_content_safe_for_write() refuse the write as unbalanced
+ * markers. Reproduced on `<!-- wp:difl/text {"a":"x-->y"} /-->`, which page
+ * 900390's block mix (`difl/*`, `d5bgo/*`) makes a realistic shape. That is the
+ * #548-pinned scan class, tracked separately.
+ */
+$diviops_core_char_thirdparty = '<!-- wp:difl/text {"a":"x-->y"} /-->';
+assert_same(
+	array( 'ok' => true, 'content' => $diviops_core_char_thirdparty, 'changed' => 0 ),
+	diviops_call( 'normalize_divi_full_content_for_write', array( $diviops_core_char_thirdparty ) ),
+	'FINDING: normalize_divi_full_content_for_write() leaves a non-divi namespace byte-identical, so the #555 fix covers divi/* only and a third-party arrow survives to the marker census'
+);
+
+/*
+ * Control that must survive the #555 fix: a tail that is genuinely not an
+ * object is still refused, with the message unchanged. WordPress' grammar does
+ * not recognise this as a block opener at all, so passing it through would
+ * store markup WordPress reads as freeform content rather than a Divi module.
+ * The refusal is the loud failure that prevents that silent one.
+ */
 assert_same(
 	'Divi block attributes must be a JSON object.',
 	diviops_call( 'normalize_divi_full_content_for_write', array( '<!-- wp:divi/text notjson -->' ) )['error']['message'],
-	'normalize_divi_full_content_for_write(): a tail that is genuinely not an object is refused with the same message, so the quirk above is indistinguishable from the real case'
+	'normalize_divi_full_content_for_write(): a tail that is genuinely not an object is still refused'
 );
 
 // Malformed-escape refusal carries the offending escape and a hint.
