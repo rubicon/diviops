@@ -917,3 +917,113 @@ assert_same(
 	(string) get_post( 81020 )->post_content,
 	'#514: neither dry run wrote anything, protected or not'
 );
+
+/*
+ * ---------------------------------------------------------------------------
+ * 16. A snapshot captured before #555 compares like with like too (#555, #208).
+ * ---------------------------------------------------------------------------
+ *
+ * Section 11 fixed the comparison frame for content the attrs scan could always
+ * read. Arrow content is the case it could not. Before #555 the scan refused a
+ * `-->` inside an attribute string, so `rollback_snapshot_before_from_post()`
+ * fell through its `if ( ! empty( $normalized['ok'] ) )` guard and captured RAW
+ * bytes; both sides of the comparison were then raw and matched. #555 makes that
+ * same scan succeed and escape the arrow, so today only the observed side
+ * normalises — and a page nobody touched reads as changed, which on the failure
+ * path opens the bounded recovery attempt against it.
+ *
+ * Measured with a two-tree probe before this section was written: the pre-#555
+ * scanner refused both an arrow self-closing block and an arrow container, the
+ * post-#555 scanner escapes both, and two non-arrow controls were byte-identical
+ * under each. So the regression is specific to arrow content and is introduced by
+ * the fix, not inherited.
+ */
+
+$i555_raw   = '<!-- wp:divi/text {"a":"x-->y"} /-->';
+$i555_post  = diviops_test_register_post( 81030, $i555_raw );
+$i555_point = diviops_call( 'rollback_snapshot_create_for_post_write', array( $i555_post, 'rollback_snapshot_restore', array() ) );
+
+// A pre-#555 capture stored the RAW bytes, because the scan refused to rewrite
+// them. Reproduce that record rather than today's, which is the whole point.
+$i555_point['before']['checksum']    = diviops_call( 'rollback_snapshot_checksum', array( $i555_raw ) );
+$i555_point['before']['byte_length'] = strlen( $i555_raw );
+$i555_point['before']['value']       = $i555_raw;
+
+// Controls: the fixture has to straddle the two frames, or every assertion below
+// passes on any page at all.
+$i555_norm = diviops_call( 'normalize_divi_full_content_for_write', array( $i555_raw ) );
+assert_same(
+	true,
+	$i555_norm['ok'] ?? null,
+	'#555: the arrow fixture normalises today, so this section measures the post-fix frame'
+);
+assert_true(
+	(string) $i555_norm['content'] !== $i555_raw,
+	'#555: and normalising escapes the arrow, so a pre-#555 raw capture and the normalised page genuinely differ'
+);
+
+$i555_evidence = diviops_call( 'rollback_snapshot_finish_recovery_point', array( $i555_point, true ) );
+
+assert_same(
+	false,
+	$i555_evidence['state_changed'] ?? null,
+	'#555: a page nobody touched reports state_changed false even when its snapshot predates the arrow fix'
+);
+assert_same(
+	false,
+	$i555_evidence['recovery_attempted'] ?? null,
+	'#555: so no recovery write fires against it'
+);
+assert_same(
+	$i555_raw,
+	(string) get_post( 81030 )->post_content,
+	'#555: and the page is left byte-for-byte as it was'
+);
+
+/*
+ * The container shape too, which the probe measured separately: the arrow sits in
+ * the section's attributes while a child block and a closer follow it, so the
+ * refusal the pre-#555 scan produced spanned more than one opener.
+ */
+$i555_wrap_raw   = '<!-- wp:divi/section {"a":"x-->y"} --><!-- wp:divi/text {"b":1} /--><!-- /wp:divi/section -->';
+$i555_wrap_post  = diviops_test_register_post( 81032, $i555_wrap_raw );
+$i555_wrap_point = diviops_call( 'rollback_snapshot_create_for_post_write', array( $i555_wrap_post, 'rollback_snapshot_restore', array() ) );
+
+$i555_wrap_point['before']['checksum']    = diviops_call( 'rollback_snapshot_checksum', array( $i555_wrap_raw ) );
+$i555_wrap_point['before']['byte_length'] = strlen( $i555_wrap_raw );
+$i555_wrap_point['before']['value']       = $i555_wrap_raw;
+
+$i555_wrap_norm = diviops_call( 'normalize_divi_full_content_for_write', array( $i555_wrap_raw ) );
+assert_true(
+	true === ( $i555_wrap_norm['ok'] ?? null ) && (string) $i555_wrap_norm['content'] !== $i555_wrap_raw,
+	'#555: the container fixture also straddles the two frames, so its assertions measure something'
+);
+
+$i555_wrap_evidence = diviops_call( 'rollback_snapshot_finish_recovery_point', array( $i555_wrap_point, true ) );
+assert_same(
+	false,
+	$i555_wrap_evidence['state_changed'] ?? null,
+	'#555: an untouched container page with an arrow in its section attributes reports state_changed false'
+);
+assert_same(
+	$i555_wrap_raw,
+	(string) get_post( 81032 )->post_content,
+	'#555: and that page is left byte-for-byte as it was'
+);
+
+/*
+ * The opposite direction, so the assertions above cannot pass by always
+ * answering false. `$failed` is false here deliberately: state_changed is
+ * computed either way, and this keeps the bounded recovery write out of a
+ * control whose only job is to prove the comparison can still say "changed".
+ */
+$i555_moved_raw   = '<!-- wp:divi/text {"a":"x-->y"} /-->';
+$i555_moved_post  = diviops_test_register_post( 81031, $i555_moved_raw );
+$i555_moved_point = diviops_call( 'rollback_snapshot_create_for_post_write', array( $i555_moved_post, 'rollback_snapshot_restore', array() ) );
+diviops_test_register_post( 81031, '<!-- wp:divi/text {"a":"something else"} /-->' );
+$i555_moved_evidence = diviops_call( 'rollback_snapshot_finish_recovery_point', array( $i555_moved_point, false ) );
+assert_same(
+	true,
+	$i555_moved_evidence['state_changed'] ?? null,
+	'#555: a page that really did change still reports state_changed true, so the frame fix is not a blanket false'
+);

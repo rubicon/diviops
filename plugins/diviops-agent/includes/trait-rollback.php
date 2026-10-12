@@ -2513,9 +2513,15 @@ trait DiviOps_Agent_Rollback {
 		//
 		// Only the COMPARISON moves frame. `after.checksum` below stays raw, because
 		// every other after-checksum in this file is the bytes actually on the page.
+		// #555: a snapshot captured BEFORE the attrs scan could read a `-->` inside an
+		// attribute string holds RAW bytes, because capture fell through its own `ok`
+		// guard. Normalising only the observed side would make such a page read as
+		// changed when nothing had touched it — and on the failure path below that
+		// writes to it. Put `before.value` through the same transitional repair restore
+		// uses, which is idempotent for everything captured since.
 		$observed  = self::normalize_divi_full_content_for_write( $content );
 		$compare   = ! empty( $observed['ok'] ) ? (string) $observed['content'] : $content;
-		$unchanged = $point['before']['value'] === $compare
+		$unchanged = self::rollback_snapshot_canonical_restore_value( (string) $point['before']['value'] ) === $compare
 			&& self::rollback_snapshot_side_effects_equal( $point['before']['side_effects'], $meta );
 
 		$evidence['state_changed'] = ! $unchanged;
