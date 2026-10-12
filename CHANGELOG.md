@@ -10,6 +10,15 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.30.2](https://github.com/rubicon/diviops/compare/v1.30.1...v1.30.2) (2026-10-12)
+
+
+### Bug Fixes
+
+* **#555:** end the attrs span with WordPress's own terminator grammar ([#577](https://github.com/rubicon/diviops/issues/577)) ([a20e71f](https://github.com/rubicon/diviops/commit/a20e71f70048c053746b99d0d96232c5cc19ba3f))
+* **#576:** report theme-options writes from the database, not the request ([#579](https://github.com/rubicon/diviops/issues/579)) ([b2efb54](https://github.com/rubicon/diviops/commit/b2efb5447d50cb22ef42093559052ca11b9843a6))
+* **#578:** end a block comment where WordPress ends it, in both census walks ([#583](https://github.com/rubicon/diviops/issues/583)) ([7240a0d](https://github.com/rubicon/diviops/commit/7240a0d67ace6419718dfbe805b817665053ad08))
+
 ## [1.30.1](https://github.com/rubicon/diviops/compare/v1.30.0...v1.30.1) (2026-10-10)
 
 
