@@ -1945,7 +1945,7 @@ registerPluginTool(
   "diviops_theme_options_update",
   {
     description:
-      "Update Divi theme options (fonts, colors, sizes) — the WP customizer-backed `et_divi` values Divi's own Theme Options panel edits, written via `et_update_option`. Requires manage_options. Writes only these 10 allowlisted keys: heading_font, body_font, accent_color, secondary_accent_color, font_color, header_color, link_color, body_header_size, heading_font_size, body_font_size — identical to diviops_schema_get_settings's read allowlist since #576. Any other key present in `options`, and any non-scalar value, is reported back in `rejected` rather than dropped in silence, and makes `success` false; `success` is true only when every key you sent is now the stored value, read back from `et_divi` rather than echoed from the request. Values are sanitized with sanitize_text_field and stored as strings. dry_run is computed entirely client-side by this tool: it calls diviops_schema_get_settings's underlying route to read current values and diffs them against the requested options restricted to the 9-key write allowlist — it NEVER calls the write route when dry_run is true, so the preview cannot mutate state but also cannot reflect any server-side sanitization beyond a plain string comparison. Unrecognized keys in `options` are reported as a dry_run warning instead of a change. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }." +
+      "Update Divi theme options (fonts, colors, sizes) — the WP customizer-backed `et_divi` values Divi's own Theme Options panel edits, written via `et_update_option`. Requires manage_options. Writes only these 10 allowlisted keys: heading_font, body_font, accent_color, secondary_accent_color, font_color, header_color, link_color, body_header_size, heading_font_size, body_font_size — identical to diviops_schema_get_settings's read allowlist since #576. Any other key present in `options`, and any non-scalar value, is reported back in `rejected` rather than dropped in silence, and makes `success` false; `success` is true only when every key you sent is now the stored value, read back from `et_divi` rather than echoed from the request. Values are sanitized with sanitize_text_field and stored as strings. dry_run is computed entirely client-side by this tool: it calls diviops_schema_get_settings's underlying route to read current values and diffs them against the requested options restricted to the same 10-key write allowlist — it NEVER calls the write route when dry_run is true, so the preview cannot mutate state but also cannot reflect any server-side sanitization beyond a plain string comparison. Unrecognized keys in `options` are reported as a dry_run warning instead of a change. Returns the standardized envelope { ok, data?, error: { code, message, hint? } }." +
       DRY_RUN_DESC_SUFFIX,
     inputSchema: {
       options: z
@@ -2001,7 +2001,7 @@ registerPluginTool(
 
       if (droppedKeys.length > 0) {
         warnings.push(
-          `Key(s) not in the write allowlist and would be dropped: ${droppedKeys.join(", ")}.`,
+          `Key(s) not in the write allowlist; the write route reports these in \`rejected\` and returns success false: ${droppedKeys.join(", ")}.`,
         );
       }
 
