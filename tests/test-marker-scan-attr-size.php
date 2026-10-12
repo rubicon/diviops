@@ -109,21 +109,51 @@ foreach ( array( 'self-closing' => $diviops_msz_self, 'container' => $diviops_ms
  * string-aware scan accepts markup WordPress splits differently.
  */
 
-// DEFECT, pinned as-is; the same class as #555. WordPress reads this as one
-// self-closing block, because the `-->` inside the string does not follow `}`
-// and whitespace. The guard stops at that `-->`, finds no `/` before it, and
-// reports a container that is never closed. Fixing #555 has to move this too.
+// FIXED by #578, which is the move the comment here used to anticipate. Both
+// census walks now take a comment's end from WordPress's own attrs grammar —
+// `}` then whitespace then an optional `/` then `-->` — with the old strpos()
+// result as the fallback for a start WordPress does not tokenise as a block at
+// all. WordPress reads this as ONE self-closing block, and so do we now.
 $diviops_msz_arrow = '<!-- wp:divi/text {"builderVersion":"5.0.0","v":"Step 1 --> Step 2"} /-->';
 assert_same(
-	array(
-		'ok'     => false,
-		'reason' => 'unclosed_block',
-		'type'   => 'divi/text',
-		'offset' => 0,
-	),
+	array( 'ok' => true ),
 	diviops_call( 'validate_divi_marker_sequence', array( $diviops_msz_arrow ) ),
-	'DEFECT: validate_divi_marker_sequence() ends a self-closing block at a `-->` inside an attribute string and reports it unclosed'
+	'#578: validate_divi_marker_sequence() ends a self-closing block at the `-->` WordPress ends it at, not at one inside an attribute string'
 );
+assert_same(
+	array(
+		'openers'           => 1,
+		'self_closers'      => 1,
+		'container_openers' => 0,
+		'closers'           => 0,
+	),
+	diviops_call( 'divi_content_marker_counts', array( $diviops_msz_arrow ) ),
+	'#578: divi_content_marker_counts() counts it as the self-closer it is'
+);
+
+// The third-party case this actually unblocked. normalize only rewrites openers
+// is_divi_module_block_name() accepts, so a difl/* opener keeps its literal
+// arrow byte-identical — and before #578 the census then refused the whole page
+// as unbalanced. Reproduced on staging page 900390's block mix.
+$diviops_msz_thirdparty = '<!-- wp:difl/text {"a":"x-->y"} /-->';
+assert_same(
+	array(
+		'openers'           => 1,
+		'self_closers'      => 1,
+		'container_openers' => 0,
+		'closers'           => 0,
+	),
+	diviops_call( 'divi_content_marker_counts', array( $diviops_msz_thirdparty ) ),
+	'#578: a third-party opener carrying an arrow in its attributes counts as a self-closer'
+);
+assert_same(
+	true,
+	diviops_call( 'assert_divi_full_content_safe_for_write', array( $diviops_msz_thirdparty ) ),
+	'#578: so the write guard stops refusing a valid third-party page as unbalanced'
+);
+
+// CONTROL: genuinely unbalanced markup must still be refused, or the fix above
+// could be "stop refusing anything" and nothing here would notice.
 assert_same(
 	array(
 		'openers'           => 1,
@@ -131,8 +161,12 @@ assert_same(
 		'container_openers' => 1,
 		'closers'           => 0,
 	),
-	diviops_call( 'divi_content_marker_counts', array( $diviops_msz_arrow ) ),
-	'DEFECT: divi_content_marker_counts() counts a self-closing block with a `-->` inside an attribute string as a container'
+	diviops_call( 'divi_content_marker_counts', array( '<!-- wp:divi/section {"a":1} -->' ) ),
+	'#578 CONTROL: a real container opener with no closer is still a container opener'
+);
+assert_true(
+	is_wp_error( diviops_call( 'assert_divi_full_content_safe_for_write', array( '<!-- wp:divi/section {"a":1} -->' ) ) ),
+	'#578 CONTROL: and the write guard still refuses it'
 );
 
 // An unbalanced quote must not hide the next marker. WordPress reads two
