@@ -31,6 +31,7 @@ upstream-releases/
   skills-pro/        diviops-pro-skills-<hash>.zip              (commercial)
   suite/             diviops-<version>.zip
   suite-pro/         diviops-pro-suite-v<version>-beta.zip      (commercial)
+  desktop/           diviops-desktop.zip, diviops-divi-5-desktop.zip
 ```
 
 Two things about that listing are worth stating rather than inferring. The free
@@ -41,10 +42,27 @@ their order is not recoverable from the filenames: modification time is the only
 way to tell which one is newest, and moving them between machines loses even
 that.
 
-**Where these files come from.** An upstream release has an empty `assets`
-array - `gh api repos/oaris-dev/diviops/releases/tags/<tag> --jq '.assets|length'`
-returns `0` for every tag checked - which makes it look as though nothing is
-published and a gap has to be closed by hand. It is not. The same payload carries
+**Where these files come from.** Most upstream releases publish no `assets` at
+all, and the source archive is the way in for those. Do not read that as "assets
+are always empty" and skip the field: on 2026-10-12, 6 of 83 releases carried real
+assets, and acting on the old premise silently skipped every one of them.
+
+| Release | Assets |
+| --- | --- |
+| `v1.5.85` | `diviops-desktop.zip`, `diviops-divi-5-desktop.zip` |
+| `v1.5.84` | `diviops-agent-1.5.43.zip` |
+| `v1.5.81`, `v1.5.77`, `v1.5.76` | a bare `diviops-agent.zip`, one per release |
+| `v1.5.65` | `diviops-design-library-1.0.0-beta.24.zip` |
+
+Re-derive that list when syncing rather than trusting this table; it is a live API
+and no test here can check it:
+
+```bash
+gh api repos/oaris-dev/diviops/releases --paginate \
+  --jq '.[] | select(.assets|length>0) | "\(.tag_name) \([.assets[].name]|join(", "))"'
+```
+
+For the 77 releases that carry nothing, the payload still carries
 `tarball_url` and `zipball_url`: GitHub's auto-generated source archives, which are
 not members of `assets` and render at the bottom of the release page as "Source
 code". That is where the archive's contents come from, and it is fetchable:
@@ -64,6 +82,37 @@ tracks `diviops-agent.zip` and `diviops-design-library.zip` at its repository ro
 
 Nothing about the Pro tiers changes: those are not on GitHub in any form, and the
 rules above govern them.
+
+## WordPress.org is a second channel
+
+GitHub is not the only place upstream publishes. Verified 2026-10-12 against
+`https://api.wordpress.org/plugins/info/1.0/diviops-agent.json`:
+
+- **31 versioned builds, 1.5.13 through 1.5.43, plus `trunk`** (32 keys in
+  `versions`).
+- **Only `diviops-agent` is published.** `diviops-design-library`, `diviops`,
+  `diviops-suite` and `diviops-agent-pro` each return HTTP 404 with
+  `{"error":"Plugin not found."}`. Stated so nobody re-checks all four.
+
+**Same-version builds from the two channels are not byte-identical**, and the
+difference is not a reliable channel marker. Of the 31 WP.org-convention builds in
+`agent/`, **30 carry `Plugin URI: https://github.com/oaris-dev/diviops` and only
+1.5.43 carries `https://diviops.com/`**. That makes the `diviops.com` URI a change
+upstream made at 1.5.43, not a property of the channel. Do not use `Plugin URI` to
+decide where a build came from.
+
+Which means **this archive cannot attribute a build's channel from its bytes or its
+filename alone.** A 2026-10-12 triage claimed 1.5.15, 1.5.28 and 1.5.29 exist only
+on WordPress.org; the archive holds a dash-named build for each of those versions,
+and dash-named `agent/` builds are suite-harvested under the provenance rule above,
+so that claim is not supported here and is not repeated as fact. If a sync needs
+channel provenance, it has to record it at fetch time — nothing recovers it later.
+
+**`trunk` is deliberately not filed.** WP.org serves a versionless
+`diviops-agent.zip` for it: the name carries no version, it collides with the
+GitHub bare-asset naming below, and it is a moving target. Current trunk is 1.5.43,
+already filed. Recorded so it is not re-litigated; revisit only if a dated snapshot
+is actually wanted.
 
 ## The clean-room rule was rescinded
 
@@ -135,3 +184,42 @@ asked:
 Keep the publisher's own filename. It carries the version and the distribution
 tier, which is the only provenance these files have — and under the table above,
 the name is what decides whether it may be committed or copied from.
+
+"The publisher's own filename" underdetermines, because there are three publishers
+and one of them ships no usable name at all:
+
+1. **A GitHub release asset** uses a dash: `diviops-agent-1.5.43.zip`.
+2. **WordPress.org** uses a dot: `diviops-agent.1.5.43.zip`. This is that
+   publisher's convention and **not a typo** — `agent/diviops-agent.1.5.17.zip` is
+   byte-identical to WP.org's build (md5 `4d56049e52afda137893362bfd2799ec`,
+   verified 2026-10-12). An earlier review called it an error before checking.
+3. **An inner distribution harvested from a suite bundle** has no name of its own
+   beyond a bare `diviops-agent.zip`. File it under the tier's versioned name, with
+   the version read from the zip's own `const VERSION`. Where that collides with an
+   existing name and the bytes differ, suffix the source release:
+   `diviops-agent-1.5.4-from-diviops-1.5.37.zip`. 13 files currently use that
+   suffix, and the convention is **blessed**: the filename is the only provenance
+   these artifacts carry, and a content hash carries none.
+
+Two consequences worth stating rather than inferring.
+
+**A dash alone does not distinguish a release asset from a suite-harvested build.**
+Only the `-from-<release>` suffix records provenance, and only where a collision
+forced it. Do not infer a channel from a dash.
+
+**The three bare `diviops-agent.zip` assets collide and are resolved by content.**
+`v1.5.76`, `v1.5.77` and `v1.5.81` each publish an asset named plainly
+`diviops-agent.zip`. Each was filed by reading its own `const VERSION` — 1.5.35,
+1.5.36 and 1.5.40, all distinct — under the tier's `diviops-agent-<version>.zip`.
+Without that rule the release-to-asset mapping is unrecoverable from the filenames.
+
+**A free file may legitimately carry `-pro-` in its name, and the gate should still
+block it on commit.** `design-library/diviops-design-library-1.0.0-beta.22-from-diviops-pro-suite-v1.5.40-beta.zip`
+is a free, GPL Design Library build that was harvested from a Pro bundle, so its
+filename carries a hyphen-delimited `pro` and matches the Pro-name pattern in
+`tests/test-upstream-releases-untracked.php`, which tests every segment of every
+path. It does not fire today, because that assertion runs over git-tracked paths
+rather than the filesystem and the file is gitignored. **That is intended, and so is the block if it ever were force-added:** a
+free artifact named after a Pro bundle is a genuine ambiguity, and a commit is
+precisely when to stop and look at it. Renaming is not the fix — the name is the
+provenance.
