@@ -142,7 +142,11 @@ final class DiviOps_SEO_TSF_Adapter {
 		foreach ( $state as $provider_key => $values ) {
 			delete_post_meta( $post_id, $provider_key );
 			foreach ( $values as $value ) {
-				add_post_meta( $post_id, $provider_key, $value );
+				// wp_slash() because core's add_metadata() unslashes before storing
+				// (wp-includes/meta.php:62-63). Without it a captured value carrying
+				// a backslash is restored without it, and the rollback reports a
+				// restored_state_mismatch it caused itself (#591).
+				add_post_meta( $post_id, $provider_key, wp_slash( $value ) );
 			}
 		}
 
