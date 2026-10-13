@@ -1512,7 +1512,7 @@ trait DiviOps_Agent_ThemeBuilder {
 			? count( $target['children'] )
 			: ( 'prepend' === $position ? 0 : ( 'before' === $position ? $target['index'] : $target['index'] + 1 ) );
 		$scope          = in_array( $position, [ 'append', 'prepend' ], true ) ? 'children' : 'siblings';
-		$idempotency_at = 'append' === $position ? max( 0, $insert_at - $inserted_count ) : $insert_at;
+		$idempotency_at = self::tb_insert_idempotency_offset( $position, $insert_at, $inserted_count, '' !== $parent_selector );
 		$already_there  = self::tb_insert_sequence_matches( 'children' === $scope ? $target['children'] : $target['siblings'], $inserted, $idempotency_at );
 		if ( ! $already_there && in_array( $position, [ 'append', 'prepend' ], true ) ) {
 			$already_there = self::tb_stable_labeled_sequence_exists( $target['children'], $inserted )
@@ -1881,6 +1881,39 @@ trait DiviOps_Agent_ThemeBuilder {
 			$label = $attrs['meta']['adminLabel']['desktop']['value'] ?? '';
 		}
 		return is_string( $label ) ? $label : '';
+	}
+
+	/**
+	 * Where to look for an already-inserted sequence when a call is retried.
+	 *
+	 * An insert can move the very block the target was resolved from, and then a
+	 * retry must compare against the shifted position rather than the resolved
+	 * one. Which positions shift is not obvious, so it lives in one place that
+	 * both insert paths call and a test can drive directly (#592).
+	 *
+	 * @param string $position       append|prepend|before|after.
+	 * @param int    $insert_at      Index the insert would write at.
+	 * @param int    $inserted_count How many blocks the call inserts.
+	 * @return int Offset to compare the stored sequence at.
+	 */
+	private static function tb_insert_idempotency_offset( string $position, int $insert_at, int $inserted_count, bool $target_follows_anchor ): int {
+		// 'append' writes past the end, so a retry re-resolves past the blocks it
+		// already wrote and the sequence sits $inserted_count earlier.
+		if ( 'append' === $position ) {
+			return max( 0, $insert_at - $inserted_count );
+		}
+		// 'before' writes AHEAD of its anchor, so whether the retry shifted depends
+		// on how the target was resolved, not on the position alone. A
+		// parent_selector FOLLOWS the anchor, which a first insert pushed past the
+		// written blocks, so the sequence sits $inserted_count earlier. A
+		// positional parent_path instead re-resolves onto those written blocks, and
+		// the unshifted offset is already correct -- shifting it there walks off the
+		// front of the sequence and reports a false miss (#592).
+		if ( 'before' === $position && $target_follows_anchor ) {
+			return max( 0, $insert_at - $inserted_count );
+		}
+		// 'prepend' always writes at 0, and 'after' leaves its anchor's index alone.
+		return $insert_at;
 	}
 
 	private static function tb_insert_sequence_matches( array $haystack, array $needle, int $offset ): bool {

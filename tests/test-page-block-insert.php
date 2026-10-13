@@ -196,3 +196,99 @@ assert_true(
 	method_exists( 'DiviOps_Agent', 'page_block_insert' ),
 	'DiviOps_Agent::page_block_insert exists once the trait is mixed in'
 );
+
+// ── #592: a retried insert must find the sequence it already wrote ────────
+// An insert can move the block its target was resolved from, and a retry then
+// has to compare against the shifted position. Which positions shift is not
+// obvious, and 'before' was getting the unshifted offset:
+//
+//   parent_selector 'divi/row[adminLabel="Anchor B"]', position 'before'
+//     first call  -> [Anchor A, Inserted, Anchor B]
+//     retry       -> selector re-resolves Anchor B at index 2, the offset says
+//                    look at 2, Anchor B sits there, no match, insert AGAIN.
+//
+// Two scopes that look like they should be affected and are not, pinned below so
+// the distinction is not lost. parent_path is POSITIONAL: after inserting before
+// '0.1' that path names the inserted block, so a retry matches and no-ops. And
+// 'after' never moves its anchor, so its unshifted offset is already right --
+// which is why the fix must cover 'before' and 'append' only. Applying the shift
+// to 'after' would break a path that works.
+//
+// Driven at tree level against the real helpers. page_block_insert cannot be
+// driven end to end here: it reaches parse_blocks(), which no shim implements by
+// design -- several suites use "Call to undefined function parse_blocks()" as a
+// positive probe signal. Faking a WP block parser to get around that would be a
+// mocked-behavior test and would diverge from WP's own grammar.
+//
+// The offset comes from the PRODUCTION helper, never recomputed here, so a
+// mutation to it fails these assertions instead of passing them.
+
+/**
+ * Apply one insert, then ask whether a retry would find the sequence already there.
+ *
+ * @param string $position  append|prepend|before|after.
+ * @param string $resolve   'selector' or 'path'.
+ * @param string $target    Selector string, or dot path.
+ * @return array{found:bool,labels:array<int,string>}
+ */
+function diviops_pbi_retry_probe( string $position, string $resolve, string $target ): array {
+	$tree = array(
+		array(
+			'blockName'    => 'divi/section',
+			'attrs'        => array(),
+			'innerBlocks'  => array( diviops_pbi_new_row( 'Anchor A' ), diviops_pbi_new_row( 'Anchor B' ) ),
+			'innerContent' => array(),
+		),
+	);
+	$inserted = array( diviops_pbi_new_row( 'Inserted' ) );
+	$count    = count( $inserted );
+	$finder   = 'selector' === $resolve ? 'find_tb_block_by_selector' : 'find_tb_block_by_path';
+
+	$args     = array( &$tree, $target );
+	$resolved = diviops_call_ref( $finder, $args );
+	// insert_at mirrors the handler. It is not what this test pins -- if it were
+	// wrong the label order asserted by the caller would be wrong too.
+	$insert_at = 'append' === $position
+		? count( $resolved['children'] )
+		: ( 'prepend' === $position ? 0 : ( 'before' === $position ? $resolved['index'] : $resolved['index'] + 1 ) );
+	$apply = array( &$tree, $resolved['path'], $position, $inserted );
+	diviops_call_ref( 'apply_tb_block_insert', $apply );
+
+	$again    = array( &$tree, $target );
+	$retarget = diviops_call_ref( $finder, $again );
+	$retry_at = 'append' === $position
+		? count( $retarget['children'] )
+		: ( 'prepend' === $position ? 0 : ( 'before' === $position ? $retarget['index'] : $retarget['index'] + 1 ) );
+	$offset   = diviops_call( 'tb_insert_idempotency_offset', array( $position, $retry_at, $count, 'selector' === $resolve ) );
+	$scope    = in_array( $position, array( 'append', 'prepend' ), true ) ? $retarget['children'] : $retarget['siblings'];
+
+	$labels = array();
+	foreach ( $tree[0]['innerBlocks'] as $block ) {
+		$labels[] = $block['attrs']['module']['meta']['adminLabel']['desktop']['value'];
+	}
+
+	return array(
+		'found'  => (bool) diviops_call( 'tb_insert_sequence_matches', array( $scope, $inserted, $offset ) ),
+		'labels' => $labels,
+	);
+}
+
+$pbi_sel = 'divi/row[adminLabel="Anchor B"]';
+
+// Controls that already hold. If one of these fails, the shift is not the defect
+// and the assertion below is measuring something else.
+$probe = diviops_pbi_retry_probe( 'after', 'selector', $pbi_sel );
+assert_same( array( 'Anchor A', 'Anchor B', 'Inserted' ), $probe['labels'], "control: 'after' inserts past the anchor" );
+assert_true( $probe['found'], "control: a retried 'after' insert finds its own sequence, because the anchor does not move" );
+
+$probe = diviops_pbi_retry_probe( 'before', 'path', '0.1' );
+assert_same( array( 'Anchor A', 'Inserted', 'Anchor B' ), $probe['labels'], "control: 'before' by path inserts ahead of the anchor" );
+assert_true( $probe['found'], "control: a retried 'before' insert by parent_path finds its own sequence, because the path is positional" );
+
+$probe = diviops_pbi_retry_probe( 'append', 'path', '0' );
+assert_true( $probe['found'], "control: a retried 'append' finds its own sequence" );
+
+// The defect.
+$probe = diviops_pbi_retry_probe( 'before', 'selector', $pbi_sel );
+assert_same( array( 'Anchor A', 'Inserted', 'Anchor B' ), $probe['labels'], "'before' by selector inserts ahead of the anchor" );
+assert_true( $probe['found'], "a retried 'before' insert by parent_selector finds its own sequence instead of duplicating it (#592)" );
