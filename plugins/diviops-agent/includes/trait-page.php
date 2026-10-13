@@ -1314,7 +1314,7 @@ trait DiviOps_Agent_Page {
 			? count( $target['children'] )
 			: ( 'prepend' === $position ? 0 : ( 'before' === $position ? $target['index'] : $target['index'] + 1 ) );
 		$scope          = in_array( $position, [ 'append', 'prepend' ], true ) ? 'children' : 'siblings';
-		$idempotency_at = 'append' === $position ? max( 0, $insert_at - $inserted_count ) : $insert_at;
+		$idempotency_at = self::tb_insert_idempotency_offset( $position, $insert_at, $inserted_count, '' !== $parent_selector );
 		$already_there  = self::tb_insert_sequence_matches( 'children' === $scope ? $target['children'] : $target['siblings'], $inserted, $idempotency_at );
 		if ( ! $already_there && in_array( $position, [ 'append', 'prepend' ], true ) ) {
 			$already_there = self::tb_stable_labeled_sequence_exists( $target['children'], $inserted )
