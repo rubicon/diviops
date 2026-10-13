@@ -29,14 +29,17 @@
  *
  * Two halves, deliberately:
  *
- *   - The resolver half runs everywhere, including CI with no WordPress, and
- *     reaches every verdict `diviops_wpbp_resolve()` can return. Without it the
- *     path logic would be exercised only on a machine that happens to have a
- *     WordPress tree.
+ *   - The resolver half runs everywhere, including on a workstation with no
+ *     WordPress, and reaches every verdict `diviops_wpbp_resolve()` can return.
+ *     Without it the path logic would be exercised only on a machine that
+ *     happens to have a WordPress tree.
  *   - The parser half needs `DIVIOPS_WP_SOURCE` and SKIPs with a counted reason
  *     when it is unset, following `test-shared-preset-attrs-map.php`'s
  *     `DIVIOPS_DIVI_BUILDER5_PATH` precedent. A guard that merely did nothing
  *     would make `PASS N assertion(s)` read identically whether these ran or not.
+ *     CI does set the variable, via `scripts/fetch-wp-block-parser.sh`, and then
+ *     checks its own output for the provenance line this file prints — so the
+ *     end-to-end assertions protect pull requests rather than only local runs.
  *
  * NOT covered here: the behavioural difference between `parse_blocks_for_write()`
  * and bare `parse_blocks()`. That needs Divi's own parser registered through the
@@ -396,6 +399,31 @@ if ( '' !== DIVIOPS_WPBP_ROOT ) {
 		array( 'Hero', 'Anchor A', 'Inserted', 'Anchor B' ),
 		diviops_wpsbp_stored_labels( 7700 ),
 		'and the retry wrote nothing, so the row was not inserted twice'
+	);
+
+	/*
+	 * Printed so a full-suite run says WHICH core was loaded, and so CI has a
+	 * positive control to grep for. Without it this file contributes no line to
+	 * a full run at all, and a CI job whose DIVIOPS_WP_SOURCE silently failed to
+	 * take effect would print a green PASS having inspected none of the twelve
+	 * assertions above — the blind-gate failure this repository fails loudly on
+	 * elsewhere.
+	 */
+	$diviops_wpsbp_version_php = DIVIOPS_WPBP_ROOT . '/wp-includes/version.php';
+	$diviops_wpsbp_version     = 'unknown';
+	if ( is_file( $diviops_wpsbp_version_php )
+		&& preg_match(
+			'/\$wp_version\s*=\s*\x27([^\x27]+)\x27/',
+			(string) file_get_contents( $diviops_wpsbp_version_php ),
+			$diviops_wpsbp_vm
+		)
+	) {
+		$diviops_wpsbp_version = $diviops_wpsbp_vm[1];
+	}
+	printf(
+		"wp-source block parser: WordPress %s at %s; page_block_insert driven end to end\n",
+		$diviops_wpsbp_version,
+		DIVIOPS_WPBP_ROOT
 	);
 	// WP-SOURCE-BLOCK-END
 } else {

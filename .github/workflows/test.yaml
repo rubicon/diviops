@@ -91,8 +91,28 @@ jobs:
 
       # The runner itself exits non-zero when it discovers no test files, so an
       # empty suite fails here rather than reporting a green PASS of zero assertions.
+      # WordPress's own block parser, so the end-to-end half of
+      # tests/test-wp-source-block-parser.php runs here instead of SKIPping (#598).
+      # Five pinned, checksum-verified files rather than a tarball -- the script's
+      # header explains why, and the bump procedure. Deliberately NOT a new job:
+      # branch protection pins required checks by job name (#72, #55).
+      - name: Fetch WordPress's block parser
+        run: |
+          root="$(scripts/fetch-wp-block-parser.sh "$RUNNER_TEMP/wp")"
+          echo "DIVIOPS_WP_SOURCE=$root" >> "$GITHUB_ENV"
+
       - name: Run test suite
-        run: php tests/run.php
+        run: |
+          set -o pipefail
+          php tests/run.php | tee "$RUNNER_TEMP/suite.txt"
+          # DIVIOPS_WP_SOURCE failing to take effect would print a green PASS
+          # having run none of the end-to-end assertions. Assert the positive
+          # control the suite prints, not merely the absence of its SKIP line:
+          # a run that died before reaching the file has neither.
+          if ! grep -q 'wp-source block parser: WordPress ' "$RUNNER_TEMP/suite.txt"; then
+            echo "::error::the WordPress-source block-parser half did not run. DIVIOPS_WP_SOURCE did not take effect; this is a blind gate, not a pass."
+            exit 1
+          fi
 
   # A separate job, not a matrix leg of "Test suite" above (#72): that job's
   # exact name is a required status check in branch protection, and renaming
@@ -115,8 +135,28 @@ jobs:
           php-version: '8.5'
           coverage: none
 
+      # WordPress's own block parser, so the end-to-end half of
+      # tests/test-wp-source-block-parser.php runs here instead of SKIPping (#598).
+      # Five pinned, checksum-verified files rather than a tarball -- the script's
+      # header explains why, and the bump procedure. Deliberately NOT a new job:
+      # branch protection pins required checks by job name (#72, #55).
+      - name: Fetch WordPress's block parser
+        run: |
+          root="$(scripts/fetch-wp-block-parser.sh "$RUNNER_TEMP/wp")"
+          echo "DIVIOPS_WP_SOURCE=$root" >> "$GITHUB_ENV"
+
       - name: Run test suite
-        run: php tests/run.php
+        run: |
+          set -o pipefail
+          php tests/run.php | tee "$RUNNER_TEMP/suite.txt"
+          # DIVIOPS_WP_SOURCE failing to take effect would print a green PASS
+          # having run none of the end-to-end assertions. Assert the positive
+          # control the suite prints, not merely the absence of its SKIP line:
+          # a run that died before reaching the file has neither.
+          if ! grep -q 'wp-source block parser: WordPress ' "$RUNNER_TEMP/suite.txt"; then
+            echo "::error::the WordPress-source block-parser half did not run. DIVIOPS_WP_SOURCE did not take effect; this is a blind gate, not a pass."
+            exit 1
+          fi
 
   # Additive defense-in-depth for the declared "Requires PHP: 7.4" floor (#180).
   # This is NOT the primary gate for that class of bug: a PHP-8-only *function
@@ -144,8 +184,28 @@ jobs:
           php-version: '7.4'
           coverage: none
 
+      # WordPress's own block parser, so the end-to-end half of
+      # tests/test-wp-source-block-parser.php runs here instead of SKIPping (#598).
+      # Five pinned, checksum-verified files rather than a tarball -- the script's
+      # header explains why, and the bump procedure. Deliberately NOT a new job:
+      # branch protection pins required checks by job name (#72, #55).
+      - name: Fetch WordPress's block parser
+        run: |
+          root="$(scripts/fetch-wp-block-parser.sh "$RUNNER_TEMP/wp")"
+          echo "DIVIOPS_WP_SOURCE=$root" >> "$GITHUB_ENV"
+
       - name: Run test suite
-        run: php tests/run.php
+        run: |
+          set -o pipefail
+          php tests/run.php | tee "$RUNNER_TEMP/suite.txt"
+          # DIVIOPS_WP_SOURCE failing to take effect would print a green PASS
+          # having run none of the end-to-end assertions. Assert the positive
+          # control the suite prints, not merely the absence of its SKIP line:
+          # a run that died before reaching the file has neither.
+          if ! grep -q 'wp-source block parser: WordPress ' "$RUNNER_TEMP/suite.txt"; then
+            echo "::error::the WordPress-source block-parser half did not run. DIVIOPS_WP_SOURCE did not take effect; this is a blind gate, not a pass."
+            exit 1
+          fi
 
   static-analysis:
     name: PHPStan

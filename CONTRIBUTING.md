@@ -257,6 +257,19 @@ repository has misjudged six times (#7, #10, #18, #548, #555, #578).
 against `WP_Block_Type_Registry` and the shim models the WP-CLI-shaped registry, in which an
 ordinary `divi/row` is refused.
 
+Locally, point `DIVIOPS_WP_SOURCE` at any WordPress root — the directory holding
+`wp-includes/`:
+
+```bash
+DIVIOPS_WP_SOURCE="$HOME/Local Sites/colleyvillelions/app/public" php tests/run.php
+```
+
+CI needs no WordPress install: `scripts/fetch-wp-block-parser.sh` pulls five sha256-pinned
+files from a tagged WordPress ref into a WordPress-shaped directory, and the three PHP suite
+jobs then grep the suite output for the provenance line the guarded half prints, so a variable
+that silently failed to take effect fails the job instead of printing a green PASS of nothing.
+Run that script locally too if you would rather not point at a full install.
+
 Two things about those two files are load-bearing:
 
 - **`parse_blocks()` must stay absent from the shared shim.** Five suites use
