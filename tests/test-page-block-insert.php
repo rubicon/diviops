@@ -214,11 +214,18 @@ assert_true(
 // which is why the fix must cover 'before' and 'append' only. Applying the shift
 // to 'after' would break a path that works.
 //
-// Driven at tree level against the real helpers. page_block_insert cannot be
-// driven end to end here: it reaches parse_blocks(), which no shim implements by
-// design -- several suites use "Call to undefined function parse_blocks()" as a
-// positive probe signal. Faking a WP block parser to get around that would be a
-// mocked-behavior test and would diverge from WP's own grammar.
+// Driven at tree level against the real helpers. page_block_insert is not driven
+// end to end HERE: this file requires only the shared shim, which does not
+// implement parse_blocks() -- several suites use "Call to undefined function
+// parse_blocks()" as a positive probe signal, so it must stay absent from the
+// shim. Faking a WP block parser to get around that would be a mocked-behavior
+// test and would diverge from WP's own grammar.
+//
+// It IS driven end to end in tests/test-wp-source-block-parser.php, which loads
+// WordPress's own parser from a real checkout behind DIVIOPS_WP_SOURCE and
+// asserts the same retry case below against what gets STORED (#598). These
+// tree-level assertions are kept rather than replaced: they run with no
+// WordPress present, where that suite SKIPs.
 //
 // The offset comes from the PRODUCTION helper, never recomputed here, so a
 // mutation to it fails these assertions instead of passing them.
