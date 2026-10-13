@@ -1765,6 +1765,12 @@ if ( ! function_exists( 'diviops_test_query_refuse_unmodelled' ) ) {
 
 if ( ! function_exists( 'wp_slash' ) ) {
 	function wp_slash( $value ) {
+		if ( is_array( $value ) ) {
+			return array_map( 'wp_slash', $value );
+		}
+		if ( is_string( $value ) ) {
+			return addslashes( $value );
+		}
 		return $value;
 	}
 }
@@ -1784,6 +1790,7 @@ if ( ! function_exists( 'wp_insert_post' ) ) {
 	 */
 	function wp_insert_post( $postarr, $wp_error = false ) {
 		$GLOBALS['diviops_test_last_insert'] = $postarr;
+		$postarr = wp_unslash( $postarr );
 		$id = ( $GLOBALS['diviops_test_next_id'] ?? 9000 );
 		$GLOBALS['diviops_test_next_id'] = $id + 1;
 		$GLOBALS['diviops_test_posts'][ $id ] = (object) array(
@@ -1804,6 +1811,8 @@ if ( ! function_exists( 'wp_insert_post' ) ) {
 
 if ( ! function_exists( 'update_post_meta' ) ) {
 	function update_post_meta( $post_id, $key, $value ) {
+		$key   = wp_unslash( $key );
+		$value = wp_unslash( $value );
 		$GLOBALS['diviops_test_post_meta'][ $post_id ][ $key ] = $value;
 		// Core's update_post_meta() with no $prev_value collapses every row for
 		// the key onto one value, so a prior add_post_meta() row set cannot
@@ -1835,6 +1844,13 @@ if ( ! function_exists( 'add_post_meta' ) ) {
 	 * has any row, exactly as core does.
 	 */
 	function add_post_meta( $post_id, $key, $value, $unique = false ) {
+		// Core's add_metadata() unslashes BOTH key and value before storing them
+		// (wp-includes/meta.php:62-63, verified against staging 2026-10-13).
+		// Storing them verbatim made this shim unable to observe a caller that
+		// forgot wp_slash() -- a shim kinder than core turns a real bug into a
+		// passing test (#591).
+		$key   = wp_unslash( $key );
+		$value = wp_unslash( $value );
 		$rows = $GLOBALS['diviops_test_post_meta_rows'][ $post_id ][ $key ] ?? array();
 		if ( $unique && ( $rows || isset( $GLOBALS['diviops_test_post_meta'][ $post_id ][ $key ] ) ) ) {
 			return false;
@@ -2475,6 +2491,7 @@ if ( ! function_exists( 'wp_update_post' ) ) {
 	 * Returns the post id on success, 0 on failure — matching core's contract.
 	 */
 	function wp_update_post( $postarr, $wp_error = false ) {
+		$postarr = wp_unslash( $postarr );
 		$id = (int) ( $postarr['ID'] ?? 0 );
 		if ( $id <= 0 ) {
 			return 0;
