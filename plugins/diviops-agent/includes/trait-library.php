@@ -251,7 +251,7 @@ trait DiviOps_Agent_Library {
 		}
 
 		$post_id = wp_insert_post( [
-			'post_title'   => $title,
+			'post_title'   => wp_slash( $title ),
 			'post_content' => wp_slash( $content ),
 			'post_type'    => 'et_pb_layout',
 			'post_status'  => 'publish',

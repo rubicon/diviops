@@ -430,7 +430,11 @@ trait DiviOps_Agent_Media {
 			'tmp_name' => $tmp,
 		);
 		$desc       = (string) ( $request->get_param( 'title' ) ?? '' );
-		$id         = media_handle_sideload( $file_array, $attach_to, $desc ?: null );
+		// wp_slash() because media_handle_sideload() carries this through to
+		// wp_insert_attachment() and then wp_insert_post(), which unslashes the
+		// DB-bound data (post.php:4981) -- an unslashed title loses its
+		// backslashes on the way in (#595).
+		$id         = media_handle_sideload( $file_array, $attach_to, $desc ? wp_slash( $desc ) : null );
 		if ( is_wp_error( $id ) ) {
 			@unlink( $tmp );
 			return self::envelope_error( 'upload_failed', $id->get_error_message(), null, 500 );
@@ -442,14 +446,14 @@ trait DiviOps_Agent_Media {
 		}
 		$alt = (string) ( $request->get_param( 'alt' ) ?? '' );
 		if ( '' !== $alt ) {
-			update_post_meta( $id, '_wp_attachment_image_alt', sanitize_text_field( $alt ) );
+			update_post_meta( $id, '_wp_attachment_image_alt', wp_slash( sanitize_text_field( $alt ) ) );
 		}
 		$caption = (string) ( $request->get_param( 'caption' ) ?? '' );
 		if ( '' !== $caption ) {
 			wp_update_post(
 				array(
 					'ID'           => $id,
-					'post_excerpt' => sanitize_text_field( $caption ),
+					'post_excerpt' => wp_slash( sanitize_text_field( $caption ) ),
 				)
 			);
 		}
@@ -949,7 +953,7 @@ trait DiviOps_Agent_Media {
 			if ( '' === $new_alt ) {
 				delete_post_meta( $id, '_wp_attachment_image_alt' );
 			} else {
-				update_post_meta( $id, '_wp_attachment_image_alt', $new_alt );
+				update_post_meta( $id, '_wp_attachment_image_alt', wp_slash( $new_alt ) );
 			}
 		}
 		if ( $has_caption ) {
@@ -959,7 +963,7 @@ trait DiviOps_Agent_Media {
 			wp_update_post(
 				array(
 					'ID'           => $id,
-					'post_excerpt' => $new_caption,
+					'post_excerpt' => wp_slash( $new_caption ),
 				)
 			);
 		}

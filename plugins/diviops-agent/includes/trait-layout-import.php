@@ -402,7 +402,7 @@ trait DiviOps_Agent_Layout_Import {
 		$title = is_string( $title ) && '' !== trim( $title ) ? $title : 'Imported layout';
 
 		$created = wp_insert_post( [
-			'post_title'   => $title,
+			'post_title'   => wp_slash( $title ),
 			'post_content' => '',
 			'post_status'  => 'draft',
 			'post_type'    => 'page',
