@@ -429,3 +429,46 @@ $row      = array_values( array_filter( $readback->get_data()['data']['fields'],
 assert_same( 'Original OG Title', $row['stored_value'], 'the post keeps its original value after the readback-mismatch write is rolled back' );
 
 diviops_seo_reset();
+
+// ── #591: a restore must put back the bytes it captured ──────────────────
+// DiviOps_SEO_TSF_Adapter::restore_registered_state() handed its value straight
+// to add_post_meta(). Core's add_metadata() unslashes both key and value before
+// storing them (wp-includes/meta.php:62-63), so a value carrying a backslash was
+// put back WITHOUT it, and the rollback that was supposed to restore the post
+// byte-for-byte then reported restored_state_mismatch about its own corruption.
+// Every sibling trait already slashes before a meta or post write -- 13 call
+// sites across five of them -- and this was the one path that did not.
+//
+// This could not be observed before: tests/wp-shim.php stored meta verbatim and
+// wp_slash() was a no-op, an identity pair that hid the whole class of defect. The
+// shim now models core on all four write paths, which is what makes the two
+// assertions below meaningful rather than decorative.
+diviops_seo_reset();
+diviops_test_register_post( 4310, '', 'page', 'Slash restore' );
+
+// A value with a backslash, and a control without one. The control must pass both
+// before and after the fix -- if it ever fails, the defect is not the slashing and
+// these assertions are measuring something else.
+$seo_slashy  = 'Back\\slash and C:\\path';
+$seo_plain   = 'No backslash here';
+
+DiviOps_SEO_TSF_Adapter::restore_registered_state(
+	4310,
+	array(
+		'_genesis_title'       => array( $seo_slashy ),
+		'_genesis_description' => array( $seo_plain ),
+	)
+);
+
+assert_same(
+	$seo_plain,
+	get_post_meta( 4310, '_genesis_description', true ),
+	'control: a restored value with no backslash round-trips unchanged'
+);
+assert_same(
+	$seo_slashy,
+	get_post_meta( 4310, '_genesis_title', true ),
+	'a restored value carrying a backslash round-trips unchanged, so a rollback cannot report a mismatch it caused itself (#591)'
+);
+
+diviops_seo_reset();
