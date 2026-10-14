@@ -22,13 +22,14 @@
  * independently rediscovered via a live wp-eval reproduction, the way both
  * #11 and #99 were.
  *
- * The plain-PHP harness cannot exercise the BEHAVIORAL difference between
- * parse_blocks_for_write() and bare parse_blocks() — parse_blocks() itself is
- * deliberately unshimmed (see test-global-layout-write-guard.php's header),
- * and parse_blocks_for_write()'s Divi-class branch never activates without a
- * real Divi install. This test instead verifies the STRUCTURAL invariant
- * directly from source, matching how #99 itself was actually found and
- * fixed. Live behavior (materialization does not occur, in either a real
+ * The harness cannot exercise the BEHAVIORAL difference between
+ * parse_blocks_for_write() and bare parse_blocks(), and #598 did not change
+ * that: loading WordPress's own parser (tests/wp-block-parser-shim.php, behind
+ * DIVIOPS_WP_SOURCE) makes the parse happen, but the difference between the two
+ * calls lives in parse_blocks_for_write()'s Divi-class branch, which needs a
+ * real DIVI install and not a WordPress one. So this test still verifies the
+ * STRUCTURAL invariant directly from source, matching how #99 itself was
+ * actually found and fixed. Live behavior (materialization does not occur, in either a real
  * REST call or wp eval, after the fix) was verified separately against the
  * reference site — see #99's PR description.
  *
