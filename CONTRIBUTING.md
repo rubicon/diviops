@@ -247,6 +247,41 @@ being edited concurrently. There are exactly two acceptable outcomes:
 2. **A reported gap**, naming the stub that would be required. Leaving a branch
    uncharacterized and saying so is better than faking it.
 
+Better than transcribing a primitive is loading the real one. `tests/wp-block-parser-shim.php`
+(#598) `require`s WordPress core's own `wp-includes/class-wp-block-parser.php` from a checkout
+named by `DIVIOPS_WP_SOURCE`, and defines `parse_blocks()`/`serialize_blocks()` over it, so a
+handler that parses markup before it writes can be driven end to end against the parser real
+sites run rather than against an approximation of WordPress's block grammar — a grammar this
+repository has misjudged six times (#7, #10, #18, #548, #555, #578).
+`tests/wp-block-registry-rest-shim.php` goes with it, because every Divi write path validates
+against `WP_Block_Type_Registry` and the shim models the WP-CLI-shaped registry, in which an
+ordinary `divi/row` is refused.
+
+Locally, point `DIVIOPS_WP_SOURCE` at any WordPress root — the directory holding
+`wp-includes/`:
+
+```bash
+DIVIOPS_WP_SOURCE="$HOME/Local Sites/colleyvillelions/app/public" php tests/run.php
+```
+
+CI needs no WordPress install: `scripts/fetch-wp-block-parser.sh` pulls five sha256-pinned
+files from a tagged WordPress ref into a WordPress-shaped directory, and the three PHP suite
+jobs then grep the suite output for the provenance line the guarded half prints, so a variable
+that silently failed to take effect fails the job instead of printing a green PASS of nothing.
+Run that script locally too if you would rather not point at a full install.
+
+Two things about those two files are load-bearing:
+
+- **`parse_blocks()` must stay absent from the shared shim.** Five suites use
+  `Call to undefined function parse_blocks()` as a positive probe signal that execution
+  reached a given point. The stubs are opt-in per file and `tests/run.php` gives every file
+  its own process, so requiring them cannot reach a file that does not. Do not require either
+  one from a suite that relies on the probe, and do not move their contents into `wp-shim.php`.
+- **The registry stub must be required BEFORE the shim**, the inverse of the other stubs'
+  order, because it supersedes a class the shim guards with `class_exists()`. Required after,
+  it silently does nothing; assert `WP_Block_Type_Registry::DIVIOPS_REST_SHAPED` is defined so
+  that mistake fails instead of running against the wrong registry.
+
 Where a primitive is called behind `function_exists()` in the plugin, leaving it undefined
 is a legitimate runtime shape — pin the behaviour with that branch skipped rather than
 inventing a model the harness cannot check. `tests/test-wp-shim-*-contract.php` characterize
