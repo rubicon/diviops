@@ -13,9 +13,16 @@
  * `page_block_insert` "cannot be driven end to end here", so #592's
  * retry-idempotency defect had to be proven through an extracted helper rather
  * than through the tool; `test-parse-blocks-for-write-coverage.php` asserts its
- * invariant structurally from source for the same reason; and #595's free-text
- * slashing left twelve write sites with no round-trip assertion because each one
- * parses before it writes. A defect living PAST the parse call was invisible.
+ * invariant structurally from source for the same reason. A defect living PAST
+ * the parse call was invisible.
+ *
+ * This file originally also cited #595's twelve unslashed write sites as blocked
+ * by the same wall. That was wrong and is corrected here: those handlers reach
+ * only `authoring_shape_preflight()`, which guards its parse with
+ * `if ( ! function_exists( 'parse_blocks' ) ) { continue; }`, so the write was
+ * always reachable. `tests/test-free-text-slash-roundtrip.php` asserts them with
+ * no harness at all. The handlers that genuinely need this file are the ones
+ * reaching an UNGUARDED parse, `page_block_insert` below being the first driven.
  *
  * What makes this safe to add is that nothing is approximated and nothing shared
  * is widened. The parser is core's own file, loaded from disk
