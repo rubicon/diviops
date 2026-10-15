@@ -60,10 +60,14 @@
  * move_block_with_parser() then produce the *correct* result once parse_blocks()
  * actually runs on this malformed markup (right block, right global-layout
  * auto_index per #14) is NOT asserted here — that requires a real parse_blocks(),
- * which this harness does not have. That collector-level correctness (given an
- * already-parsed tree) is what test-global-layout-parser-collectors.php already
- * covers; this file covers the trigger condition that decides whether that code
- * runs at all.
+ * which this FILE does not have, because it requires only the shared shim and
+ * depends on the undefined-function fatal as its probe signal. Since #598 the
+ * harness can load core's own parser behind DIVIOPS_WP_SOURCE, and since #604
+ * tests/test-wp-source-module-write-ops.php drives module_move's fallback on
+ * this same unterminated-container fixture and asserts on what it stored. That
+ * collector-level correctness (given an already-parsed tree) is what
+ * test-global-layout-parser-collectors.php already covers; this file covers the
+ * trigger condition that decides whether that code runs at all.
  *
  * @package DiviOps
  */

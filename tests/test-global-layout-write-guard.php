@@ -35,11 +35,14 @@
  *
  * These tests cover the pure detection helper only. The full module_lock/clone
  * etc. round-trip is not exercised here: it calls parse_blocks(), which is
- * deliberately unshimmed (same wall issue #17 hit), so this suite does not fake
- * that behavior. Since #598 a suite CAN load WordPress's own parser from a real
- * checkout (tests/wp-block-parser-shim.php, behind DIVIOPS_WP_SOURCE) and drive
- * such a round trip for real; no one has written the module_lock/clone drive
- * yet, and faking a parser here is still the wrong answer. Layer 1 and the wired call sites are verified live,
+ * deliberately unshimmed in the SHARED shim (same wall issue #17 hit), so this
+ * suite does not fake that behavior. Since #598 a suite CAN load WordPress's own
+ * parser from a real checkout (tests/wp-block-parser-shim.php, behind
+ * DIVIOPS_WP_SOURCE) and drive such a round trip for real, and since #604
+ * tests/test-wp-source-module-write-ops.php does exactly that for
+ * module_lock/unlock/clone and for module_move's parser fallback, asserting on
+ * stored content. Faking a parser here is still the wrong answer.
+ * Layer 1 and the wired call sites are verified live,
  * read-only, against the reference Divi install instead (see FORK.md / the #11
  * PR description).
  *
