@@ -2264,7 +2264,7 @@ trait DiviOps_Agent_ThemeBuilder {
 		// Create header layout if content provided.
 		if ( '' !== $header_content ) {
 			$header_id = wp_insert_post( [
-				'post_title'   => $title . ' Header Layout',
+				'post_title'   => wp_slash( $title . ' Header Layout' ),
 				'post_content' => wp_slash( $header_content ),
 				'post_type'    => 'et_header_layout',
 				'post_status'  => 'publish',
@@ -2278,7 +2278,7 @@ trait DiviOps_Agent_ThemeBuilder {
 		// Create footer layout if content provided.
 		if ( '' !== $footer_content ) {
 			$footer_id = wp_insert_post( [
-				'post_title'   => $title . ' Footer Layout',
+				'post_title'   => wp_slash( $title . ' Footer Layout' ),
 				'post_content' => wp_slash( $footer_content ),
 				'post_type'    => 'et_footer_layout',
 				'post_status'  => 'publish',
@@ -2293,7 +2293,7 @@ trait DiviOps_Agent_ThemeBuilder {
 		// path as header and footer.
 		if ( '' !== $body_content ) {
 			$body_id = wp_insert_post( [
-				'post_title'   => $title . ' Body Layout',
+				'post_title'   => wp_slash( $title . ' Body Layout' ),
 				'post_content' => wp_slash( $body_content ),
 				'post_type'    => 'et_body_layout',
 				'post_status'  => 'publish',
@@ -2306,7 +2306,7 @@ trait DiviOps_Agent_ThemeBuilder {
 
 		// Create template post.
 		$template_id = wp_insert_post( [
-			'post_title'  => $title,
+			'post_title'  => wp_slash( $title ),
 			'post_type'   => 'et_template',
 			'post_status' => 'publish',
 		], true );
