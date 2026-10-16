@@ -49,6 +49,8 @@ assets, and acting on the old premise silently skipped every one of them.
 
 | Release | Assets |
 | --- | --- |
+| `v1.5.87` | `diviops-agent-1.5.45.zip` |
+| `v1.5.86` | `diviops-agent-1.5.44.zip` |
 | `v1.5.85` | `diviops-desktop.zip`, `diviops-divi-5-desktop.zip` |
 | `v1.5.84` | `diviops-agent-1.5.43.zip` |
 | `v1.5.81`, `v1.5.77`, `v1.5.76` | a bare `diviops-agent.zip`, one per release |
@@ -88,18 +90,35 @@ rules above govern them.
 GitHub is not the only place upstream publishes. Verified 2026-10-12 against
 `https://api.wordpress.org/plugins/info/1.0/diviops-agent.json`:
 
-- **31 versioned builds, 1.5.13 through 1.5.43, plus `trunk`** (32 keys in
-  `versions`).
+- **32 versioned builds, 1.5.13 through 1.5.45, plus `trunk`** (33 keys in
+  `versions`), re-counted 2026-10-14; stable is 1.5.45.
+- **The channel can omit a version outright.** Its list goes 1.5.43 then 1.5.45:
+  **1.5.44 was never published to WordPress.org**, though GitHub released it as
+  `v1.5.86`. So WP.org is not GitHub lagging by a constant, and
+  `diviops-agent.1.5.44.zip` does not exist to be filed — do not go looking for it.
 - **Only `diviops-agent` is published.** `diviops-design-library`, `diviops`,
   `diviops-suite` and `diviops-agent-pro` each return HTTP 404 with
   `{"error":"Plugin not found."}`. Stated so nobody re-checks all four.
 
 **Same-version builds from the two channels are not byte-identical**, and the
-difference is not a reliable channel marker. Of the 31 WP.org-convention builds in
-`agent/`, **30 carry `Plugin URI: https://github.com/oaris-dev/diviops` and only
-1.5.43 carries `https://diviops.com/`**. That makes the `diviops.com` URI a change
-upstream made at 1.5.43, not a property of the channel. Do not use `Plugin URI` to
-decide where a build came from.
+difference is not a reliable channel marker. 1.5.45 is the worked example: the GitHub
+asset is 331,405 bytes and WordPress.org's is 329,117, same declared version.
+
+**Do not use `Plugin URI` to decide where a build came from.** Read the two channels at
+the same version and the field is ambiguous rather than version-derived (measured
+2026-10-14 from each zip's own `diviops-agent.php` header):
+
+| Build | `Plugin URI` |
+| --- | --- |
+| `agent/diviops-agent-1.5.43.zip` (GitHub asset) | `https://github.com/oaris-dev/diviops` |
+| `agent/diviops-agent.1.5.43.zip` (WP.org) | `https://diviops.com/` |
+| `agent/diviops-agent-1.5.45.zip` (GitHub asset) | `https://diviops.com/` |
+| `agent/diviops-agent.1.5.45.zip` (WP.org) | `https://diviops.com/` |
+
+So at 1.5.43 the URI *was* a property of the channel, and the two converge by 1.5.45.
+An earlier version of this file concluded the opposite — that `diviops.com` was simply a
+change upstream made at 1.5.43 — from a survey of the 31 dot-named builds alone, which
+cannot see a difference between channels because every build in it came from one (#605).
 
 Which means **this archive cannot attribute a build's channel from its bytes or its
 filename alone.** A 2026-10-12 triage claimed 1.5.15, 1.5.28 and 1.5.29 exist only
