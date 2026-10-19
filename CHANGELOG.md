@@ -10,6 +10,15 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.30.3](https://github.com/rubicon/diviops/compare/v1.30.2...v1.30.3) (2026-10-16)
+
+
+### Bug Fixes
+
+* **#591:** slash the TSF restore value, and model core's slashing contract in the shim ([#594](https://github.com/rubicon/diviops/issues/594)) ([7638530](https://github.com/rubicon/diviops/commit/763853043bc1fce47e6c9e9dac47b2bd65bc8825)), closes [#591](https://github.com/rubicon/diviops/issues/591)
+* **#592:** shift the retry-idempotency offset only when the target follows its anchor ([#593](https://github.com/rubicon/diviops/issues/593)) ([2a92cb0](https://github.com/rubicon/diviops/commit/2a92cb0c07add680fa727ce0c91a1dea99c2f1c6)), closes [#592](https://github.com/rubicon/diviops/issues/592)
+* **#595:** slash every free-text field, not just post_content ([#597](https://github.com/rubicon/diviops/issues/597)) ([675d1b7](https://github.com/rubicon/diviops/commit/675d1b7788d96ed850a555d0b30984cdeb79df51))
+
 ## [1.30.2](https://github.com/rubicon/diviops/compare/v1.30.1...v1.30.2) (2026-10-12)
 
 

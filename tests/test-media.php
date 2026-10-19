@@ -645,6 +645,7 @@ assert_true(
 );
 unset( $GLOBALS['diviops_test_max_upload'] );
 
+
 // Test-global hygiene: unset everything this suite set so later test files
 // (which share this PHP process) start from a clean slate.
 remove_all_filters( 'diviops_media_host_resolver' );
@@ -1164,6 +1165,53 @@ assert_true(
 	'Stable alt' === get_post_meta( 1001, '_wp_attachment_image_alt', true ),
 	'dry_run noop: alt unchanged'
 );
+
+// ── #595: alt text and caption must keep a backslash ─────────────────────
+// Core unslashes on the way in: update_metadata() strips the value
+// (wp-includes/meta.php) and wp_insert_post() strips the DB-bound post data
+// (post.php:4981). So a caller that does not wp_slash() a free-text value has it
+// stored with its backslashes removed, while the response echoes what was sent --
+// the tool reports a value it did not store. post_content is wrapped in
+// wp_slash() throughout this plugin; every other free-text field was not (#595).
+//
+// This is observable only because tests/wp-shim.php now models that contract on
+// all four write paths (#591). Before that, wp_slash() was a no-op and meta was
+// stored verbatim, an identity pair that hid the whole class.
+diviops_media_register_attachment( 1055, 'Slash Target', 'image/png', 'slash-target.png' );
+
+$media_slashy_alt = 'Alt with Foo\\Bar and C:\\path';
+$media_slashy_cap = 'Caption with Baz\\Qux';
+$media_plain_alt  = 'Alt with no backslash';
+
+// Control: a value with no backslash round-trips either way. If this fails, the
+// defect is not the slashing and the assertions below measure something else.
+$r = diviops_call(
+	'media_update_meta',
+	array( diviops_media_req( array( 'id' => 1055, 'alt' => $media_plain_alt ) ) )
+);
+assert_same(
+	$media_plain_alt,
+	get_post_meta( 1055, '_wp_attachment_image_alt', true ),
+	'control: alt text with no backslash is stored unchanged'
+);
+
+$r = diviops_call(
+	'media_update_meta',
+	array( diviops_media_req( array( 'id' => 1055, 'alt' => $media_slashy_alt, 'caption' => $media_slashy_cap ) ) )
+);
+$d = $r->get_data();
+assert_true( true === $d['ok'], 'the slash-bearing update succeeds' );
+assert_same(
+	$media_slashy_alt,
+	get_post_meta( 1055, '_wp_attachment_image_alt', true ),
+	'alt text keeps its backslashes in storage, so the response and the database agree (#595)'
+);
+assert_same(
+	$media_slashy_cap,
+	$GLOBALS['diviops_test_posts'][1055]->post_excerpt,
+	'the caption keeps its backslashes in storage (#595)'
+);
+
 
 // Test-global hygiene: unset everything this suite set so later test files
 // start from a clean slate.

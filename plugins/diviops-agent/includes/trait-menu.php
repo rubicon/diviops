@@ -245,7 +245,7 @@ trait DiviOps_Agent_Menu {
 		}
 
 		$args = [
-			'menu-item-title'     => $title,
+			'menu-item-title'     => wp_slash( $title ),
 			'menu-item-object-id' => $page_id,
 			'menu-item-object'    => 'page',
 			'menu-item-type'      => 'post_type',
@@ -332,7 +332,7 @@ trait DiviOps_Agent_Menu {
 		}
 
 		$args = [
-			'menu-item-title'     => $label,
+			'menu-item-title'     => wp_slash( $label ),
 			'menu-item-url'       => $url,
 			'menu-item-type'      => 'custom',
 			'menu-item-status'    => 'publish',

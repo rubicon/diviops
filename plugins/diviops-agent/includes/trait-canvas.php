@@ -161,7 +161,7 @@ trait DiviOps_Agent_Canvas {
 		}
 
 		$post_id = wp_insert_post( [
-			'post_title'   => $title,
+			'post_title'   => wp_slash( $title ),
 			'post_content' => wp_slash( $content ),
 			'post_status'  => 'publish',
 			'post_type'    => 'et_pb_canvas',
@@ -278,7 +278,7 @@ trait DiviOps_Agent_Canvas {
 		}
 
 		$new_post_id = wp_insert_post( [
-			'post_title'   => $new_title,
+			'post_title'   => wp_slash( $new_title ),
 			'post_content' => wp_slash( (string) $source->post_content ),
 			'post_status'  => 'publish',
 			'post_type'    => 'et_pb_canvas',
@@ -360,7 +360,7 @@ trait DiviOps_Agent_Canvas {
 		$args = [
 			'post_type'      => 'et_pb_canvas',
 			'post_status'    => 'any',
-			'title'          => $title,
+			'title'          => wp_slash( $title ),
 			'posts_per_page' => 1,
 			'fields'         => 'ids',
 			'no_found_rows'  => true,
@@ -1187,7 +1187,7 @@ trait DiviOps_Agent_Canvas {
 			$update_args['post_content'] = wp_slash( $content );
 		}
 		if ( null !== $title ) {
-			$update_args['post_title'] = sanitize_text_field( $title );
+			$update_args['post_title'] = wp_slash( sanitize_text_field( $title ) );
 		}
 
 		if ( (bool) $request->get_param( 'dry_run' ) ) {

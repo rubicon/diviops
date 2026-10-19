@@ -638,7 +638,7 @@ trait DiviOps_Agent_Page {
 				);
 			}
 			$requested['title']  = $title;
-			$update['post_title'] = $title;
+			$update['post_title'] = wp_slash( $title );
 		}
 
 		$sanitized_slug = null;
@@ -965,7 +965,7 @@ trait DiviOps_Agent_Page {
 		}
 
 		$post_id = wp_insert_post( [
-			'post_title'   => $title,
+			'post_title'   => wp_slash( $title ),
 			'post_content' => wp_slash( $content ),
 			'post_status'  => $status,
 			'post_type'    => $post_type,
@@ -1153,7 +1153,7 @@ trait DiviOps_Agent_Page {
 		// content, status, and these fields land in a single atomic write —
 		// no second content write, so no empty-shell-page window.
 		$new_post_id = wp_insert_post( [
-			'post_title'   => $new_title,
+			'post_title'   => wp_slash( $new_title ),
 			'post_content' => wp_slash( $source_content ),
 			'post_status'  => $status,
 			'post_type'    => $post_type,
