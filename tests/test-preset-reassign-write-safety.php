@@ -10,10 +10,14 @@
  * "every page and post on the site, re-resolved at apply time".
  *
  * Coverage here is split the way this harness already splits write-path
- * coverage, because preset_reassign() cannot be driven end to end in it:
- * parse_blocks() is deliberately unshimmed (see test-global-layout-write-guard.php's
- * header and test-parse-blocks-for-write-coverage.php), and this suite does not
- * fake that behavior.
+ * coverage, because preset_reassign() cannot be driven end to end in THIS file:
+ * parse_blocks() is deliberately unshimmed in the shared shim (see
+ * test-global-layout-write-guard.php's header and
+ * test-parse-blocks-for-write-coverage.php), and this suite does not fake that
+ * behavior. Since #598 a suite can opt into core's own parser behind
+ * DIVIOPS_WP_SOURCE, and since #604 tests/test-wp-source-preset-reassign.php
+ * drives this handler's dry-run, apply and round-trip refusal end to end,
+ * asserting on stored content.
  *
  *   (1) Behavioral tests over the three pure helpers the handler delegates to
  *       (apply-mode target refusal, round-trip drift detection, apply-response
@@ -21,10 +25,18 @@
  *   (2) One request-level test that the apply-mode target refusal really is
  *       wired into preset_reassign() and reaches the caller as an envelope.
  *       That call returns before the preset registry is read, which is the
- *       only reason it can run here at all: the registry probe goes through
- *       et_get_option(), a Divi option-storage primitive this harness does not
- *       shim (see test-variable-update.php's header for the same boundary —
- *       faking it would mean asserting against a fake persistence layer).
+ *       only reason it can run here at all — "here" meaning this file, which
+ *       loads no parser. The registry itself is NOT the wall it was once
+ *       described as: d5_preset_paths() (trait-core.php) probes the dotless
+ *       et_divi_builder_global_presets_d5 FIRST, read_storage_path() reads a
+ *       dotless path with plain get_option(), and probe_storage_paths() stops
+ *       at the first non-empty hit, so seeding that option never reaches
+ *       et_get_option() at all. Only the second, dotted candidate goes through
+ *       et_get_option(), the Divi option-storage primitive the base harness
+ *       deliberately leaves undefined (see test-variable-update.php's header
+ *       for that boundary — faking it would mean asserting against a fake
+ *       persistence layer). test-wp-source-preset-reassign.php relies on that
+ *       probe order and requires no Divi option shim.
  *   (3) Structural regression guards read from the real method source via
  *       Reflection, in the shape of test-parse-blocks-for-write-coverage.php,
  *       for the wiring inside the per-page loop — that the snapshot is created
