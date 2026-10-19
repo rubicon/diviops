@@ -378,10 +378,39 @@ What skills do you have?
 You should see `divi-5-builder` and any bundled DiviOps slice skills you installed.
 
 Codex manual skills are not updated by npm, WordPress, or Claude plugin updates;
-replace the copied directory from the new distribution and restart Codex. Claude
-Desktop and other MCP clients may connect to the server without loading Claude
-Code's `.claude/skills` directories. Use that client's supported knowledge or
-skill mechanism; otherwise treat the client as read-only for Divi authoring.
+replace the copied directory from the new distribution and restart Codex.
+
+### Claude Desktop and claude.ai
+
+Custom Skills **do not sync across surfaces**, so `claude plugin install
+rubicon/diviops` does not make `divi-5-builder` available in Claude Desktop or
+claude.ai — Claude Code skills are filesystem-based and separate from both. Claude
+Desktop draws on the Skills enabled for your claude.ai account, not on
+`~/.claude/skills`.
+
+Upload the skill to the account instead:
+
+```bash
+cd skills && zip -r divi-5-builder.zip divi-5-builder
+```
+
+Then in claude.ai open **Settings → Features** and upload `divi-5-builder.zip`.
+
+Three constraints come with that route, none of them ours to change:
+
+- It needs a Pro, Max, Team, or Enterprise plan with code execution enabled.
+- Custom Skills on claude.ai are **per-user**. They cannot be distributed
+  org-wide or managed centrally, so everyone uploads their own copy.
+- The upload is a separate copy from the Claude Code install. Updating one does
+  not update the other; re-zip and re-upload after taking a new distribution.
+
+Source: [Agent Skills](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview).
+Verified 2026-10-13. This is a third party's product behaviour, it can change, and
+no gate in this repository can check it — re-read that page rather than trusting
+this paragraph if an upload is refused.
+
+For any client with no comparable mechanism, treat it as read-only for Divi
+authoring.
 
 ## First-run native Divi verification
 
