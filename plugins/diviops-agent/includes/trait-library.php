@@ -45,7 +45,14 @@ trait DiviOps_Agent_Library {
 		$args = [
 			'post_type'      => 'et_pb_layout',
 			'post_status'    => 'any',
-			'title'          => $title,
+			// wp_slash() for the same reason canvas_existing_id_by_title() does it:
+			// WP_Query runs stripslashes() on this query var before comparing it to
+			// the stored post_title (wp-includes/class-wp-query.php), and the write
+			// below stores a slashed title. Leaving this unslashed while slashing
+			// the write is worse than leaving both alone — the comparison then never
+			// matches a title carrying a backslash, so the conflict refusal stops
+			// firing and duplicates get created instead (#595).
+			'title'          => wp_slash( $title ),
 			'posts_per_page' => 1,
 			'fields'         => 'ids',
 			'no_found_rows'  => true,
@@ -251,7 +258,7 @@ trait DiviOps_Agent_Library {
 		}
 
 		$post_id = wp_insert_post( [
-			'post_title'   => $title,
+			'post_title'   => wp_slash( $title ),
 			'post_content' => wp_slash( $content ),
 			'post_type'    => 'et_pb_layout',
 			'post_status'  => 'publish',

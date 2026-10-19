@@ -320,3 +320,63 @@ foreach ( $route_specs as $handler => $path ) {
 		"DiviOps_Agent::{$handler} exists once the trait is mixed in"
 	);
 }
+
+// ── #595: a menu item label must keep a backslash ────────────────────────
+// Core's wp_update_nav_menu_item() hands menu-item-title to wp_insert_post(),
+// which unslashes the DB-bound data (post.php:4981). It also calls
+// wp_unslash( $args['menu-item-title'] ) itself to compare against the original,
+// which is core stating that callers pass a SLASHED title. Both add handlers
+// passed it raw, so a label carrying a backslash was stored without it while the
+// response echoed what the caller sent.
+//
+// These are the first end-to-end assertions on either add handler: before #595
+// the shim had no wp_update_nav_menu_item at all, so neither could be driven.
+diviops_menu_reset();
+diviops_test_register_nav_menu( 40, 'Slash Menu' );
+diviops_test_register_post( 4400, '', 'page', 'Slash Page' );
+
+$menu_slashy = 'Label Foo\\Bar and C:\\path';
+$menu_plain  = 'Plain label';
+
+// Control: a label with no backslash stores unchanged either way. If this fails,
+// the defect is not the slashing and the assertions below measure something else.
+$resp = diviops_call(
+	'menu_item_add_custom',
+	array( diviops_menu_request( array( 'menu_id' => 40, 'url' => 'https://example.com/a', 'label' => $menu_plain ) ) )
+);
+$data = $resp->get_data();
+assert_true( true === $data['ok'], 'control: the plain-label custom item is added' );
+$menu_plain_id = (int) $data['data']['item']['id'];
+assert_same(
+	$menu_plain,
+	(string) $GLOBALS['diviops_test_nav_menu_items'][ $menu_plain_id ]->title,
+	'control: a label with no backslash is stored unchanged'
+);
+
+$resp = diviops_call(
+	'menu_item_add_custom',
+	array( diviops_menu_request( array( 'menu_id' => 40, 'url' => 'https://example.com/b', 'label' => $menu_slashy ) ) )
+);
+$data = $resp->get_data();
+assert_true( true === $data['ok'], 'the slash-bearing custom item is added' );
+$menu_custom_id = (int) $data['data']['item']['id'];
+assert_same(
+	$menu_slashy,
+	(string) $GLOBALS['diviops_test_nav_menu_items'][ $menu_custom_id ]->title,
+	'a custom menu item keeps the backslashes in its label (#595)'
+);
+
+$resp = diviops_call(
+	'menu_item_add_page',
+	array( diviops_menu_request( array( 'menu_id' => 40, 'page_id' => 4400, 'label' => $menu_slashy ) ) )
+);
+$data = $resp->get_data();
+assert_true( true === $data['ok'], 'the slash-bearing page item is added' );
+$menu_page_id = (int) $data['data']['item']['id'];
+assert_same(
+	$menu_slashy,
+	(string) $GLOBALS['diviops_test_nav_menu_items'][ $menu_page_id ]->title,
+	'a page menu item keeps the backslashes in its label (#595)'
+);
+
+diviops_menu_reset();
