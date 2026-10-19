@@ -2601,6 +2601,48 @@ if ( ! function_exists( 'diviops_test_register_nav_menu_item' ) ) {
 	}
 }
 
+if ( ! function_exists( 'wp_update_nav_menu_item' ) ) {
+	/**
+	 * Model WP core's wp_update_nav_menu_item() (wp-includes/nav-menu.php).
+	 *
+	 * Core builds a post array from $menu_item_data and hands it to
+	 * wp_insert_post(), which unslashes the DB-bound data (post.php:4981), so a
+	 * title arrives stored UNSLASHED. Core also calls
+	 * wp_unslash( $args['menu-item-title'] ) itself to compare the incoming title
+	 * against the original -- which is core stating that a caller is expected to
+	 * pass a SLASHED title. Modelling that is what lets a test observe a caller
+	 * that forgot wp_slash() (#595); before this existed the function was absent
+	 * from the shim entirely and both menu-item-add handlers had no end-to-end
+	 * coverage at all.
+	 *
+	 * @param int   $menu_id          Menu term id.
+	 * @param int   $menu_item_db_id  0 to create, else the item to update.
+	 * @param array $menu_item_data   Core's menu-item-* argument array.
+	 * @return int The menu item post id.
+	 */
+	function wp_update_nav_menu_item( $menu_id = 0, $menu_item_db_id = 0, $menu_item_data = array(), $fire_after_hooks = true ) {
+		$id = (int) $menu_item_db_id;
+		if ( $id <= 0 ) {
+			$id                              = ( $GLOBALS['diviops_test_next_id'] ?? 9000 );
+			$GLOBALS['diviops_test_next_id'] = $id + 1;
+		}
+		$existing = $GLOBALS['diviops_test_nav_menu_items'][ $id ] ?? null;
+		$item     = diviops_test_register_nav_menu_item( array(
+			'ID'         => $id,
+			'menu_id'    => (int) $menu_id ?: (int) ( $existing->menu_id ?? 0 ),
+			'title'      => wp_unslash( (string) ( $menu_item_data['menu-item-title'] ?? ( $existing->title ?? '' ) ) ),
+			'url'        => wp_unslash( (string) ( $menu_item_data['menu-item-url'] ?? ( $existing->url ?? '' ) ) ),
+			'type'       => (string) ( $menu_item_data['menu-item-type'] ?? ( $existing->type ?? 'custom' ) ),
+			'object'     => (string) ( $menu_item_data['menu-item-object'] ?? ( $existing->object ?? '' ) ),
+			'object_id'  => (int) ( $menu_item_data['menu-item-object-id'] ?? ( $existing->object_id ?? 0 ) ),
+			'menu_order' => (int) ( $menu_item_data['menu-item-position'] ?? ( $existing->menu_order ?? 0 ) ),
+			'parent'     => (int) ( $menu_item_data['menu-item-parent-id'] ?? 0 ),
+		) );
+
+		return (int) $item->ID;
+	}
+}
+
 if ( ! function_exists( 'get_allowed_mime_types' ) ) {
 	/**
 	 * Model WP core's get_allowed_mime_types(): the site's ext-pattern => mime
