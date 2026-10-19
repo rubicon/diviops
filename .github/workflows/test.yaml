@@ -109,10 +109,20 @@ jobs:
           # having run none of the end-to-end assertions. Assert the positive
           # control the suite prints, not merely the absence of its SKIP line:
           # a run that died before reaching the file has neither.
-          if ! grep -q 'wp-source block parser: WordPress ' "$RUNNER_TEMP/suite.txt"; then
-            echo "::error::the WordPress-source block-parser half did not run. DIVIOPS_WP_SOURCE did not take effect; this is a blind gate, not a pass."
-            exit 1
-          fi
+          # Each guarded half prints its own provenance line, and each is
+          # checked separately: one file's line is not evidence another file's
+          # half ran, and a half that silently SKIPped would otherwise leave a
+          # green PASS having asserted nothing (#604).
+          for probe in \
+            'wp-source block parser: WordPress ' \
+            'wp-source module write ops: core at ' \
+            'wp-source preset reassign: core at '
+          do
+            if ! grep -q "$probe" "$RUNNER_TEMP/suite.txt"; then
+              echo "::error::a WordPress-source half did not run (missing: ${probe}). DIVIOPS_WP_SOURCE did not take effect; this is a blind gate, not a pass."
+              exit 1
+            fi
+          done
 
   # A separate job, not a matrix leg of "Test suite" above (#72): that job's
   # exact name is a required status check in branch protection, and renaming
@@ -153,10 +163,20 @@ jobs:
           # having run none of the end-to-end assertions. Assert the positive
           # control the suite prints, not merely the absence of its SKIP line:
           # a run that died before reaching the file has neither.
-          if ! grep -q 'wp-source block parser: WordPress ' "$RUNNER_TEMP/suite.txt"; then
-            echo "::error::the WordPress-source block-parser half did not run. DIVIOPS_WP_SOURCE did not take effect; this is a blind gate, not a pass."
-            exit 1
-          fi
+          # Each guarded half prints its own provenance line, and each is
+          # checked separately: one file's line is not evidence another file's
+          # half ran, and a half that silently SKIPped would otherwise leave a
+          # green PASS having asserted nothing (#604).
+          for probe in \
+            'wp-source block parser: WordPress ' \
+            'wp-source module write ops: core at ' \
+            'wp-source preset reassign: core at '
+          do
+            if ! grep -q "$probe" "$RUNNER_TEMP/suite.txt"; then
+              echo "::error::a WordPress-source half did not run (missing: ${probe}). DIVIOPS_WP_SOURCE did not take effect; this is a blind gate, not a pass."
+              exit 1
+            fi
+          done
 
   # Additive defense-in-depth for the declared "Requires PHP: 7.4" floor (#180).
   # This is NOT the primary gate for that class of bug: a PHP-8-only *function
@@ -202,10 +222,20 @@ jobs:
           # having run none of the end-to-end assertions. Assert the positive
           # control the suite prints, not merely the absence of its SKIP line:
           # a run that died before reaching the file has neither.
-          if ! grep -q 'wp-source block parser: WordPress ' "$RUNNER_TEMP/suite.txt"; then
-            echo "::error::the WordPress-source block-parser half did not run. DIVIOPS_WP_SOURCE did not take effect; this is a blind gate, not a pass."
-            exit 1
-          fi
+          # Each guarded half prints its own provenance line, and each is
+          # checked separately: one file's line is not evidence another file's
+          # half ran, and a half that silently SKIPped would otherwise leave a
+          # green PASS having asserted nothing (#604).
+          for probe in \
+            'wp-source block parser: WordPress ' \
+            'wp-source module write ops: core at ' \
+            'wp-source preset reassign: core at '
+          do
+            if ! grep -q "$probe" "$RUNNER_TEMP/suite.txt"; then
+              echo "::error::a WordPress-source half did not run (missing: ${probe}). DIVIOPS_WP_SOURCE did not take effect; this is a blind gate, not a pass."
+              exit 1
+            fi
+          done
 
   static-analysis:
     name: PHPStan
