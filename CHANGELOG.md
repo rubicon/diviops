@@ -10,6 +10,13 @@ before each release. This fork descends from
 [oaris-dev/diviops](https://github.com/oaris-dev/diviops); versions before the
 fork's own line began are upstream's.
 
+## [1.30.4](https://github.com/rubicon/diviops/compare/v1.30.3...v1.30.4) (2026-10-19)
+
+
+### Bug Fixes
+
+* **#607:** gitignore the Codex harness directory ([#608](https://github.com/rubicon/diviops/issues/608)) ([4285337](https://github.com/rubicon/diviops/commit/4285337a23cca0ca429867831163637670299c0d)), closes [#607](https://github.com/rubicon/diviops/issues/607)
+
 ## [1.30.3](https://github.com/rubicon/diviops/compare/v1.30.2...v1.30.3) (2026-10-16)
 
 
