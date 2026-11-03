@@ -118,17 +118,25 @@ function diviops_site_label( $host, string $plugin_dir ): string {
  * question is another connection, and because the three answers have to come from the
  * same moment to describe the same site.
  *
- * The remote command's exit codes are the whole contract. 91 and 92 are picked to sit
+ * The remote command's exit codes are the whole contract. 91, 92 and 93 are picked to sit
  * clear of the shell's own (126, 127) and of ssh's transport failure (255), so
  * "the host said no" can never be confused with "the host never answered". Every code
  * this function does not recognise is unreachable, which is the safe reading: a state
  * that reports a site it could not talk to as `absent` is one skip away from a green
  * run over a site that is quietly behind.
  *
+ * `absent` and `no_install` are both "the plugin directory is not there", and they are
+ * kept apart because only one of them is a question this function could not answer (#619).
+ * A plugins directory with no `diviops-agent` in it is a site that answered: our plugin is
+ * not deployed to it, which is a deploy failure the gate must report. No plugins directory
+ * at all is a target carrying no WordPress, which there is nothing to compare against. The
+ * caller skips the second and fails the first; collapsing them into one state is what let a
+ * live site with the plugin deleted print a green run.
+ *
  * @param string|null $host       Host to reach, or null for this machine.
  * @param string      $plugin_dir Installed plugin directory.
  * @return array{state: string, source: string|null} state is
- *         found|absent|invalid|unreachable; source is the main file's text when found.
+ *         found|absent|no_install|invalid|unreachable; source is the main file's text when found.
  */
 function diviops_site_plugin_probe( $host, string $plugin_dir ): array {
 	$main = rtrim( $plugin_dir, '/' ) . '/diviops-agent.php';
@@ -136,7 +144,7 @@ function diviops_site_plugin_probe( $host, string $plugin_dir ): array {
 	if ( null === $host ) {
 		if ( ! is_dir( $plugin_dir ) ) {
 			return array(
-				'state'  => 'absent',
+				'state'  => is_dir( dirname( $plugin_dir ) ) ? 'absent' : 'no_install',
 				'source' => null,
 			);
 		}
@@ -153,8 +161,9 @@ function diviops_site_plugin_probe( $host, string $plugin_dir ): array {
 	}
 
 	$remote = sprintf(
-		'test -d %s || exit 91; cat %s 2>/dev/null || exit 92',
+		'test -d %s || { test -d %s && exit 91; exit 93; }; cat %s 2>/dev/null || exit 92',
 		escapeshellarg( rtrim( $plugin_dir, '/' ) ),
+		escapeshellarg( dirname( rtrim( $plugin_dir, '/' ) ) ),
 		escapeshellarg( $main )
 	);
 
@@ -186,6 +195,12 @@ function diviops_site_plugin_probe( $host, string $plugin_dir ): array {
 	if ( 92 === $status ) {
 		return array(
 			'state'  => 'invalid',
+			'source' => null,
+		);
+	}
+	if ( 93 === $status ) {
+		return array(
+			'state'  => 'no_install',
 			'source' => null,
 		);
 	}
@@ -337,6 +352,24 @@ function diviops_local_site_target( $env, string $claude_md ): array {
 }
 
 /**
+ * Whether a drift status is an answer the gate must act on, rather than a question it could not ask.
+ *
+ * The gate's two outcomes hang entirely off this: a decisive status is asserted on and fails the
+ * suite, anything else prints a loud skip with its reason. It is a named function instead of a
+ * literal list inside the test because the test cannot reach the live half's branch on a machine
+ * with no site, so a list written there is unverifiable and a mutation to it survives (#619).
+ *
+ * `absent` is decisive: the host answered, and the answer was that diviops-agent is not deployed.
+ * `no_install` is not: the target carries no WordPress, so there is nothing to compare.
+ *
+ * @param string $status A status from diviops_local_site_report().
+ * @return bool True when the status must be asserted on rather than skipped.
+ */
+function diviops_local_site_status_is_decisive( string $status ): bool {
+	return in_array( $status, array( 'current', 'drift', 'invalid', 'absent' ), true );
+}
+
+/**
  * Report whether the local dev site is running the repository's plugin version.
  *
  * The status vocabulary is deliberately six values rather than a boolean, because
@@ -398,10 +431,20 @@ function diviops_local_site_report( $env, string $claude_md, string $repo_main )
 		return $report;
 	}
 
+	if ( 'no_install' === $probe['state'] ) {
+		$report['status'] = 'no_install';
+		$report['reason'] = sprintf(
+			'no WordPress install at %s (target came from %s), so nothing about the deployed plugin was inspected — this is not a pass',
+			$label,
+			$target['source']
+		);
+		return $report;
+	}
+
 	if ( 'absent' === $probe['state'] ) {
 		$report['status'] = 'absent';
 		$report['reason'] = sprintf(
-			'no plugin installed at %s (target came from %s)',
+			'%s carries a WordPress install with no diviops-agent on it (target came from %s) — the plugin is not deployed there, and scripts/deploy-local-site.sh updates an existing install rather than bootstrapping one',
 			$label,
 			$target['source']
 		);
