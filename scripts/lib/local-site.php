@@ -444,7 +444,7 @@ function diviops_local_site_report( $env, string $claude_md, string $repo_main )
 	if ( 'absent' === $probe['state'] ) {
 		$report['status'] = 'absent';
 		$report['reason'] = sprintf(
-			'%s carries a WordPress install, and diviops-agent is not installed on it (target came from %s) — run scripts/deploy-local-site.sh',
+			'%s carries a WordPress install with no diviops-agent on it (target came from %s) — the plugin is not deployed there, and scripts/deploy-local-site.sh updates an existing install rather than bootstrapping one',
 			$label,
 			$target['source']
 		);

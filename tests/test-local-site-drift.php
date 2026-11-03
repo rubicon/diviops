@@ -184,6 +184,35 @@ assert_true(
 	'the absent report names the install it inspected: ' . $report['reason']
 );
 
+// The reason is read by an operator deciding what to do next, so it must not prescribe a
+// command that refuses this very state. scripts/deploy-local-site.sh updates an install it
+// can already identify as a DiviOps plugin directory; it has no bootstrap path, and every
+// status outside its case arms exits non-zero without deploying. Read the arms out of the
+// script rather than restating them, so teaching it to bootstrap flips this assertion
+// instead of leaving a stale instruction in the reason.
+$absent_reason = $report['reason'];
+$deploy_src    = (string) file_get_contents( $root . '/scripts/deploy-local-site.sh' );
+assert_true( strlen( $deploy_src ) > 500, 'deploy-local-site.sh loaded — positive control for the arms below' );
+
+preg_match( '/case "\$STATUS" in(.*?)\besac\b/s', $deploy_src, $case_block );
+assert_true( isset( $case_block[1] ), 'the deploy script dispatches on $STATUS in a case block' );
+preg_match_all( '/^\s{2}([a-z_|]+)\)/m', $case_block[1], $arms );
+$deploy_accepts = isset( $arms[1] ) ? $arms[1] : array();
+assert_true( count( $deploy_accepts ) > 0, 'the case arms were actually extracted: ' . var_export( $deploy_accepts, true ) );
+assert_same(
+	array( 'current', 'drift' ),
+	$deploy_accepts,
+	'the deploy script handles exactly current and drift; everything else hits its error arm'
+);
+assert_true(
+	false === in_array( 'absent', $deploy_accepts, true ),
+	'absent is not a state the deploy script will act on'
+);
+assert_true(
+	false === strpos( $absent_reason, 'run scripts/deploy-local-site.sh' ),
+	'the absent reason does not tell the operator to run a script that refuses absent: ' . $absent_reason
+);
+
 // 3. Present but not a DiviOps plugin directory.
 $root_invalid = $tmp . '/invalid';
 diviops_drift_test_site( $root_invalid, null );
@@ -816,10 +845,15 @@ $live       = diviops_local_site_report(
 assert_true( '' !== $live['reason'], 'the live drift check states what it found, whether it checked or skipped' );
 
 if ( diviops_local_site_status_is_decisive( $live['status'] ) ) {
+	// Only suggest the deploy script for a status it will actually act on. Routing `absent`
+	// into this branch made the old unconditional hint contradict the reason beside it, which
+	// told the operator the script refuses that state. $deploy_accepts is read out of the
+	// script itself above, so this cannot drift from what it handles.
+	$remedy = in_array( $live['status'], $deploy_accepts, true ) ? ' Run scripts/deploy-local-site.sh.' : '';
 	assert_same(
 		'current',
 		$live['status'],
-		'the dev site runs the current plugin — run scripts/deploy-local-site.sh. ' . $live['reason']
+		'the dev site runs the current plugin. ' . $live['reason'] . $remedy
 	);
 } else {
 	printf( "SKIP  site drift check: %s%s", $live['reason'], PHP_EOL );
