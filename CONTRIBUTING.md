@@ -352,6 +352,15 @@ that all of them stay in sync.
 
 ### Curating the release object
 
+Curating by hand is not a local invention. Keep a Changelog 2.0.0 states the same division
+of labour — "machines can draft, but humans curate", and a generated changelog is "raw
+material at best" — so the *principle* below is what the standard asks for. The *artifact*
+is still this repository's own exception: 2.0.0 expects the changelog itself to be curated,
+and we curate the release object instead and leave `CHANGELOG.md` machine-generated, for
+the reason recorded at the end of this section. 2.0.0 also says not to make a changelog
+edit a required check on every change, which is why this is a release-time step and not a
+per-PR gate.
+
 Merging the release PR is step one of two. release-please generates the release body
 mechanically from commit subjects, which reads like commit spam and is not what we
 publish. Before announcing or linking a release, edit the release object:
@@ -369,8 +378,15 @@ publish. Before announcing or linking a release, edit the release object:
    start. It is skippable, but it should earn the read.
 4. **Cut what the standard excludes.** Routine refactors, dependency bumps, test-only
    changes, and CI churn come out unless they affect users, operators, contributors, or
-   release integrity.
-5. **Disclaimer**, last line, after every section: this plugin rewrites pages, presets,
+   release integrity. That `unless` is load-bearing for dependencies in particular: Keep a
+   Changelog 2.0.0 treats a dependency as not being a change type at all, since an update
+   can be harmless, a fix, or breaking. Describe the effect under the type it belongs to,
+   or leave it out; never list the bump itself.
+5. **Breaking marker.** An entry that comes from a breaking change is prefixed
+   `**Breaking:**` and stays inside its own category rather than being hoisted into a
+   section of its own. Keep a Changelog 2.0.0 asks for it so a breaking change stands out
+   where the reader is already looking; they usually land under `Changed` or `Removed`.
+6. **Disclaimer**, last line, after every section: this plugin rewrites pages, presets,
    and theme-builder layouts, so every release note ends with a one-line warning to back
    up before upgrading, in the same voice as the rest of the note.
 
