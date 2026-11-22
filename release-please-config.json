@@ -8,6 +8,8 @@
     ".": {
       "release-type": "simple",
       "package-name": "diviops-agent",
+      "draft": true,
+      "force-tag-creation": true,
       "exclude-paths": [
         "diviops-server"
       ],
