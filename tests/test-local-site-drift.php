@@ -96,6 +96,21 @@ function diviops_drift_test_site( string $wp_root, ?string $version ): string {
 }
 
 /**
+ * Build a synthetic WordPress root whose plugins directory exists but holds no DiviOps Agent.
+ *
+ * This is the state the gate used to file as "nothing to check": the site is real and
+ * answered, and the answer was that our plugin is not installed on it. It is a deploy
+ * failure, not an absence of information (#619).
+ *
+ * @param string $wp_root Directory to create as the WordPress root.
+ * @return string The plugin directory that was NOT created, as the caller will ask for it.
+ */
+function diviops_drift_test_site_missing_plugin( string $wp_root ): string {
+	mkdir( $wp_root . '/wp-content/plugins', 0700, true );
+	return $wp_root . '/wp-content/plugins/diviops-agent';
+}
+
+/**
  * Build a synthetic WordPress root carrying a real copy of the repository plugin.
  *
  * A hand-written one-file stub declaring the right version is not "in sync" once the
@@ -150,10 +165,52 @@ assert_same( null, $report['plugin_dir'], 'an unconfigured report names no plugi
 // 2. Configured but not present on this machine — the CI case.
 $report          = diviops_local_site_report( $tmp . '/no-such-site', $md_none, $repo_main );
 $statuses_seen[] = $report['status'];
-assert_same( 'absent', $report['status'], 'a configured target that does not exist reports absent, not current' );
+assert_same( 'no_install', $report['status'], 'a configured target with no WordPress install reports no_install, not current' );
 assert_true(
 	false !== strpos( $report['reason'], $tmp . '/no-such-site' ),
-	'the absent skip names the path it looked for'
+	'the no_install skip names the path it looked for'
+);
+
+// 2b. A real install that answered, and the answer is that our plugin is not on it.
+// This is the state #619 is about: determinate, and a deploy failure rather than a
+// missing site. It must never render the same as case 2 above.
+$root_missing_plugin = $tmp . '/missing-plugin';
+diviops_drift_test_site_missing_plugin( $root_missing_plugin );
+$report          = diviops_local_site_report( $root_missing_plugin, $md_none, $repo_main );
+$statuses_seen[] = $report['status'];
+assert_same( 'absent', $report['status'], 'a WordPress install with no diviops-agent reports absent, not no_install' );
+assert_true(
+	false !== strpos( $report['reason'], $root_missing_plugin ),
+	'the absent report names the install it inspected: ' . $report['reason']
+);
+
+// The reason is read by an operator deciding what to do next, so it must not prescribe a
+// command that refuses this very state. scripts/deploy-local-site.sh updates an install it
+// can already identify as a DiviOps plugin directory; it has no bootstrap path, and every
+// status outside its case arms exits non-zero without deploying. Read the arms out of the
+// script rather than restating them, so teaching it to bootstrap flips this assertion
+// instead of leaving a stale instruction in the reason.
+$absent_reason = $report['reason'];
+$deploy_src    = (string) file_get_contents( $root . '/scripts/deploy-local-site.sh' );
+assert_true( strlen( $deploy_src ) > 500, 'deploy-local-site.sh loaded — positive control for the arms below' );
+
+preg_match( '/case "\$STATUS" in(.*?)\besac\b/s', $deploy_src, $case_block );
+assert_true( isset( $case_block[1] ), 'the deploy script dispatches on $STATUS in a case block' );
+preg_match_all( '/^\s{2}([a-z_|]+)\)/m', $case_block[1], $arms );
+$deploy_accepts = isset( $arms[1] ) ? $arms[1] : array();
+assert_true( count( $deploy_accepts ) > 0, 'the case arms were actually extracted: ' . var_export( $deploy_accepts, true ) );
+assert_same(
+	array( 'current', 'drift' ),
+	$deploy_accepts,
+	'the deploy script handles exactly current and drift; everything else hits its error arm'
+);
+assert_true(
+	false === in_array( 'absent', $deploy_accepts, true ),
+	'absent is not a state the deploy script will act on'
+);
+assert_true(
+	false === strpos( $absent_reason, 'run scripts/deploy-local-site.sh' ),
+	'the absent reason does not tell the operator to run a script that refuses absent: ' . $absent_reason
 );
 
 // 3. Present but not a DiviOps plugin directory.
@@ -432,8 +489,13 @@ diviops_drift_test_stub_log( $stub_log );
 // than the local one. `unreachable` has no local counterpart and comes after them.
 $report          = diviops_local_site_report( 'fixture-host:' . $tmp . '/no-such-remote-site', $md_none, $repo_main );
 $statuses_seen[] = $report['status'];
-assert_same( 'absent', $report['status'], 'a remote target with nothing installed reports absent, not current' );
-assert_same( 'fixture-host', $report['host'], 'an absent remote report still names the host it asked' );
+assert_same( 'no_install', $report['status'], 'a remote target with no WordPress install reports no_install, not current' );
+assert_same( 'fixture-host', $report['host'], 'a no_install remote report still names the host it asked' );
+
+$report          = diviops_local_site_report( 'fixture-host:' . $root_missing_plugin, $md_none, $repo_main );
+$statuses_seen[] = $report['status'];
+assert_same( 'absent', $report['status'], 'a remote install with no diviops-agent reports absent over the transport too' );
+assert_same( 'fixture-host', $report['host'], 'an absent remote report names the host it asked' );
 
 $report          = diviops_local_site_report( 'fixture-host:' . $root_invalid, $md_none, $repo_main );
 $statuses_seen[] = $report['status'];
@@ -515,11 +577,39 @@ assert_same( '', trim( $cli['output'] ), 'a local target prints an empty host ra
 
 // Coverage assertion. Every status this check can produce must have been reached by
 // a fixture, so no branch of it is dead code that only "works" in theory.
-$expected_statuses = array( 'unconfigured', 'unreachable', 'absent', 'invalid', 'drift', 'current' );
+$expected_statuses = array( 'unconfigured', 'unreachable', 'no_install', 'absent', 'invalid', 'drift', 'current' );
 sort( $expected_statuses );
 $seen = array_values( array_unique( $statuses_seen ) );
 sort( $seen );
 assert_same( $expected_statuses, $seen, 'every reachable status was actually exercised, including the skip paths' );
+
+// Which of those statuses fail the gate and which skip it. The live half below branches on
+// this, and on a machine with no site that branch is unreachable, so it is pinned here where
+// a fixture can see it. `absent` sitting on the skip side is the #619 defect itself.
+$decisive = array();
+foreach ( $expected_statuses as $status ) {
+	if ( diviops_local_site_status_is_decisive( $status ) ) {
+		$decisive[] = $status;
+	}
+}
+sort( $decisive );
+assert_same(
+	array( 'absent', 'current', 'drift', 'invalid' ),
+	$decisive,
+	'the gate draws a conclusion from exactly the statuses where the target answered'
+);
+assert_true(
+	diviops_local_site_status_is_decisive( 'absent' ),
+	'an install that answered without diviops-agent on it fails the gate rather than skipping it'
+);
+assert_true(
+	false === diviops_local_site_status_is_decisive( 'no_install' ),
+	'a target carrying no WordPress skips the gate, because there is nothing to compare'
+);
+assert_true(
+	false === diviops_local_site_status_is_decisive( 'unreachable' ),
+	'a host that never answered skips the gate, which is every CI run'
+);
 
 /* -------------------------------------------------------------------------
  * scripts/deploy-local-site.sh, against synthetic sites only.
@@ -754,16 +844,25 @@ $live       = diviops_local_site_report(
 
 assert_true( '' !== $live['reason'], 'the live drift check states what it found, whether it checked or skipped' );
 
-if ( 'current' === $live['status'] || 'drift' === $live['status'] || 'invalid' === $live['status'] ) {
+if ( diviops_local_site_status_is_decisive( $live['status'] ) ) {
+	// Only suggest the deploy script for a status it will actually act on. Routing `absent`
+	// into this branch made the old unconditional hint contradict the reason beside it, which
+	// told the operator the script refuses that state. $deploy_accepts is read out of the
+	// script itself above, so this cannot drift from what it handles.
+	$remedy = in_array( $live['status'], $deploy_accepts, true ) ? ' Run scripts/deploy-local-site.sh.' : '';
 	assert_same(
 		'current',
 		$live['status'],
-		'the dev site runs the current plugin — run scripts/deploy-local-site.sh. ' . $live['reason']
+		'the dev site runs the current plugin. ' . $live['reason'] . $remedy
 	);
 } else {
 	printf( "SKIP  site drift check: %s%s", $live['reason'], PHP_EOL );
 	assert_true(
-		in_array( $live['status'], array( 'unconfigured', 'unreachable', 'absent' ), true ),
+		in_array( $live['status'], array( 'unconfigured', 'unreachable', 'no_install' ), true ),
 		'a skipped drift check skipped for a known reason, not an unrecognised one'
+	);
+	assert_true(
+		false === diviops_local_site_status_is_decisive( $live['status'] ),
+		'a status the gate skipped is one it could not draw a conclusion from: ' . $live['status']
 	);
 }
